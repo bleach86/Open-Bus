@@ -20,6 +20,10 @@ cargo run --release -- --drive drive
 The menu lists the carts on the drive. Without `--drive`, the emulator uses
 a `drive` directory next to its executable.
 
+`tools/deploy-carts` builds the example carts and copies them to a device
+running the emulator (`DEVICE`, `DRIVE`): a change to a cart needs nothing
+else rebuilt. The menu shows them after a reset.
+
 A gamepad is the machine's pad. The keyboard is the machine's keyboard,
 which the menu and Sprout read as well: arrows, Return to choose, Escape to
 go back, Tab for the menu's next page. Games also read the keys held as

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Build every example cart here and copy them to a device's drive: seconds,
+# with no emulator rebuild and nothing restarted. The menu lists the carts
+# again at reset (Select+Start). Save files on the device are left alone.
+#
+#   tools/deploy-carts                      # to ark@192.168.12.41:carts
+#   DEVICE=me@host DRIVE=path tools/deploy-carts
+set -e
+DEVICE=${DEVICE:-ark@192.168.12.41}
+DRIVE=${DRIVE:-carts}
+cd "$(dirname "$0")/.."
+make -s -C examples OUT="$PWD/drive"
+rsync -av --include='*.crt' --include='*.lbl' --exclude='*' drive/ "$DEVICE:$DRIVE/"
