@@ -1,31 +1,37 @@
 use crate::instructions::op_codes::Opcode;
 use crate::ram::Memory;
+use std::io::Write;
 use std::{
     thread::sleep,
     time::{Duration, Instant},
 };
 
+use std::sync::atomic::AtomicBool;
+
+pub enum StatusFlag {
+    Carry = 0,
+    Zero = 1,
+    InterruptDisable = 2,
+    DecimalMode = 3,
+
+    #[allow(dead_code)]
+    BreakCommand = 4,
+    Overflow = 6,
+    Negative = 7,
+}
 
 /// Result of executing one instruction.
 pub enum Flow {
     Continue,
+    /// An instruction that could not run in the cycles left.
+    Stop,
     Illegal(u8),
 }
 
-/// How an instruction finds its operand. Each makes the bus cycles a 6502
-/// makes for it, a read or a write every cycle, so the cycles an
-/// instruction takes are the accesses it makes.
-#[derive(Clone, Copy)]
-pub enum Mode {
-    Immediate,
-    ZeroPage,
-    ZeroPageX,
-    ZeroPageY,
-    Absolute,
-    AbsoluteX,
-    AbsoluteY,
-    IndirectX,
-    IndirectY,
+pub enum Registers {
+    A,
+    X,
+    Y,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -127,14 +133,13 @@ impl CPU {
             // the cycle within the frame where the video chip's beam is.
             let frame_cycle = total_cycles + CYCLES_PER_FRAME - next_frame;
             if let Some(vector) = self.memory.interrupt(frame_cycle, self.status.interrupt_disable) {
-                self.read_byte(self.pc, &mut cycles);
-                self.read_byte(self.pc, &mut cycles);
                 self.push_word(self.pc, &mut cycles);
                 self.status.break_command = false;
                 let status = self.status.to_byte();
                 self.push_byte(status, &mut cycles);
                 self.status.interrupt_disable = true;
                 self.pc = self.read_word(vector, &mut cycles);
+                cycles = cycles.wrapping_sub(2);
             }
 
             // The monitor (monitor.rs), when one is attached: it may stop the
@@ -150,6 +155,7 @@ impl CPU {
 
             match self.exec_opcode(opcode, &mut cycles) {
                 Flow::Continue => {}
+                Flow::Stop => break,
                 Flow::Illegal(op) => {
                     println!("Unimplemented opcode: ${:02X}", op);
                     break;
@@ -215,304 +221,771 @@ impl CPU {
 
     /// Execute a single, already-fetched opcode.
     pub(crate) fn exec_opcode(&mut self, opcode: u8, cycles: &mut u32) -> Flow {
-        use Mode::*;
-        use Opcode::*;
-        // An instruction reading an operand; writing a register; changing
-        // memory (or A) in place; on a register, after the implied cycle.
-        macro_rules! read {
-            ($mode:expr, $op:ident) => {{
-                let value = self.operand($mode, cycles);
-                self.$op(value);
-            }};
-        }
-        macro_rules! load {
-            ($mode:expr, $reg:ident) => {{
-                let value = self.operand($mode, cycles);
-                self.$reg = self.load(value);
-            }};
-        }
-        macro_rules! modify {
-            ($mode:expr, $op:ident) => {
-                self.modify($mode, CPU::$op, cycles)
-            };
-        }
-        macro_rules! accumulator {
-            ($op:ident) => {{
-                self.implied(cycles);
-                self.a = self.$op(self.a);
-            }};
-        }
-        macro_rules! implied {
-            ($($body:tt)*) => {{
-                self.implied(cycles);
-                $($body)*
-            }};
-        }
-
-        let Some(op) = Opcode::from_byte(opcode) else {
-            return Flow::Illegal(opcode);
-        };
-        match op {
-            LDAImmediate => load!(Immediate, a),
-            LDAZeroPage => load!(ZeroPage, a),
-            LDAZeroPageX => load!(ZeroPageX, a),
-            LDAAbsolute => load!(Absolute, a),
-            LDAAbsoluteX => load!(AbsoluteX, a),
-            LDAAbsoluteY => load!(AbsoluteY, a),
-            LDAIndirectX => load!(IndirectX, a),
-            LDAIndirectY => load!(IndirectY, a),
-            LDXImmediate => load!(Immediate, x),
-            LDXZeroPage => load!(ZeroPage, x),
-            LDXZeroPageY => load!(ZeroPageY, x),
-            LDXAbsolute => load!(Absolute, x),
-            LDXAbsoluteY => load!(AbsoluteY, x),
-            LDYImmediate => load!(Immediate, y),
-            LDYZeroPage => load!(ZeroPage, y),
-            LDYZeroPageX => load!(ZeroPageX, y),
-            LDYAbsolute => load!(Absolute, y),
-            LDYAbsoluteX => load!(AbsoluteX, y),
-
-            STAZeroPage => self.store(ZeroPage, self.a, cycles),
-            STAZeroPageX => self.store(ZeroPageX, self.a, cycles),
-            STAAbsolute => self.store(Absolute, self.a, cycles),
-            STAAbsoluteX => self.store(AbsoluteX, self.a, cycles),
-            STAAbsoluteY => self.store(AbsoluteY, self.a, cycles),
-            STAIndirectX => self.store(IndirectX, self.a, cycles),
-            STAIndirectY => self.store(IndirectY, self.a, cycles),
-            STXZeroPage => self.store(ZeroPage, self.x, cycles),
-            STXZeroPageY => self.store(ZeroPageY, self.x, cycles),
-            STXAbsolute => self.store(Absolute, self.x, cycles),
-            STYZeroPage => self.store(ZeroPage, self.y, cycles),
-            STYZeroPageX => self.store(ZeroPageX, self.y, cycles),
-            STYAbsolute => self.store(Absolute, self.y, cycles),
-
-            ADCImmediate => read!(Immediate, adc),
-            ADCZeroPage => read!(ZeroPage, adc),
-            ADCZeroPageX => read!(ZeroPageX, adc),
-            ADCAbsolute => read!(Absolute, adc),
-            ADCAbsoluteX => read!(AbsoluteX, adc),
-            ADCAbsoluteY => read!(AbsoluteY, adc),
-            ADCIndirectX => read!(IndirectX, adc),
-            ADCIndirectY => read!(IndirectY, adc),
-            SBCImmediate => read!(Immediate, sbc),
-            SBCZeroPage => read!(ZeroPage, sbc),
-            SBCZeroPageX => read!(ZeroPageX, sbc),
-            SBCAbsolute => read!(Absolute, sbc),
-            SBCAbsoluteX => read!(AbsoluteX, sbc),
-            SBCAbsoluteY => read!(AbsoluteY, sbc),
-            SBCIndirectX => read!(IndirectX, sbc),
-            SBCIndirectY => read!(IndirectY, sbc),
-            ANDImmediate => read!(Immediate, and),
-            ANDZeroPage => read!(ZeroPage, and),
-            ANDZeroPageX => read!(ZeroPageX, and),
-            ANDAbsolute => read!(Absolute, and),
-            ANDAbsoluteX => read!(AbsoluteX, and),
-            ANDAbsoluteY => read!(AbsoluteY, and),
-            ANDIndirectX => read!(IndirectX, and),
-            ANDIndirectY => read!(IndirectY, and),
-            ORImmediate => read!(Immediate, ora),
-            ORZeroPage => read!(ZeroPage, ora),
-            ORZeroPageX => read!(ZeroPageX, ora),
-            ORAbsolute => read!(Absolute, ora),
-            ORAbsoluteX => read!(AbsoluteX, ora),
-            ORAbsoluteY => read!(AbsoluteY, ora),
-            ORIndirectX => read!(IndirectX, ora),
-            ORIndirectY => read!(IndirectY, ora),
-            EORImmediate => read!(Immediate, eor),
-            EORZeroPage => read!(ZeroPage, eor),
-            EORZeroPageX => read!(ZeroPageX, eor),
-            EORAbsolute => read!(Absolute, eor),
-            EORAbsoluteX => read!(AbsoluteX, eor),
-            EORAbsoluteY => read!(AbsoluteY, eor),
-            EORIndirectX => read!(IndirectX, eor),
-            EORIndirectY => read!(IndirectY, eor),
-            BITZeroPage => read!(ZeroPage, bit),
-            BITAbsolute => read!(Absolute, bit),
-            CMPImmediate | CMPZeroPage | CMPZeroPageX | CMPAbsolute | CMPAbsoluteX | CMPAbsoluteY | CMPIndirectX
-            | CMPIndirectY | CPXImmediate | CPXZeroPage | CPXAbsolute | CPYImmediate | CPYZeroPage | CPYAbsolute => {
-                let (register, mode) = match op {
-                    CMPImmediate => (self.a, Immediate),
-                    CMPZeroPage => (self.a, ZeroPage),
-                    CMPZeroPageX => (self.a, ZeroPageX),
-                    CMPAbsolute => (self.a, Absolute),
-                    CMPAbsoluteX => (self.a, AbsoluteX),
-                    CMPAbsoluteY => (self.a, AbsoluteY),
-                    CMPIndirectX => (self.a, IndirectX),
-                    CMPIndirectY => (self.a, IndirectY),
-                    CPXImmediate => (self.x, Immediate),
-                    CPXZeroPage => (self.x, ZeroPage),
-                    CPXAbsolute => (self.x, Absolute),
-                    CPYImmediate => (self.y, Immediate),
-                    CPYZeroPage => (self.y, ZeroPage),
-                    _ => (self.y, Absolute),
-                };
-                let value = self.operand(mode, cycles);
-                self.compare(register, value);
+        match Opcode::from_byte(opcode) {
+            Some(Opcode::ADCImmediate) => {
+                if !self.adc_immediate(cycles) {
+                    return Flow::Stop;
+                }
             }
-
-            ASLAccumulator => accumulator!(asl),
-            ASLZeroPage => modify!(ZeroPage, asl),
-            ASLZeroPageX => modify!(ZeroPageX, asl),
-            ASLAbsolute => modify!(Absolute, asl),
-            ASLAbsoluteX => modify!(AbsoluteX, asl),
-            LSRAccumulator => accumulator!(lsr),
-            LSRZeroPage => modify!(ZeroPage, lsr),
-            LSRZeroPageX => modify!(ZeroPageX, lsr),
-            LSRAbsolute => modify!(Absolute, lsr),
-            LSRAbsoluteX => modify!(AbsoluteX, lsr),
-            ROLAccumulator => accumulator!(rol),
-            ROLZeroPage => modify!(ZeroPage, rol),
-            ROLZeroPageX => modify!(ZeroPageX, rol),
-            ROLAbsolute => modify!(Absolute, rol),
-            ROLAbsoluteX => modify!(AbsoluteX, rol),
-            RORAccumulator => accumulator!(ror),
-            RORZeroPage => modify!(ZeroPage, ror),
-            RORZeroPageX => modify!(ZeroPageX, ror),
-            RORAbsolute => modify!(Absolute, ror),
-            RORAbsoluteX => modify!(AbsoluteX, ror),
-            INCZeroPage => modify!(ZeroPage, inc),
-            INCZeroPageX => modify!(ZeroPageX, inc),
-            INCAbsolute => modify!(Absolute, inc),
-            INCAbsoluteX => modify!(AbsoluteX, inc),
-            DECZeroPage => modify!(ZeroPage, dec),
-            DECZeroPageX => modify!(ZeroPageX, dec),
-            DECAbsolute => modify!(Absolute, dec),
-            DECAbsoluteX => modify!(AbsoluteX, dec),
-
-            INX => implied!(self.x = self.inc(self.x)),
-            INY => implied!(self.y = self.inc(self.y)),
-            DEX => implied!(self.x = self.dec(self.x)),
-            DEY => implied!(self.y = self.dec(self.y)),
-            TAX => implied!(self.x = self.load(self.a)),
-            TAY => implied!(self.y = self.load(self.a)),
-            TXA => implied!(self.a = self.load(self.x)),
-            TYA => implied!(self.a = self.load(self.y)),
-            TSX => implied!(self.x = self.load(self.sp)),
-            TXS => implied!(self.sp = self.x),
-            CLC => implied!(self.status.carry = false),
-            SEC => implied!(self.status.carry = true),
-            CLI => implied!(self.status.interrupt_disable = false),
-            SEI => implied!(self.status.interrupt_disable = true),
-            CLD => implied!(self.status.decimal_mode = false),
-            SED => implied!(self.status.decimal_mode = true),
-            CLV => implied!(self.status.overflow = false),
-            NOP => implied!(),
-
-            PHA => self.push(self.a, cycles),
-            // PHP always pushes with B (bit 4) set.
-            PHP => self.push(self.status.to_byte() | 0x10, cycles),
-            PLA => {
-                let value = self.pull(cycles);
-                self.a = self.load(value);
+            Some(Opcode::ADCZeroPage) => {
+                if !self.adc_zero_page(cycles) {
+                    return Flow::Stop;
+                }
             }
-            PLP => {
-                let value = self.pull(cycles);
-                self.status.from_byte(value);
+            Some(Opcode::ADCZeroPageX) => {
+                if !self.adc_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
             }
+            Some(Opcode::ADCAbsolute) => {
+                if !self.adc_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ADCAbsoluteX) => {
+                if !self.adc_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ADCAbsoluteY) => {
+                if !self.adc_absolute_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ADCIndirectX) => {
+                if !self.adc_indirect_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ADCIndirectY) => {
+                if !self.adc_indirect_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ANDImmediate) => {
+                if !self.and_immediate(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ANDZeroPage) => {
+                if !self.and_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ANDZeroPageX) => {
+                if !self.and_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ANDAbsolute) => {
+                if !self.and_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ANDAbsoluteX) => {
+                if !self.and_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ANDAbsoluteY) => {
+                if !self.and_absolute_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ANDIndirectX) => {
+                if !self.and_indirect_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ANDIndirectY) => {
+                if !self.and_indirect_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ASLAccumulator) => {
+                if !self.asl_accumulator(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ASLZeroPage) => {
+                if !self.asl_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ASLZeroPageX) => {
+                if !self.asl_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ASLAbsolute) => {
+                if !self.asl_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ASLAbsoluteX) => {
+                if !self.asl_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::BCC) => {
+                if !self.branch(cycles, StatusFlag::Carry, Opcode::BCC) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::BCS) => {
+                if !self.branch(cycles, StatusFlag::Carry, Opcode::BCS) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::BEQ) => {
+                if !self.branch(cycles, StatusFlag::Zero, Opcode::BEQ) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::BMI) => {
+                if !self.branch(cycles, StatusFlag::Negative, Opcode::BMI) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::BNE) => {
+                if !self.branch(cycles, StatusFlag::Zero, Opcode::BNE) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::BPL) => {
+                if !self.branch(cycles, StatusFlag::Negative, Opcode::BPL) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::BVC) => {
+                if !self.branch(cycles, StatusFlag::Overflow, Opcode::BVC) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::BVS) => {
+                if !self.branch(cycles, StatusFlag::Overflow, Opcode::BVS) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::BITZeroPage) => {
+                if !self.bit_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::BITAbsolute) => {
+                if !self.bit_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CLC) => {
+                if !self.mod_flag(StatusFlag::Carry, false, cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CLD) => {
+                if !self.mod_flag(StatusFlag::DecimalMode, false, cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CLI) => {
+                if !self.mod_flag(StatusFlag::InterruptDisable, false, cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CLV) => {
+                if !self.mod_flag(StatusFlag::Overflow, false, cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CMPImmediate) => {
+                if !self.cmp_immediate(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CMPZeroPage) => {
+                if !self.cmp_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CMPZeroPageX) => {
+                if !self.cmp_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CMPAbsolute) => {
+                if !self.cmp_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CMPAbsoluteX) => {
+                if !self.cmp_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CMPAbsoluteY) => {
+                if !self.cmp_absolute_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CMPIndirectX) => {
+                if !self.cmp_indirect_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CMPIndirectY) => {
+                if !self.cmp_indirect_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CPXImmediate) => {
+                if !self.cpx_immediate(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CPXZeroPage) => {
+                if !self.cpx_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CPXAbsolute) => {
+                if !self.cpx_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CPYImmediate) => {
+                if !self.cpy_immediate(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CPYZeroPage) => {
+                if !self.cpy_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::CPYAbsolute) => {
+                if !self.cpy_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::DEX) => {
+                if !self.dex(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::DEY) => {
+                if !self.dey(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::DECZeroPage) => {
+                if !self.dec_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::DECZeroPageX) => {
+                if !self.dec_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::DECAbsolute) => {
+                if !self.dec_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::DECAbsoluteX) => {
+                if !self.dec_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::EORImmediate) => {
+                if !self.eor_immediate(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::EORZeroPage) => {
+                if !self.eor_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::EORZeroPageX) => {
+                if !self.eor_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::EORAbsolute) => {
+                if !self.eor_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::EORAbsoluteX) => {
+                if !self.eor_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::EORAbsoluteY) => {
+                if !self.eor_absolute_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::EORIndirectX) => {
+                if !self.eor_indirect_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::EORIndirectY) => {
+                if !self.eor_indirect_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::JMPAbsolute) => {
+                if !self.jmp_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::JMPIndirect) => {
+                if !self.jmp_indirect(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::INX) => {
+                if !self.inx(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::INY) => {
+                if !self.iny(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::INCZeroPage) => {
+                if !self.inc_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::INCZeroPageX) => {
+                if !self.inc_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::INCAbsolute) => {
+                if !self.inc_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::INCAbsoluteX) => {
+                if !self.inc_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDAImmediate) => {
+                if !self.lda_immediate(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDAZeroPage) => {
+                if !self.lda_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDAZeroPageX) => {
+                if !self.lda_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDAAbsolute) => {
+                if !self.lda_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDAAbsoluteX) => {
+                if !self.lda_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDAAbsoluteY) => {
+                if !self.lda_absolute_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDAIndirectX) => {
+                if !self.lda_indirect_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDAIndirectY) => {
+                if !self.lda_indirect_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDXImmediate) => {
+                if !self.ldx_immediate(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDXZeroPage) => {
+                if !self.ldx_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDXZeroPageY) => {
+                if !self.ldx_zero_page_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDXAbsolute) => {
+                if !self.ldx_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDXAbsoluteY) => {
+                if !self.ldx_absolute_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDYImmediate) => {
+                if !self.ldy_immediate(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDYZeroPage) => {
+                if !self.ldy_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDYZeroPageX) => {
+                if !self.ldy_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDYAbsolute) => {
+                if !self.ldy_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LDYAbsoluteX) => {
+                if !self.ldy_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LSRAccumulator) => {
+                if !self.lsr_accumulator(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LSRZeroPage) => {
+                if !self.lsr_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LSRZeroPageX) => {
+                if !self.lsr_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LSRAbsolute) => {
+                if !self.lsr_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::LSRAbsoluteX) => {
+                if !self.lsr_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::PHA) => {
+                if !self.pha(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::PHP) => {
+                if !self.php(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::PLA) => {
+                if !self.pla(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::PLP) => {
+                if !self.plp(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ORAbsoluteY) => {
+                if !self.or_absolute_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ORIndirectX) => {
+                if !self.or_indirect_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ORIndirectY) => {
+                if !self.or_indirect_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ORImmediate) => {
+                if !self.or_immediate(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ORZeroPage) => {
+                if !self.or_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ORZeroPageX) => {
+                if !self.or_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ORAbsolute) => {
+                if !self.or_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ORAbsoluteX) => {
+                if !self.or_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::SBCImmediate) => {
+                if !self.sbc_immediate(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::SBCZeroPage) => {
+                if !self.sbc_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::SBCZeroPageX) => {
+                if !self.sbc_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::SBCAbsolute) => {
+                if !self.sbc_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::SBCAbsoluteX) => {
+                if !self.sbc_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::SBCAbsoluteY) => {
+                if !self.sbc_absolute_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::SBCIndirectX) => {
+                if !self.sbc_indirect_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::SBCIndirectY) => {
+                if !self.sbc_indirect_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::SEC) => {
+                if !self.mod_flag(StatusFlag::Carry, true, cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::SED) => {
+                if !self.mod_flag(StatusFlag::DecimalMode, true, cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::SEI) => {
+                if !self.mod_flag(StatusFlag::InterruptDisable, true, cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STAZeroPage) => {
+                if !self.sta_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STAZeroPageX) => {
+                if !self.sta_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STAAbsolute) => {
+                if !self.sta_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STAAbsoluteX) => {
+                if !self.sta_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STAAbsoluteY) => {
+                if !self.sta_absolute_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STAIndirectX) => {
+                if !self.sta_indirect_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STAIndirectY) => {
+                if !self.sta_indirect_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STXZeroPage) => {
+                if !self.stx_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STXZeroPageY) => {
+                if !self.stx_zero_page_y(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STXAbsolute) => {
+                if !self.stx_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STYZeroPage) => {
+                if !self.sty_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STYZeroPageX) => {
+                if !self.sty_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::STYAbsolute) => {
+                if !self.sty_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::TAX) => {
+                if !self.transfer_register(Registers::A, Registers::X, cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::TAY) => {
+                if !self.transfer_register(Registers::A, Registers::Y, cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::TXA) => {
+                if !self.transfer_register(Registers::X, Registers::A, cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::TYA) => {
+                if !self.transfer_register(Registers::Y, Registers::A, cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::TSX) => {
+                if !self.tsx(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::TXS) => {
+                if !self.txs(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::JSRAbsolute) => {
+                if !self.jsr_absolute(cycles) {
+                    return Flow::Stop;
+                }
+                ////println!("JSR ${:04X}", sub_addr);
+            }
+            Some(Opcode::ROLAccumulator) => {
+                if !self.rol_accumulator(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ROLZeroPage) => {
+                if !self.rol_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ROLZeroPageX) => {
+                if !self.rol_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ROLAbsolute) => {
+                if !self.rol_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::ROLAbsoluteX) => {
+                if !self.rol_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::RORAccumulator) => {
+                if !self.ror_accumulator(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::RORZeroPage) => {
+                if !self.ror_zero_page(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::RORZeroPageX) => {
+                if !self.ror_zero_page_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::RORAbsolute) => {
+                if !self.ror_absolute(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::RORAbsoluteX) => {
+                if !self.ror_absolute_x(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::RTS) => {
+                if !self.rts(cycles) {
+                    return Flow::Stop;
+                }
 
-            BCC => self.branch(!self.status.carry, cycles),
-            BCS => self.branch(self.status.carry, cycles),
-            BNE => self.branch(!self.status.zero, cycles),
-            BEQ => self.branch(self.status.zero, cycles),
-            BPL => self.branch(!self.status.negative, cycles),
-            BMI => self.branch(self.status.negative, cycles),
-            BVC => self.branch(!self.status.overflow, cycles),
-            BVS => self.branch(self.status.overflow, cycles),
-
-            JMPAbsolute => self.jmp_absolute(cycles),
-            JMPIndirect => self.jmp_indirect(cycles),
-            JSRAbsolute => self.jsr(cycles),
-            RTS => self.rts(cycles),
-            RTI => self.rti(cycles),
-            BRK => self.brk(cycles),
+                ////println!("RTS to ${:04X}", self.pc);
+            }
+            Some(Opcode::RTI) => {
+                if !self.rti(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::NOP) => {
+                if !self.nop(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            Some(Opcode::BRK) => {
+                if !self.brk(cycles) {
+                    return Flow::Stop;
+                }
+            }
+            None => return Flow::Illegal(opcode),
         }
         Flow::Continue
     }
 
-    /// N and Z from a result.
-    pub fn set_nz(&mut self, value: u8) {
-        self.status.zero = value == 0;
-        self.status.negative = value & 0x80 != 0;
-    }
-
-    /// The cycle a one-byte instruction spends reading the byte after it,
-    /// which it then ignores.
-    pub fn implied(&mut self, cycles: &mut u32) {
-        self.read_byte(self.pc, cycles);
-    }
-
-    /// The operand's address, by the bus cycles a 6502 takes to work it
-    /// out. Indexing that carries into the high byte costs a cycle, reading
-    /// at the address with the high byte not yet fixed: always for a store
-    /// or a change in place (`fixed`), only when it carries for a read.
-    /// Zero page indexing reads the unindexed address while it adds.
-    fn address(&mut self, mode: Mode, fixed: bool, cycles: &mut u32) -> u16 {
-        let indexed = |cpu: &mut CPU, base: u16, index: u8, cycles: &mut u32| {
-            let address = base.wrapping_add(index as u16);
-            if fixed || address & 0xFF00 != base & 0xFF00 {
-                cpu.read_byte(base & 0xFF00 | address & 0x00FF, cycles);
-            }
-            address
-        };
-        match mode {
-            Mode::Immediate => {
-                let address = self.pc;
-                self.pc = self.pc.wrapping_add(1);
-                address
-            }
-            Mode::ZeroPage => self.fetch_byte(cycles) as u16,
-            Mode::ZeroPageX | Mode::ZeroPageY => {
-                let base = self.fetch_byte(cycles);
-                self.read_byte(base as u16, cycles);
-                let index = if matches!(mode, Mode::ZeroPageX) { self.x } else { self.y };
-                base.wrapping_add(index) as u16
-            }
-            Mode::Absolute => self.fetch_word(cycles),
-            Mode::AbsoluteX => {
-                let base = self.fetch_word(cycles);
-                indexed(self, base, self.x, cycles)
-            }
-            Mode::AbsoluteY => {
-                let base = self.fetch_word(cycles);
-                indexed(self, base, self.y, cycles)
-            }
-            Mode::IndirectX => {
-                let base = self.fetch_byte(cycles);
-                self.read_byte(base as u16, cycles);
-                let pointer = base.wrapping_add(self.x);
-                self.read_zero_page_word(pointer, cycles)
-            }
-            Mode::IndirectY => {
-                let pointer = self.fetch_byte(cycles);
-                let base = self.read_zero_page_word(pointer, cycles);
-                indexed(self, base, self.y, cycles)
-            }
-        }
-    }
-
-    /// An operand to read.
-    pub fn operand(&mut self, mode: Mode, cycles: &mut u32) -> u8 {
-        let address = self.address(mode, false, cycles);
-        self.read_byte(address, cycles)
-    }
-
-    /// A store.
-    pub fn store(&mut self, mode: Mode, value: u8, cycles: &mut u32) {
-        let address = self.address(mode, true, cycles);
-        self.write_byte(address, value, cycles);
-    }
-
-    /// A change in place: read, the old value written back while the new
-    /// one is worked out, the new one written.
-    pub fn modify(&mut self, mode: Mode, change: fn(&mut CPU, u8) -> u8, cycles: &mut u32) {
-        let address = self.address(mode, true, cycles);
-        let value = self.read_byte(address, cycles);
-        self.write_byte(address, value, cycles);
-        let result = change(self, value);
-        self.write_byte(address, result, cycles);
-    }
-
-    pub fn stack_address(&self) -> u16 {
+    pub fn sp_to_addr(&self) -> u16 {
         0x0100 | self.sp as u16
     }
 
@@ -540,6 +1013,22 @@ impl CPU {
         (high << 8) | low
     }
 
+    pub fn fetch_addr_indirect_x(&mut self, cycles: &mut u32) -> u16 {
+        let zp_addr = self.fetch_byte(cycles);
+        let effective_addr_lo = zp_addr.wrapping_add(self.x);
+        let lo = self.read_byte(effective_addr_lo as u16, cycles) as u16;
+        let hi = self.read_byte((effective_addr_lo.wrapping_add(1) & 0x00FF) as u16, cycles) as u16;
+        (hi << 8) | lo
+    }
+
+    pub fn fetch_addr_indirect_y(&mut self, cycles: &mut u32) -> u16 {
+        let zp_addr = self.fetch_byte(cycles);
+        let lo = self.read_byte(zp_addr as u16, cycles) as u16;
+        let hi = self.read_byte((zp_addr.wrapping_add(1) & 0x00FF) as u16, cycles) as u16;
+        let base = (hi << 8) | lo;
+        base.wrapping_add(self.y as u16)
+    }
+
     pub fn fetch_byte(&mut self, cycles: &mut u32) -> u8 {
         let byte = self.memory.read(self.pc);
         self.pc = self.pc.wrapping_add(1);
@@ -555,7 +1044,7 @@ impl CPU {
     }
 
     pub fn push_byte(&mut self, value: u8, cycles: &mut u32) {
-        let addr = self.stack_address();
+        let addr = self.sp_to_addr();
         self.memory.write(addr, value);
         self.sp = self.sp.wrapping_sub(1); // decrement SP after push
         *cycles = cycles.saturating_sub(1);
@@ -563,7 +1052,7 @@ impl CPU {
 
     pub fn pop_byte(&mut self, cycles: &mut u32) -> u8 {
         self.sp = self.sp.wrapping_add(1); // increment SP before pop
-        let addr = self.stack_address();
+        let addr = self.sp_to_addr();
         let value = self.memory.read(addr);
         *cycles = cycles.saturating_sub(1);
         value
