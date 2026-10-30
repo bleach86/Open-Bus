@@ -1,0 +1,6 @@
+# The title: the sea at night.
+tempo 90
+instrument lead triangle attack 2 decay 8 sustain 7 release 8 volume 9
+instrument pad pulse 2048 attack 6 decay 8 sustain 6 release 9 volume 5
+voice 0 lead: o5 l4 L e a > c < b | a2 e2 | f e d c | < b1 >
+voice 1 pad:  o3 l1 L a | a | f | e

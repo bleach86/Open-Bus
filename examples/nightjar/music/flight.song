@@ -1,0 +1,10 @@
+# In flight: round and round on voices 0-2; voice 3 is the effects'.
+tempo 140
+filter 1000 resonance 7 lowpass
+instrument lead pulse 1600 decay 5 sustain 9 release 4 volume 9
+instrument arp triangle decay 4 sustain 3 release 3 volume 6
+instrument bass saw decay 5 sustain 6 release 2 volume 12 filter
+
+voice 0 lead: o5 l8 L a4 > c < b a e4 a | g4 f e d4 e f | e4 a > c e4 d c | < b2 > c4 < b4 | a4 > c < b a e4 a | g4 f e d4 e f | e4 c d e4 g e | a2 r2
+voice 1 arp:  l8 L [o4 a o5 c e c]2 | [o4 g b o5 d o4 b]2 | [o4 a o5 c e c]2 | [o4 g+ b o5 e o4 b]2 | [o4 a o5 c e c]2 | [o4 f a o5 d o4 a]2 | [o4 e g o5 c o4 g]2 | [o4 a o5 c e c]2
+voice 2 bass: l8 L [o2 a a o3 a o2 a]2 | [o2 g g o3 g o2 g]2 | [o2 a a o3 a o2 a]2 | [o2 e e o3 e o2 e]2 | [o2 a a o3 a o2 a]2 | [o2 d d o3 d o2 d]2 | [o2 c c o3 c o2 c]2 | [o2 a a o3 a o2 a]2
