@@ -1,12 +1,66 @@
 #!/bin/sh
-# Fetch Klaus Dormann's 6502 functional test (GPL-3.0, not part of this
-# repository) into target/dormann/, where `cargo test dormann` runs it
-# against the CPU.
+# Fetch Klaus Dormann's 6502 tests (GPL-3.0, not part of this repository)
+# into target/dormann/, where `cargo test dormann` runs them against the
+# CPU: the functional test, prebuilt, and the decimal test, from its AS65
+# source, converted for ca65 and assembled with cc65 (all flags checked).
 set -e
 cd "$(dirname "$0")/.."
 mkdir -p target/dormann
-base=https://raw.githubusercontent.com/Klaus2m5/6502_65C02_functional_tests/master/bin_files
-for file in 6502_functional_test.bin 6502_functional_test.lst; do
-    curl -sSfL -o "target/dormann/$file" "$base/$file"
+cd target/dormann
+base=https://raw.githubusercontent.com/Klaus2m5/6502_65C02_functional_tests/master
+for file in bin_files/6502_functional_test.bin bin_files/6502_functional_test.lst 6502_decimal_test.a65; do
+    curl -sSfL -o "$(basename $file)" "$base/$file"
 done
+
+# AS65 to ca65: dotted directives, labels without colons, the zero page
+# variables as addresses, the end a jump to itself at `done`.
+python3 - <<'PY'
+import re
+out = ['.feature labels_without_colons', '.setcpu "6502"']
+section, zp = None, 0
+for line in open('6502_decimal_test.a65'):
+    code = line.split(';')[0].rstrip()
+    words = code.split()
+    first = words[0] if words else ''
+    if first in ('bss', 'code'):
+        section = first
+        continue
+    if section == 'bss':
+        if len(words) >= 2 and words[0] == 'org':
+            zp = int(words[1].replace('$', '0x'), 0)
+        elif len(words) >= 3 and words[1] == 'ds':
+            out.append(f'{words[0]} = ${zp:02X}')
+            zp += int(words[2])
+        continue
+    if len(words) >= 2 and words[1] == 'org':
+        continue
+    if words[:1] in (['org'], ['end']):
+        continue
+    if re.match(r'^\s*\w+\s*=', code) and words[0] in ('chk_n', 'chk_v', 'chk_z'):
+        out.append(f'{words[0]} = 1')
+        continue
+    if len(words) >= 2 and words[0] == 'end_of_test' and words[1] == 'macro':
+        out.append('.macro end_of_test\n:       jmp :-\n.endmacro')
+        section = 'skip_macro'
+        continue
+    if section == 'skip_macro':
+        if 'endm' in words:
+            section = 'code'
+        continue
+    code = re.sub(r'^(\s+)(if|else|endif)\b', r'\1.\2', code)
+    code = re.sub(r'\bdb\b', '.byte', code)
+    code = code.replace('!=', '<>')
+    if code.startswith('DONE'):
+        code = 'done:\nDONE'
+    out.append(code)
+open('6502_decimal_test.s', 'w').write('\n'.join(out) + '\n')
+PY
+cat > decimal.cfg <<'CFG'
+MEMORY { RAM: start = $0200, size = $7E00, file = %O; }
+SEGMENTS { CODE: load = RAM, type = rw; }
+CFG
+CC65_HOME=${CC65_HOME:-$(for d in "$HOME/cc65" /usr/share/cc65; do [ -d "$d" ] && echo "$d" && break; done)}
+BIN=$( [ -x "$CC65_HOME/bin/ca65" ] && echo "$CC65_HOME/bin/" )
+${BIN}ca65 -g -o 6502_decimal_test.o 6502_decimal_test.s
+${BIN}ld65 -C decimal.cfg -Ln 6502_decimal_test.lbl -o 6502_decimal_test.bin 6502_decimal_test.o
 echo "target/dormann: ready; cargo test dormann -- --nocapture"
