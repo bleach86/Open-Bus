@@ -1,0 +1,3 @@
+tempo 200
+instrument chime triangle decay 5 sustain 0 release 5 volume 10
+voice 0 chime: o6 l32 e b o7 e

@@ -1,0 +1,3 @@
+tempo 180
+instrument drop pulse 2048 decay 4 sustain 6 release 4 volume 9
+voice 0 drop: o5 l16 c o4 b a- g f e d c

@@ -1,0 +1,3 @@
+tempo 200
+instrument ouch saw decay 4 sustain 0 release 3 volume 11
+voice 0 ouch: o4 l32 c o3 g e c

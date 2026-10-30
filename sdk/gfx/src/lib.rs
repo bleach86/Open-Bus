@@ -162,6 +162,85 @@ pub fn asm(name: &str, image: &Image, segment: &str, block: usize) -> Result<Str
     Ok(source)
 }
 
+/// A map entry's flips, as the video chip has them (`MAP_FLIP_X`, `_Y`).
+pub const MAP_FLIP_X: u16 = 0x0400;
+pub const MAP_FLIP_Y: u16 = 0x0800;
+
+/// The image as a tile map: its distinct tiles, each once, and an entry for
+/// each 8x8 cell (left to right, then down) naming the tile it shows and the
+/// flips that make it. A tile that is another flipped is that one again:
+/// a wide picture of repeats and mirror images costs only what differs.
+pub fn tile_map(image: &Image) -> Result<(Vec<u8>, Vec<u16>), String> {
+    let cells = tiles(image)?;
+    let pixels = |tile: &[u8]| -> [u8; 64] { std::array::from_fn(|i| tile[i / 2] >> (4 - i % 2 * 4) & 15) };
+    let flip = |p: &[u8; 64], flips: u16| -> [u8; 64] {
+        std::array::from_fn(|i| {
+            let (mut x, mut y) = (i % 8, i / 8);
+            if flips & MAP_FLIP_X != 0 {
+                x = 7 - x;
+            }
+            if flips & MAP_FLIP_Y != 0 {
+                y = 7 - y;
+            }
+            p[y * 8 + x]
+        })
+    };
+    let mut known = std::collections::HashMap::new();
+    let mut unique = Vec::new();
+    let mut map = Vec::with_capacity(cells.len() / 32);
+    for cell in cells.chunks(32) {
+        let cell_pixels = pixels(cell);
+        let found = [0, MAP_FLIP_X, MAP_FLIP_Y, MAP_FLIP_X | MAP_FLIP_Y]
+            .into_iter()
+            .find_map(|flips| known.get(&flip(&cell_pixels, flips)).map(|&tile: &u16| tile | flips));
+        map.push(found.unwrap_or_else(|| {
+            let tile = (unique.len() / 32) as u16;
+            known.insert(cell_pixels, tile);
+            unique.extend_from_slice(cell);
+            tile
+        }));
+    }
+    if unique.len() / 32 > 1024 {
+        return Err(format!("{} distinct tiles, more than the video chip's 1024", unique.len() / 32));
+    }
+    Ok((unique, map))
+}
+
+/// The image as a tile map (`tile_map`) in ca65 source, in `segment`:
+/// `_art_NAME`, the distinct tiles; `_art_NAME_palette`; `_art_NAME_count`,
+/// how many tiles (a word); and `_art_NAME_map`, an entry (a word) for each
+/// cell, to which a program adds the tile it loaded the first one at and its
+/// palette. C declares them `extern const unsigned char art_NAME[],
+/// art_NAME_palette[]; extern const unsigned art_NAME_count,
+/// art_NAME_map[];`.
+pub fn map_asm(name: &str, image: &Image, segment: &str) -> Result<String, String> {
+    let name: String = name.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    let (tiles, map) = tile_map(image)?;
+    let count = tiles.len() / 32;
+    let mut source = format!(
+        "; {name}: {}x{}, a map of {} cells over {} tiles. Made by gfx; edit the PNG instead.\n\n\
+         \x20       .export _art_{name}, _art_{name}_palette, _art_{name}_count, _art_{name}_map\n\n\
+         \x20       .segment \"{segment}\"\n",
+        image.width,
+        image.height,
+        map.len(),
+        count
+    );
+    for (label, data) in [(format!("_art_{name}"), tiles), (format!("_art_{name}_palette"), palette(image))] {
+        source += &format!("\n{label}:\n");
+        for line in data.chunks(16) {
+            let bytes: Vec<String> = line.iter().map(|b| format!("${b:02X}")).collect();
+            source += &format!("        .byte   {}\n", bytes.join(", "));
+        }
+    }
+    source += &format!("\n_art_{name}_count:\n        .word   {count}\n\n_art_{name}_map:\n");
+    for line in map.chunks(image.width / 8) {
+        let words: Vec<String> = line.iter().map(|w| format!("${w:04X}")).collect();
+        source += &format!("        .word   {}\n", words.join(", "));
+    }
+    Ok(source)
+}
+
 /// The size of a cart file's icon field: 16 tiles, two palettes, and
 /// which palette each tile takes.
 pub const ICON_SIZE: usize = 16 * 32 + 2 * 32 + 16;
@@ -316,6 +395,24 @@ mod tests {
             let pixel = (field[tile * 32 + 1] >> 4) as usize;
             assert!(pixel > 0 && u16::from_le_bytes([colours[pixel * 2], colours[pixel * 2 + 1]]) != 0);
         }
+    }
+
+    #[test]
+    fn a_map_keeps_each_tile_once_flips_and_all() {
+        // 32x8: a tile, itself again, mirrored left to right, and upside
+        // down. One tile, four entries.
+        let tile = |x: usize, y: usize| (y * 8 + x) as u8 % 16;
+        let pixels = (0..8)
+            .flat_map(|y| (0..32).map(move |x| match x / 8 {
+                0 | 1 => tile(x % 8, y),
+                2 => tile(7 - x % 8, y),
+                _ => tile(x % 8, 7 - y),
+            }))
+            .collect();
+        let image = Image { width: 32, height: 8, pixels, colours: vec![] };
+        let (tiles, map) = tile_map(&image).unwrap();
+        assert_eq!(tiles.len(), 32);
+        assert_eq!(map, [0, 0, MAP_FLIP_X, MAP_FLIP_Y]);
     }
 
     #[test]

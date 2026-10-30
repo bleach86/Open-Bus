@@ -1,0 +1,11 @@
+# The levels' tune: dusk over the fields, round and round. Voices 0-2;
+# voice 3 is left for the sound effects.
+tempo 120
+filter 900 resonance 6 lowpass
+instrument lead pulse 1200 attack 1 decay 6 sustain 8 release 6 volume 9
+instrument arp triangle decay 5 sustain 4 release 4 volume 7
+instrument bass saw decay 6 sustain 6 release 3 volume 12 filter
+
+voice 0 lead: o5 l8 L e4 d c < a4 > c d | e4. g16 e16 d4 r4 | c4 < b a g4 a b | > c2 r2 | e4 d c < a4 > c e | g4. a16 g16 e4 r4 | f4 e d c4 < b > c | < a2 r2
+voice 1 arp:  l8 L o4 a o5 c e c o4 a o5 c e c | o4 g o5 c e c o4 g o5 c e c | o4 a o5 c f c o4 g b o5 d o4 b | o4 g o5 c e c o4 g o5 c e c | o4 a o5 c e c o4 a o5 c e c | o4 g b o5 e o4 b g b o5 e o4 b | o4 a o5 c f c o4 g b o5 d o4 b | o4 a o5 c e c o4 a o5 c e c
+voice 2 bass: l8 L o2 a4 a a o3 a4 o2 a4 | o3 c4 c c o4 c4 o3 c4 | o2 f4 f o3 f o2 g4 g o3 g | o3 c4 c c o4 c4 o3 c4 | o2 a4 a a o3 a4 o2 a4 | o2 e4 e e o3 e4 o2 e4 | o2 f4 f o3 f o2 g4 g o3 g | o2 a4 a a o3 a4 o2 a4

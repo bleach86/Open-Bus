@@ -7,7 +7,8 @@
 //! (lines 240-261) first, then the 240 lines on screen. The chip keeps each
 //! line's scroll as the beam passes it, so a scroll changed partway down
 //! (from a raster interrupt, say) shows from that line on. It interrupts at
-//! vblank and at a chosen line, as enabled.
+//! vblank and at a chosen line, as enabled; a handler that sets the next
+//! line splits the screen again further down.
 //!
 //! Two background planes: A (map at $8000) and B (map at $A000, in front,
 //! when VCTRL bit 3 turns it on), each with its own scroll. Each sprite has
@@ -169,7 +170,12 @@ impl Vdp {
             BACKDROP => self.backdrop = value & 0x0F,
             VIRQ => self.irq_enable = value & (IRQ_VBLANK | IRQ_RASTER),
             VSTATUS => self.irq_status &= !value, // acknowledged
-            RASTER => self.raster = value,
+            RASTER => {
+                // Armed for the new line if the beam has yet to reach it
+                // this frame; a line already passed interrupts next frame.
+                self.raster = value;
+                self.raster_passed = self.line < HEIGHT as u16 && self.line >= value as u16;
+            }
             _ => {}
         }
         // A scroll shows through the lines it reaches (end_frame).
@@ -329,6 +335,33 @@ mod tests {
         assert_eq!(vdp.read(VSTATUS), IRQ_VBLANK);
         vdp.write(VIRQ, IRQ_VBLANK);
         assert!(vdp.irq(), "vblank, now enabled");
+    }
+
+    /// A handler that sets the raster line further down interrupts again
+    /// this frame: three splits, three scrolls. A line the beam has passed
+    /// waits for the next frame.
+    #[test]
+    fn a_new_raster_line_splits_the_frame_again() {
+        let mut vdp = Vdp::default();
+        let line_start = |n: u64| (VBLANK_LINES + n) * CYCLES_PER_LINE;
+        let scroll_x = |vdp: &Vdp, line: usize| u16::from_le_bytes([vdp.lines[line * 4], vdp.lines[line * 4 + 1]]);
+        vdp.write(VIRQ, IRQ_RASTER);
+        vdp.start_frame();
+        vdp.write(RASTER, 16);
+        for (line, next, scroll) in [(16, 112, 10), (112, 160, 20), (160, 16, 30)] {
+            assert_eq!(vdp.next_interrupt(line_start(line) - 1), Some(line_start(line)));
+            vdp.beam(line_start(line));
+            assert!(vdp.irq(), "at line {line}");
+            vdp.write(SCROLLX, scroll);
+            vdp.write(RASTER, next);
+            vdp.write(VSTATUS, IRQ_RASTER);
+        }
+        assert_eq!(vdp.next_interrupt(line_start(160)), None, "line 16 is behind the beam: next frame");
+        vdp.end_frame();
+        let at = |line| scroll_x(&vdp, line);
+        assert_eq!([at(15), at(16), at(111), at(112), at(159), at(160), at(239)], [0, 10, 10, 20, 20, 30, 30]);
+        vdp.start_frame();
+        assert_eq!(vdp.next_interrupt(0), Some(line_start(16)));
     }
 
     #[test]

@@ -252,6 +252,8 @@ impl Memory {
                 0xFF20 => match addr {
                     0xFF20 | 0xFF21 => self.host.input.pad.load(std::sync::atomic::Ordering::Relaxed).to_le_bytes()
                         [(addr & 1) as usize],
+                    0xFF24 | 0xFF25 => self.host.input.keypad.load(std::sync::atomic::Ordering::Relaxed).to_le_bytes()
+                        [(addr & 1) as usize],
                     _ => return None, // a waiting key is taken by reading
                 },
                 0xFF30 => self.cart.peek(addr),

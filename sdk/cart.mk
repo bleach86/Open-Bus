@@ -22,7 +22,10 @@
 # segment ART_SEGMENT (default RODATA; BANK1, say, to keep bank 0 for code),
 # or ART_SEGMENT_NAME for that picture alone (art bigger than a bank).
 # PNGs in art/16/ come out in 16x16 blocks, each a 16x16 sprite's four tiles
-# in order: draw sprite sheets as they look.
+# in order: draw sprite sheets as they look. PNGs in art/map/ come out as a
+# tile map: each distinct tile once (a flipped copy counts as the same), and
+# art_NAME_map, an entry for each cell; art_NAME_count says how many tiles
+# (machine.h). Wide backgrounds cost only what differs in them.
 #
 # Songs go in music/ as text (docs/machine.md, "Music"): the SDK's `song`
 # turns each music/NAME.song into song_NAME for the music driver (music.h),
@@ -44,6 +47,7 @@ BUILD ?= build
 SOURCES ?= $(wildcard *.c *.s)
 ART ?= $(wildcard art/*.png)
 ART16 ?= $(wildcard art/16/*.png)
+ARTMAP ?= $(wildcard art/map/*.png)
 ICON ?= $(firstword $(wildcard icon.png) $(SDK)/default-icon.png)
 ART_SEGMENT ?= RODATA
 GFX ?= $(SDK)/gfx/target/release/gfx
@@ -56,7 +60,7 @@ CC65_BIN := $(if $(wildcard $(CC65_HOME)/bin/cc65),$(CC65_HOME)/bin/)
 CFLAGS := -t none --cpu 6502 -Oirs -g -I $(SDK)/include
 AFLAGS := --cpu 6502 -g -I $(CC65_HOME)/asminc -I $(SDK)/include
 
-OBJECTS := $(patsubst %,$(BUILD)/%.o,$(basename $(SOURCES) $(ART) $(ART16) $(SONGS))) $(BUILD)/icon.o
+OBJECTS := $(patsubst %,$(BUILD)/%.o,$(basename $(SOURCES) $(ART) $(ART16) $(ARTMAP) $(SONGS))) $(BUILD)/icon.o
 SDK_SOURCES := $(wildcard $(SDK)/lib/*.c $(SDK)/lib/*.s)
 SDK_OBJECTS := $(patsubst %,$(BUILD)/sdk/%.o,$(basename $(notdir $(SDK_SOURCES))))
 # The SDK's headers, and this file: its flags shape every object.
@@ -88,6 +92,10 @@ $(BUILD)/art/%.s: art/%.png $(GFX) $(CART_MAKEFILE)
 $(BUILD)/art/16/%.s: art/16/%.png $(GFX) $(CART_MAKEFILE)
 	@mkdir -p $(@D)
 	$(GFX) asm16 $< $@ $(or $(ART_SEGMENT_$*),$(ART_SEGMENT))
+
+$(BUILD)/art/map/%.s: art/map/%.png $(GFX) $(CART_MAKEFILE)
+	@mkdir -p $(@D)
+	$(GFX) map $< $@ $(or $(ART_SEGMENT_$*),$(ART_SEGMENT))
 
 $(GFX): $(wildcard $(SDK)/gfx/src/*.rs) $(SDK)/gfx/Cargo.toml
 	cargo build --quiet --release --manifest-path $(SDK)/gfx/Cargo.toml --target-dir $(SDK)/gfx/target

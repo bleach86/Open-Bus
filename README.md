@@ -22,8 +22,11 @@ a `drive` directory next to its executable.
 
 A gamepad is the machine's pad. The keyboard is the machine's keyboard,
 which the menu and Sprout read as well: arrows, Return to choose, Escape to
-go back, Tab for the menu's next page. F11 is full screen, and F12 (or
-Select+Start on the pad) is the reset button. `cargo test` runs the machine
+go back, Tab for the menu's next page. Games also read the keys held as
+pad buttons (`KEYPAD`), laid out as in SNES emulators: the arrows are the
+D-pad, Z is B, X is A, A is Y, S is X and Return is Start, so Lamplight,
+the platformer, plays on either. F11 is full
+screen, and F12 (or Select+Start on the pad) is the reset button. `cargo test` runs the machine
 tests.
 
 `--monitor 6502` opens a machine-language monitor on 127.0.0.1:6502 (attach

@@ -75,6 +75,7 @@ PAD             = $FF20         ; read: buttons held, 2 bytes, bits below
 KEY_CODE        = $FF22         ; read: the waiting key
 KEY_STATUS      = $FF23         ; read: bit 0 a key is waiting; write: take it
 KEY_WAITING     = $01
+KEYPAD          = $FF24         ; read: keys held, as PAD bits, 2 bytes
 
 PAD_A           = $0001
 PAD_B           = $0002

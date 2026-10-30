@@ -1,5 +1,6 @@
 //! Input, `$FF20`: the gamepad's buttons as bits, the keyboard's keys one at
-//! a time, and the reset button. The host side (`screen.rs`, `gamepad.rs`)
+//! a time, the keys held as pad buttons (KEYPAD, for games), and the reset
+//! button. The host side (`screen.rs`, `gamepad.rs`)
 //! fills it in; what a button means is up to the machine's software.
 
 use std::collections::VecDeque;
@@ -34,12 +35,16 @@ const PAD_HI: u16 = 0xFF21;
 const KEY_CODE: u16 = 0xFF22;
 const KEY_STATUS: u16 = 0xFF23;
 const KEY_WAITING: u8 = 0x01;
+const KEYPAD: u16 = 0xFF24;
+const KEYPAD_HI: u16 = 0xFF25;
 
 /// What the host has to say, shared with the machine.
 #[derive(Debug, Default)]
 pub struct Input {
     /// Buttons held.
     pub pad: AtomicU16,
+    /// Keys held, as the pad buttons they stand for (screen.rs maps them).
+    pub keypad: AtomicU16,
     keys: Mutex<VecDeque<u8>>,
     /// The queue's length, so the machine can poll it without locking.
     pending: AtomicUsize,
@@ -93,9 +98,12 @@ impl InputPort {
             self.key = input.pop_key();
         }
         let pad = input.pad.load(Ordering::Relaxed).to_le_bytes();
+        let keypad = input.keypad.load(Ordering::Relaxed).to_le_bytes();
         match addr {
             PAD => pad[0],
             PAD_HI => pad[1],
+            KEYPAD => keypad[0],
+            KEYPAD_HI => keypad[1],
             KEY_CODE => self.key.unwrap_or(0),
             KEY_STATUS => self.key.map_or(0, |_| KEY_WAITING),
             _ => 0,
@@ -131,5 +139,9 @@ mod tests {
         input.pad.store(PAD_A | PAD_START | PAD_LEFT, Ordering::Relaxed);
         assert_eq!(port.read(&input, PAD), PAD_A as u8);
         assert_eq!(port.read(&input, PAD_HI), ((PAD_START | PAD_LEFT) >> 8) as u8);
+
+        input.keypad.store(PAD_B | PAD_RIGHT, Ordering::Relaxed);
+        assert_eq!([port.read(&input, KEYPAD), port.read(&input, KEYPAD_HI)], [PAD_B as u8, (PAD_RIGHT >> 8) as u8]);
+        assert_eq!(port.read(&input, PAD), PAD_A as u8, "the pad, apart");
     }
 }

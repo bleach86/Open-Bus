@@ -1,0 +1,3 @@
+tempo 200
+instrument blip pulse 1024 decay 3 sustain 0 release 2 volume 7
+voice 0 blip: o4 l32 g o5 c e

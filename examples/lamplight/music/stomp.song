@@ -1,0 +1,3 @@
+tempo 200
+instrument thud noise decay 3 sustain 0 release 2 volume 12
+voice 0 thud: o3 l16 c

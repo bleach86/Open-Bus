@@ -27,7 +27,7 @@ mod tests {
     const ESCAPE: u8 = 0x1B;
     const BACKSPACE: u8 = 0x08;
     const TAB: u8 = 0x09;
-    const EXAMPLES: [&str; 3] = ["banks", "sprout", "test"];
+    const EXAMPLES: [&str; 4] = ["banks", "lamplight", "sprout", "test"];
 
     /// The example carts, built by their Makefiles with the SDK once per test
     /// run, as anyone's cart is.
@@ -202,12 +202,17 @@ mod tests {
         /// font, at tiles $20-$7E in colour 1, is the reference. A tile of
         /// one colour is a space; any other shape, '#'.
         fn row(&self, row: usize) -> String {
+            self.text_row(|column| self.entry(column, row))
+        }
+
+        /// The 40 cells whose map entries `entry` gives, as text (`row`).
+        fn text_row(&self, entry: impl Fn(usize) -> u16) -> String {
             let glyph = |pixels: [u8; 64], colour: u8| pixels.map(|p| p == colour);
             let font: Vec<([bool; 64], char)> =
                 (0x20..0x7F).map(|c| (glyph(self.tile(c), 1), c as u8 as char)).collect();
             (0..COLUMNS)
                 .map(|column| {
-                    let pixels = self.tile(self.entry(column, row) as usize & 0x3FF);
+                    let pixels = self.tile(entry(column) as usize & 0x3FF);
                     if pixels.iter().all(|&p| p == pixels[0]) {
                         return ' ';
                     }
@@ -221,6 +226,15 @@ mod tests {
                 .collect::<String>()
                 .trim_end()
                 .to_string()
+        }
+
+        /// A row of plane B's map, unscrolled (where Lamplight puts its
+        /// HUD and its title), read as `row` reads plane A's.
+        fn row_b(&self, row: usize) -> String {
+            self.text_row(|column| {
+                let at = 0xA000 + (row * 64 + column) * 2;
+                u16::from_le_bytes([self.0.vram[at], self.0.vram[at + 1]])
+            })
         }
 
         fn rows(&self) -> Vec<String> {
@@ -268,14 +282,16 @@ mod tests {
         let screen = machine.until(|screen| screen.row(25).contains("cart"));
         assert!(screen.row(0).contains("6502"), "the status bar");
         assert!(screen.row(2).contains("CARTS") && screen.row(2).contains("SYSTEM"));
-        // Each cart's name on its card, between the card's edges.
-        let row = screen.row(10);
-        let names: Vec<&str> = row.split(['#', ' ']).filter(|word| !word.is_empty()).collect();
-        assert_eq!(names, EXAMPLES, "{}", screen.text());
-        assert!(screen.row(23).contains("banks") && screen.row(23).contains("1 of 3"), "{}", screen.text());
+        // Each cart's name on its card, between the card's edges: three
+        // across, then the next row of cards.
+        let names = |row| -> Vec<String> {
+            screen.row(row).split(['#', ' ']).filter(|word| !word.is_empty()).map(String::from).collect()
+        };
+        assert_eq!([names(10), names(19)].concat(), EXAMPLES, "{}", screen.text());
+        assert!(screen.row(23).contains("banks") && screen.row(23).contains("1 of 4"), "{}", screen.text());
         assert!(screen.row(25).contains("128K cart"), "{}", screen.text());
-        // Right twice: the test cart, 64K with save memory.
-        machine.type_keys(&[RIGHT, RIGHT]);
+        // Right three times: the test cart, 64K with save memory.
+        machine.type_keys(&[RIGHT, RIGHT, RIGHT]);
         machine.until(|screen| screen.row(23).contains("test") && screen.row(25).contains("64K cart, saves 1K"));
     }
 
@@ -285,13 +301,14 @@ mod tests {
     #[test]
     fn the_menu_shows_each_carts_own_icon() {
         let machine = Machine::start(false);
-        let screen = machine.until(|screen| screen.row(10).contains("test"));
+        let screen = machine.until(|screen| screen.row(19).contains("test"));
         for (slot, example) in EXAMPLES.iter().enumerate() {
             let png = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples").join(example).join("icon.png");
             let (_, _, drawn) = gfx::read_colours(&png).unwrap();
-            // The cards are 13 columns apart from column 1, the icon 4 in
-            // and 1 down from the card's corner at row 4.
-            let shown = screen.picture(1 + slot * 13 + 4, 5, 4, 4);
+            // The cards are 13 columns apart from column 1, three across, 9
+            // rows apart from row 4; the icon 4 in and 1 down from a card's
+            // corner.
+            let shown = screen.picture(1 + slot % 3 * 13 + 4, 5 + slot / 3 * 9, 4, 4);
             assert!(shown == drawn, "{example}'s icon differs from its icon.png");
         }
     }
@@ -302,7 +319,7 @@ mod tests {
     fn sprout_starts_as_an_egg_and_is_kept() {
         let machine = Machine::start(false);
         machine.until(|screen| screen.row(10).contains("sprout"));
-        machine.type_keys(&[RIGHT, b'\r']);
+        machine.type_keys(&[RIGHT, RIGHT, b'\r']);
         machine.until(|screen| screen.row(28).contains("An egg"));
         // From Feed, left round to the last care icon: how it's doing.
         machine.type_keys(&[LEFT]);
@@ -340,8 +357,8 @@ mod tests {
     #[test]
     fn a_chosen_cart_has_the_machine_until_reset() {
         let machine = Machine::start(false);
-        machine.until(|screen| screen.row(10).contains("test"));
-        machine.type_keys(&[RIGHT, RIGHT, b'\r']);
+        machine.until(|screen| screen.row(19).contains("test"));
+        machine.type_keys(&[RIGHT, RIGHT, RIGHT, b'\r']);
         machine.until(|screen| screen.row(0).contains("VIDEO"));
         machine.reset();
         machine.until(|screen| screen.row(2).contains("CARTS"));
@@ -418,8 +435,8 @@ mod tests {
     #[test]
     fn a_raster_interrupt_splits_the_screen() {
         let machine = Machine::start(false);
-        machine.until(|screen| screen.row(10).contains("test"));
-        machine.type_keys(&[RIGHT, RIGHT, b'\r']);
+        machine.until(|screen| screen.row(19).contains("test"));
+        machine.type_keys(&[RIGHT, RIGHT, RIGHT, b'\r']);
         let screen = machine.until(|screen| screen.row(0).contains("VIDEO") && screen.0.scroll(100).0 > 8);
         let scroll_x: Vec<u16> = (0..240).map(|line| screen.0.scroll(line).0).collect();
         assert!(scroll_x[..8].iter().all(|&x| x == 0), "the title row: {:?}", &scroll_x[..8]);
@@ -434,8 +451,8 @@ mod tests {
     #[test]
     fn the_music_driver_plays_a_song() {
         let machine = Machine::start(false);
-        machine.until(|screen| screen.row(10).contains("test"));
-        machine.type_keys(&[RIGHT, RIGHT, b'\r']);
+        machine.until(|screen| screen.row(19).contains("test"));
+        machine.type_keys(&[RIGHT, RIGHT, RIGHT, b'\r']);
         machine.until(|screen| screen.row(0).contains("VIDEO"));
         machine.type_keys(&[TAB]);
         machine.until(|screen| screen.row(16).contains("play a song"));
@@ -454,8 +471,8 @@ mod tests {
     #[test]
     fn plane_b_and_sprite_priority() {
         let machine = Machine::start(false);
-        machine.until(|screen| screen.row(10).contains("test"));
-        machine.type_keys(&[RIGHT, RIGHT, b'\r']);
+        machine.until(|screen| screen.row(19).contains("test"));
+        machine.type_keys(&[RIGHT, RIGHT, RIGHT, b'\r']);
         let screen = machine.until(|screen| screen.row(0).contains("VIDEO") && screen.0.scroll(100).0 > 20);
         let frame = &screen.0;
         assert_ne!(frame.ctrl & 0x08, 0, "plane B on");
@@ -474,8 +491,8 @@ mod tests {
     fn the_test_cart_keeps_its_save_and_reaches_its_banks() {
         let machine = Machine::start(false);
         let system_page = || {
-            machine.until(|screen| screen.row(10).contains("test"));
-            machine.type_keys(&[RIGHT, RIGHT, b'\r']);
+            machine.until(|screen| screen.row(19).contains("test"));
+            machine.type_keys(&[RIGHT, RIGHT, RIGHT, b'\r']);
             machine.until(|screen| screen.row(0).contains("VIDEO"));
             machine.type_keys(&[TAB, TAB]);
             machine.until(|screen| screen.row(20).contains("FRAMES"))
@@ -501,7 +518,7 @@ mod tests {
     #[test]
     fn carts_switch_banks() {
         let machine = Machine::start(false);
-        machine.until(|screen| screen.row(10).contains("test"));
+        machine.until(|screen| screen.row(19).contains("test"));
         machine.type_keys(b"\r");
         let screen = machine.until(|screen| screen.row(16) == "All banks good.");
         let mut expected = vec!["Banks 1 to 15, at $A000:".to_string()];
@@ -623,5 +640,61 @@ mod tests {
         assert!(!screen.text().contains("6502 SYSTEM"), "banner scrolled away");
         assert_eq!(screen.row(ROWS - 2), "C000: 4C");
         assert_ne!(screen.0.scroll(0).1, 0, "by moving SCROLLY");
+    }
+
+    /// Lamplight, the platformer: its title lists the levels, the first one
+    /// open; in a level the HUD counts the embers the lamplighter walks
+    /// into. Set down near the door through the monitor, by the cart's own
+    /// labels, it walks through: the results, then the title with the best
+    /// run and the next level open, and the save on the drive.
+    #[test]
+    fn lamplight_plays_a_level_through_to_its_door() {
+        let link = crate::monitor::Link::new(None);
+        let machine = Machine::start_with(false, Some(Arc::clone(&link)));
+        machine.until(|screen| screen.row(10).contains("lamplight"));
+        machine.type_keys(&[RIGHT, b'\r']);
+        let title = machine.until(|screen| screen.row_b(15).contains("Lantern Hill"));
+        assert!(title.row_b(5).contains("L A M P L I G H T"), "{}", title.row_b(5));
+        assert!(title.row_b(11).contains("> 1 Dusk Fields") && title.row_b(11).contains("not yet lit"), "{}", title.row_b(11));
+        assert!(title.row_b(13).contains("Old Quarry") && title.row_b(13).contains("locked"), "{}", title.row_b(13));
+
+        machine.hold(crate::input::PAD_A);
+        machine.until(|screen| screen.row_b(0).contains("Dusk Fields") && screen.row_b(0).contains("0/28"));
+        machine.hold(crate::input::PAD_RIGHT);
+        machine.until(|screen| screen.row_b(0).contains("3/28"));
+        machine.release();
+
+        // At the start of a frame, x16 and y16 (16ths of a pixel): four
+        // cells short of the door, on the ground.
+        let said = Said::default();
+        let lines = link.attach(Box::new(said.clone()));
+        said.until("(monitor) ");
+        let load = format!("l {}", machine.drive.join("lamplight.lbl").display());
+        for command in [&load, "b next_frame", "g", "> x16 00 78 00 0a", "bc"] {
+            lines.send(command.to_string()).unwrap();
+            let answer = said.until("(monitor) ");
+            assert!(!answer.contains("not an address") && !answer.contains("error"), "{command}: {answer}");
+        }
+        lines.send("q".into()).unwrap();
+        machine.hold(crate::input::PAD_RIGHT);
+        let results = machine.until(|screen| screen.row_b(12).contains(" of "));
+        machine.release();
+        assert!(results.row_b(10).contains("The lamps are lit."), "{}", results.row_b(10));
+        assert!(results.row_b(12).contains("3 of 28"), "{}", results.row_b(12));
+
+        machine.hold(crate::input::PAD_A);
+        let title = machine.until(|screen| screen.row_b(13).contains("not yet lit") && screen.row_b(15).contains("locked"));
+        machine.release();
+        assert!(title.row_b(13).contains("Old Quarry"), "the next level open: {}", title.row_b(13));
+        // The ember icon (a '#' to row_b), 3, and the time; the cursor on
+        // the level not yet done.
+        assert!(title.row_b(11).contains("#3 ") && title.row_b(11).contains(':'), "the best run: {}", title.row_b(11));
+        assert!(title.row_b(13).contains("> 2"), "{}", title.row_b(13));
+
+        machine.reset();
+        machine.until(|screen| screen.row(2).contains("CARTS"));
+        let save = std::fs::read(machine.drive.join("lamplight.sav")).expect("lamplight.sav");
+        assert_eq!(&save[..5], b"LMP1\x01", "level 1 done");
+        assert_eq!(save[7], 3, "3 embers");
     }
 }

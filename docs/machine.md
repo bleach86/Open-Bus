@@ -90,7 +90,10 @@ cycles), then draws lines 0-239. The chip keeps each line's scrolls as the
 beam leaves it, so a scroll changed partway down the frame shows from that
 line on: a raster interrupt at line N can scroll lines N and below
 differently from those above (a status bar over a scrolling level, say).
-Everything else shows as it stands at the end of the frame. An interrupt
+Setting `RASTER` arms it for that line if the beam has yet to reach it this
+frame, so a handler that sets the next line splits the screen again further
+down, as many times as it likes; a line already passed interrupts next
+frame. Sprite X wraps at 512 (below). Everything else shows as it stands at the end of the frame. An interrupt
 stays raised until acknowledged in `VSTATUS`. `FRAME_WAIT` wakes for the
 raster interrupt too; `BIOS_WAITFRAME` waits on for vblank.
 
@@ -109,7 +112,8 @@ Two background planes: A, its map at `$8000`, and B, its map at `$A000`,
 in front of A when `VCTRL` bit 3 is on; each scrolls on its own. Colour 0 of
 every palette is see-through: through plane B to plane A, through plane A to
 the backdrop. A 16×16 sprite is four tiles, `t`, `t+1` above `t+2`, `t+3`; a
-sprite at Y 240 or more is hidden. Back to front: the backdrop, sprites of
+sprite at Y 240 or more is hidden. X wraps at 512: 496-511 put a sprite
+partly off the left edge, at -16 to -1. Back to front: the backdrop, sprites of
 priority 2, plane A, sprites of priority 1, plane B, sprites of priority 0.
 Where sprites overlap, the frontmost one with a pixel there (sprite 0 on
 top) decides, its priority with it, as on the NES.
@@ -121,10 +125,19 @@ top) decides, its priority with it, as on the NES.
 | `PAD`        | `$FF20-$FF21` | read: buttons held, 16 bits (below) |
 | `KEY_CODE`   | `$FF22` | read: the waiting key (ASCII; `$80-$83` up, down, left, right) |
 | `KEY_STATUS` | `$FF23` | read: bit 0 a key is waiting; write: take it |
+| `KEYPAD`     | `$FF24-$FF25` | read: keys held, as the `PAD` bits they stand for |
 
 `PAD` bits: A 0, B 1, X 2, Y 3, L1 4, R1 5, L2 6, R2 7, Select 8, Start 9,
 L3 10, R3 11, up 12, down 13, left 14, right 15. Buttons are only bits;
 what they mean is up to the software.
+
+`KEYPAD` is the keyboard held down, for games: a key typed comes as a
+`KEY_CODE` once, but a game wants to know what is held each frame. The
+arrows are the D-pad, Z B, X A, A Y, S X, Q L1, W R1, Return Start and
+right Shift Select, as SNES emulators lay them out, by the keys' places
+whatever the layout. A
+game reads `PAD | KEYPAD`; software that reads keys as typed leaves it
+alone.
 
 ### Cart, `$FF30`
 
@@ -293,13 +306,20 @@ bytes each), and `art_NAME_palette`, 32 bytes, in segment `ART_SEGMENT`
 (`RODATA` unless the Makefile says, say, `BANK1`, to keep bank 0 for code;
 `ART_SEGMENT_NAME` puts one picture elsewhere, for art bigger than a bank).
 PNGs in `art/16/` come out in 16×16 blocks, each one a 16×16 sprite's four
-tiles in order, so sprite sheets are drawn as they look.
+tiles in order, so sprite sheets are drawn as they look. PNGs in `art/map/`
+come out as a tile map: each distinct tile once (a flipped copy counts as
+the same tile), `art_NAME_count` of them, and `art_NAME_map`, a map entry for
+each 8×8 cell to which a program adds its first tile and palette. A
+512-pixel-wide background of hills costs only the tiles that differ.
 `vram_write` and `vram_fill` (`machine.h`) copy them to VRAM.
 
-Read a multi-byte value from a port a byte at a time into variables of
-their own (`low = SAVE_DATA; high = SAVE_DATA;`). cc65's optimizer can read
-the port again where the code reads a variable just stored from it, so
-`n = SAVE_DATA; n |= SAVE_DATA << 8;` comes out wrong.
+Save memory goes through `save_read` and `save_write` (`machine.h`), which
+copy any number of bytes, a struct say, in assembly. In C, cc65's optimizer
+gets reads of a port like `SAVE_DATA` wrong: it may use the byte it read for
+the line before instead of reading again (`low = SAVE_DATA;` straight after
+`embers = SAVE_DATA;` stores the embers), or read again where the code reads
+a variable just stored from the port. Any port read a byte at a time in C
+wants checking in the assembly cc65 makes (`build/NAME.s`).
 
 A cart's icon is its `icon.png`, 32×32 in up to 30 colours, any PNG; the
 SDK's converter shares its tiles between the two palettes. Without one, the
@@ -389,5 +409,10 @@ there, which goes on silently and is heard again when the effect ends.
 scrolling under a split screen (a raster interrupt) and palette cycling;
 every button, a voice on each of A, B, X and Y, and a song; save memory,
 calls across banks, the clock and the status chip. `examples/sprout` is a
-pet that lives on the real-time clock.
+pet that lives on the real-time clock. `examples/lamplight` is a platformer:
+three levels written as text, scrolling a column at a time onto plane B,
+under a HUD that a raster interrupt holds still and over three bands of
+scenery on plane A that scroll slower (an interrupt at each band), with
+sprites behind plane B's tufts and lamps, music and effects on their own
+voices, and the best runs in save memory.
 `examples/banks` switches through sixteen banks.

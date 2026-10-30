@@ -102,6 +102,30 @@ impl FrameSlot {
     }
 }
 
+/// The pad button a key stands for while held (KEYPAD), as SNES emulators
+/// lay them out: the arrows, Z for B, X for A, A for Y, S for X, Q and W
+/// for L1 and R1, Return for Start, right Shift for Select. Keys by
+/// position, whatever the layout.
+fn keypad_button(event: &glium::winit::event::KeyEvent) -> u16 {
+    use glium::winit::keyboard::{KeyCode, PhysicalKey};
+    let PhysicalKey::Code(code) = event.physical_key else { return 0 };
+    match code {
+        KeyCode::ArrowUp => input::PAD_UP,
+        KeyCode::ArrowDown => input::PAD_DOWN,
+        KeyCode::ArrowLeft => input::PAD_LEFT,
+        KeyCode::ArrowRight => input::PAD_RIGHT,
+        KeyCode::KeyZ => input::PAD_B,
+        KeyCode::KeyX => input::PAD_A,
+        KeyCode::KeyA => input::PAD_Y,
+        KeyCode::KeyS => input::PAD_X,
+        KeyCode::KeyQ => input::PAD_L1,
+        KeyCode::KeyW => input::PAD_R1,
+        KeyCode::Enter | KeyCode::NumpadEnter => input::PAD_START,
+        KeyCode::ShiftRight => input::PAD_SELECT,
+        _ => 0,
+    }
+}
+
 /// The key code a key press sends to the input chip, if any.
 fn key_code(event: &glium::winit::event::KeyEvent) -> Option<u8> {
     match &event.logical_key {
@@ -201,7 +225,8 @@ const CHIP_SHADER: &str = "
                 ivec4 e = ivec4(texelFetch(sprites, ivec2(s, 0), 0) * 255.0 + 0.5);
                 int top = e.r;
                 int attributes = e.a;
-                int lx = x - (e.g | (attributes & 1) << 8);
+                // X wraps: 496-511 are -16 to -1, partly off the left edge.
+                int lx = (x - (e.g | (attributes & 1) << 8)) & 511;
                 int ly = y - top;
                 if (top >= 240 || lx < 0 || ly < 0 || lx >= size || ly >= size) {
                     continue;
@@ -401,7 +426,12 @@ impl glium::winit::application::ApplicationHandler<()> for App {
                 self.display.resize(size.into());
                 self.window.request_redraw();
             }
+            WindowEvent::Focused(false) => self.input.keypad.store(0, Ordering::Relaxed),
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Released => {
+                self.input.keypad.fetch_and(!keypad_button(&event), Ordering::Relaxed);
+            }
             WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                self.input.keypad.fetch_or(keypad_button(&event), Ordering::Relaxed);
                 if self.blanker.as_ref().is_some_and(|b| b.lock().unwrap().input()) {
                     return;
                 }

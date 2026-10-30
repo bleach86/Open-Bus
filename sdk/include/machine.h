@@ -51,9 +51,10 @@ unsigned long rtc_seconds(void);
 #define BACKDROP IO(0xFF18)
 /* Interrupts (IRQ), as VIRQ_ bits: on in VIRQ; what happened in VSTATUS,
  * which a write acknowledges (write the bits handled). The raster interrupt
- * comes as the beam starts line RASTER (0-239). A frame is 262 lines: vblank
- * (VLINE 240-261) first, then lines 0-239. Handlers in C: cc65's set_irq
- * (6502.h). */
+ * comes as the beam starts line RASTER (0-239); setting RASTER from the
+ * handler, to a line further down, interrupts again this frame. A frame is
+ * 262 lines: vblank (VLINE 240-261) first, then lines 0-239. Handlers in C:
+ * cc65's set_irq (6502.h). */
 #define VIRQ IO(0xFF19)
 #define VSTATUS IO(0xFF1A)
 #define RASTER IO(0xFF1B)
@@ -102,6 +103,10 @@ unsigned long rtc_seconds(void);
 #define KEY_CODE IO(0xFF22)
 #define KEY_STATUS IO(0xFF23)
 #define KEY_WAITING 0x01
+/* Keys held, as the PAD bits they stand for, laid out as SNES emulators do:
+ * arrows the D-pad, Z B, X A, A Y, S X, Q L1, W R1, Return Start, right
+ * Shift Select. A game reads PAD | KEYPAD. */
+#define KEYPAD IO16(0xFF24)
 
 #define PAD_A 0x0001
 #define PAD_B 0x0002
@@ -142,6 +147,11 @@ unsigned long rtc_seconds(void);
 #define SAVE_ADDR IO16(0xFF34)
 #define SAVE_DATA IO(0xFF36)
 #define SAVE_SIZE 0x8000u
+/* `length` bytes of save memory from `address` on, to or from `data`
+ * (sdk/lib/save.s). Use these rather than SAVE_DATA in C: cc65's optimizer
+ * may reuse a byte it read from the port instead of reading it again. */
+void __fastcall__ save_read(unsigned address, void *data, unsigned length);
+void __fastcall__ save_write(unsigned address, const void *data, unsigned length);
 
 /* --- drive, $FF40 --------------------------------------------------------- */
 
@@ -311,6 +321,15 @@ void __fastcall__ vram_fill(unsigned address, unsigned char value, unsigned leng
  * a picture art/hero.png as
  *
  *     extern const unsigned char art_hero[], art_hero_palette[];
+ *
+ * A picture in art/map/ comes as a tile map: art_NAME holds its distinct
+ * tiles (art_NAME_count of them), and art_NAME_map an entry for each 8x8
+ * cell, left to right, then down: the tile, counting from art_NAME's first,
+ * and MAP_FLIP_ bits. Add the tile the first one was loaded at, and a
+ * palette, to put it on a plane:
+ *
+ *     extern const unsigned art_hills_count, art_hills_map[];
+ *     entry = art_hills_map[i] + TILE_HILLS + MAP_ENTRY(0, PAL_HILLS);
  */
 
 /* --- carts ---------------------------------------------------------------- */
