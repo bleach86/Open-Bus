@@ -67,6 +67,17 @@ pub struct Memory {
     debug: Vec<u8>,
     /// What the monitor is watching for, when there is one.
     monitor: Option<crate::monitor::Watch>,
+    /// For CPU tests (harte.rs): 64K of plain RAM in place of the machine,
+    /// and every access made, in order.
+    #[cfg(test)]
+    pub flat: Option<FlatRam>,
+}
+
+/// 64K of RAM and the bus cycles that touched it: (address, value, a write).
+#[cfg(test)]
+pub struct FlatRam {
+    pub ram: Box<[u8; 0x10000]>,
+    pub bus: Vec<(u16, u8, bool)>,
 }
 
 impl Default for Memory {
@@ -94,6 +105,8 @@ impl Memory {
             resetting: false,
             rtc: 0,
             debug: Vec::new(),
+            #[cfg(test)]
+            flat: None,
         }
     }
 
@@ -117,6 +130,12 @@ impl Memory {
     }
 
     pub fn read(&mut self, addr: u16) -> u8 {
+        #[cfg(test)]
+        if let Some(flat) = &mut self.flat {
+            let value = flat.ram[addr as usize];
+            flat.bus.push((addr, value, false));
+            return value;
+        }
         match addr {
             0..=RAM_END => self.ram[addr as usize],
             cart::WINDOW..=cart::WINDOW_END => self.cart.read_window(addr),
@@ -135,6 +154,12 @@ impl Memory {
     }
 
     pub fn write(&mut self, addr: u16, value: u8) {
+        #[cfg(test)]
+        if let Some(flat) = &mut self.flat {
+            flat.ram[addr as usize] = value;
+            flat.bus.push((addr, value, true));
+            return;
+        }
         if let Some(watch) = &mut self.monitor {
             watch.wrote(addr, value);
         }

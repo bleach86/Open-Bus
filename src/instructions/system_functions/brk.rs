@@ -1,26 +1,17 @@
 use crate::cpu::CPU;
 
 impl CPU {
-    pub fn brk(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 7;
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
-        self.pc = self.pc.wrapping_add(1);
+    /// BRK: the byte after it read (and skipped), the return address and
+    /// the status with B set pushed, I set, then on through $FFFE.
+    pub fn brk(&mut self, cycles: &mut u32) {
+        self.fetch_byte(cycles);
         self.push_word(self.pc, cycles);
-
         self.status.break_command = true;
-        let status_byte = self.status.to_byte();
-        self.push_byte(status_byte, cycles);
+        let status = self.status.to_byte();
+        self.push_byte(status, cycles);
         // As for an IRQ: the handler isn't interrupted.
         self.status.interrupt_disable = true;
-
         self.pc = self.read_word(0xFFFE, cycles);
-
-        *cycles = cycles.wrapping_sub(2);
-
-        true
     }
 }
 
@@ -37,7 +28,7 @@ mod tests {
         cpu.sp = 0xFF;
         cpu.status.interrupt_disable = false;
         let mut cycles = u32::MAX;
-        assert!(cpu.brk(&mut cycles));
+        cpu.brk(&mut cycles);
         assert!(cpu.status.interrupt_disable);
         assert_eq!(cpu.memory.read(0x01FD) & 0x10, 0x10, "B set on the stack");
         assert_eq!(cpu.memory.read(0x01FD) & 0x04, 0, "I as it was, on the stack");

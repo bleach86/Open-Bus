@@ -4,6 +4,7 @@ mod cpu;
 mod dormann;
 mod drive;
 mod gamepad;
+mod harte;
 mod input;
 mod instructions;
 mod monitor;
