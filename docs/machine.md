@@ -368,6 +368,9 @@ voice 0 lead: o5 l8 L e g a g e d c d | e4 g4 a4. r8
 voice 2 bass: o2 l8 L [c c > c < c]2 | [f f > f < f] [g g > g < g]
 ```
 
+A `#` at the start of a line or after a space starts a comment; straight
+after a note it is a sharp (`g#`).
+
 An instrument is waves (`triangle`, `saw`, `pulse` and a width, `noise`;
 `sync`, `ring`), an envelope (`attack`, `decay`, `sustain`, `release`, 0-15
 as the chip takes them), a `volume` and whether it goes through the

@@ -3,7 +3,7 @@
 //! docs/machine.md ("Music") describes the text; in short:
 //!
 //! ```text
-//! # comments
+//! # comments, at the start of a line or after a space
 //! tempo 132                                   quarter notes a minute
 //! filter 900 resonance 8 lowpass              the chip's filter, if used
 //! instrument lead pulse 1024 attack 1 decay 6 sustain 10 release 6 volume 11
@@ -238,6 +238,14 @@ impl Mml<'_> {
     }
 }
 
+/// A line up to its comment: a `#` at the start or after a space. Straight
+/// after a note, `#` is a sharp (`g#`).
+fn without_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let comment = (0..bytes.len()).find(|&i| bytes[i] == b'#' && (i == 0 || bytes[i - 1].is_ascii_whitespace()));
+    &line[..comment.unwrap_or(line.len())]
+}
+
 /// A song from its text.
 pub fn compile(text: &str) -> Result<Song, String> {
     let mut tempo = 120u64;
@@ -246,7 +254,7 @@ pub fn compile(text: &str) -> Result<Song, String> {
     let mut parts: [Option<(String, String)>; 4] = Default::default(); // instrument, MML
     for (index, line) in text.lines().enumerate() {
         let fail = |error: String| format!("line {}: {error}", index + 1);
-        let line = line.split('#').next().unwrap_or("").trim();
+        let line = without_comment(line).trim();
         let words: Vec<&str> = line.split_whitespace().collect();
         match words.first().copied() {
             None => {}
@@ -448,6 +456,15 @@ mod tests {
         let source = asm("test", &song, "RODATA");
         assert!(source.contains("song_test_1_loop:") && source.contains(".addr   song_test_1_loop"));
         assert!(source.contains(".addr   song_test_0, song_test_1, 0, 0"));
+    }
+
+    /// `#` after a note is a sharp; at the start of a line or after a
+    /// space, a comment.
+    #[test]
+    fn a_hash_is_a_sharp_after_a_note_and_otherwise_a_comment() {
+        let song = compile("# a song\ninstrument a triangle  # the only one\nvoice 0 a: g# a #c d").unwrap();
+        let notes: Vec<u16> = song.voices[0].as_ref().unwrap().iter().filter_map(|e| if let Event::Note(f, _) = e { Some(*f) } else { None }).collect();
+        assert_eq!(notes, [frequency(4, 8), frequency(4, 9)], "g#, a; the rest a comment");
     }
 
     #[test]
