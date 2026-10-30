@@ -1,5 +1,5 @@
-# The levels' tune: dusk over the fields, round and round. Voices 0-2;
-# voice 3 is left for the sound effects.
+; The levels' tune: dusk over the fields, round and round. Voices 0-2;
+; voice 3 is left for the sound effects.
 tempo 120
 filter 900 resonance 6 lowpass
 instrument lead pulse 1200 attack 1 decay 6 sustain 8 release 6 volume 9

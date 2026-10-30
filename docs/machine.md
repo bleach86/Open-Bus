@@ -359,17 +359,16 @@ Songs are text, one file each in a cart's `music/`; `cart.mk` turns
 Makefile says) for the SDK's music driver (`music.h`):
 
 ```
-# The room's tune.
-tempo 132                                    # quarter notes a minute
-filter 700 resonance 9 lowpass               # the sound chip's filter, if used
+; The room's tune.
+tempo 132                                    ; quarter notes a minute
+filter 700 resonance 9 lowpass               ; the sound chip's filter, if used
 instrument lead pulse 1024 attack 1 decay 6 sustain 9 release 5 volume 10
 instrument bass saw decay 5 sustain 7 release 3 volume 13 filter
 voice 0 lead: o5 l8 L e g a g e d c d | e4 g4 a4. r8
 voice 2 bass: o2 l8 L [c c > c < c]2 | [f f > f < f] [g g > g < g]
 ```
 
-A `#` at the start of a line or after a space starts a comment; straight
-after a note it is a sharp (`g#`).
+A comment runs from `;` to the end of its line.
 
 An instrument is waves (`triangle`, `saw`, `pulse` and a width, `noise`;
 `sync`, `ring`), an envelope (`attack`, `decay`, `sustain`, `release`, 0-15

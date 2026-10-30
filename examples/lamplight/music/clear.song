@@ -1,4 +1,4 @@
-# Through the door: the level done.
+; Through the door: the level done.
 tempo 140
 instrument lead pulse 1024 attack 0 decay 6 sustain 9 release 8 volume 10
 instrument bell triangle attack 0 decay 8 sustain 6 release 9 volume 9

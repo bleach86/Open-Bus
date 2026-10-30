@@ -1,4 +1,4 @@
-# Happy.
+; Happy.
 tempo 150
 instrument chime pulse 1536 attack 1 decay 4 sustain 8 release 4 volume 9 filter
 voice 0 chime: o5 l16 e g > c8.
