@@ -16,6 +16,7 @@
 /* In bank BANK_ART (ART_SEGMENT). */
 extern const unsigned char art_level[], art_level_palette[];
 extern const unsigned char art_sprites[], art_sprites_palette[];
+extern const unsigned char art_hero[];
 extern const unsigned char art_hud[], art_hud_palette[];
 /* Tile maps (art/map), in banks BANK_SKY and BANK_NEAR. */
 extern const unsigned char art_sky[], art_sky_palette[], art_far[], art_near[];
@@ -86,7 +87,8 @@ void video_start(void)
     vram_fill(VRAM_TILES, 0, 32); /* tile 0: nothing, for empty cells */
 
     BANK1 = BANK_ART;
-    vram_write(VRAM_TILES + TILE_SPRITES * 32, art_sprites, 15 * 4 * 32);
+    vram_write(VRAM_TILES + TILE_HERO * 32, art_hero, 8 * 8 * 32);
+    vram_write(VRAM_TILES + TILE_SPRITES * 32, art_sprites, 9 * 4 * 32);
     vram_write(VRAM_TILES + TILE_LEVEL * 32, art_level, 17 * 4 * 32);
     vram_write(VRAM_TILES + TILE_HUD * 32, art_hud, 5 * 32);
     vram_write(VRAM_PALETTES + PAL_LEVEL * 32, art_level_palette, 32);
@@ -170,10 +172,9 @@ static unsigned char list[64 * 4];
 static unsigned char listed;
 static unsigned char shown;
 
-void sprite(int x, int y, unsigned char frame, unsigned char attributes)
+void sprite_tile(int x, int y, unsigned tile, unsigned char attributes)
 {
     unsigned char *s;
-    unsigned tile;
 
     if (x <= -16 || x >= 320 || y <= -16 || y >= 240 || listed == 64) {
         return;
@@ -181,7 +182,6 @@ void sprite(int x, int y, unsigned char frame, unsigned char attributes)
     if (y < 0) {
         return; /* Y doesn't wrap: off the top is hidden (the HUD is there) */
     }
-    tile = TILE_SPRITES + frame * 4;
     x &= 511; /* left of the edge: 496-511 */
     s = list + listed * 4;
     s[0] = y;

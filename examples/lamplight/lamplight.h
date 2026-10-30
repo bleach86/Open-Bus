@@ -24,16 +24,21 @@ enum {
 };
 
 /* Tiles, above the BIOS's font. Sprites can only use the first 512. */
-#define TILE_SPRITES 0x100 /* art/16/sprites.png: 16x16 frames of 4 tiles */
-#define TILE_LEVEL 0x140   /* art/16/level.png: a cell's 4 tiles */
-#define TILE_HUD 0x188     /* art/hud.png */
-#define TILE_SKY 0x190     /* art/map/sky.png */
-#define TILE_FAR 0x1E0     /* art/map/far.png */
-#define TILE_NEAR 0x270    /* art/map/near.png */
+#define TILE_HERO 0x100    /* art/16/hero.png: 16x32 frames of 8 tiles */
+#define TILE_SPRITES 0x140 /* art/16/sprites.png: 16x16 frames of 4 tiles */
+#define TILE_LEVEL 0x170   /* art/16/level.png: a cell's 4 tiles */
+#define TILE_HUD 0x1B8     /* art/hud.png */
+#define TILE_SKY 0x1C0     /* art/map/sky.png */
+#define TILE_FAR 0x210     /* art/map/far.png */
+#define TILE_NEAR 0x260    /* art/map/near.png */
 
-/* The sprite sheet's frames. */
+/* The lamplighter's frames, 16x32: the tiles of frame n start at
+ * TILE_HERO + n * 8, the head's four, then the feet's. */
 enum {
-    FRAME_IDLE, FRAME_RUN1, FRAME_RUN2, FRAME_JUMP, FRAME_FALL, FRAME_HURT,
+    HERO_IDLE, HERO_RUN1, HERO_RUN2, HERO_RUN3, HERO_SKID, HERO_JUMP, HERO_FALL, HERO_HURT
+};
+/* The other sprites' frames, 16x16: tiles from TILE_SPRITES + n * 4. */
+enum {
     FRAME_BEETLE1, FRAME_BEETLE2, FRAME_BEETLE_FLAT, FRAME_MOTH1, FRAME_MOTH2,
     FRAME_PUFF1, FRAME_PUFF2, FRAME_SPARK1, FRAME_SPARK2
 };
@@ -77,8 +82,10 @@ void video_stop(void);
 void scenery_at(unsigned x);
 /* Plane B's scroll from the HUD down: the level's camera position. */
 void level_at(unsigned x);
-/* A 16x16 sprite at screen (x, y), for the next frame. */
-void sprite(int x, int y, unsigned char frame, unsigned char attributes);
+/* A 16x16 sprite at screen (x, y), its tiles from `tile`, for the next
+ * frame; sprite() for the sheet's frames. */
+void sprite_tile(int x, int y, unsigned tile, unsigned char attributes);
+#define sprite(x, y, frame, attributes) sprite_tile(x, y, TILE_SPRITES + (frame) * 4, attributes)
 /* The sprites given since the last, shown from the next frame on. */
 void present(void);
 /* Plane B: a box of `width` x `height` cells from (column, row), and

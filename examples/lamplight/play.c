@@ -8,7 +8,8 @@
  *
  * The level is 128 cells across; plane B's map is 32 cells, so the cells
  * come onto it a column at a time as the camera moves, just ahead of what
- * shows. Positions are in 16ths of a pixel.
+ * shows. Positions are in 16ths of a pixel: the lamplighter's is his
+ * feet's 16x16 cell-sized box, his head the 16 pixels above it.
  */
 #include <stdlib.h>
 #include <string.h>
@@ -24,14 +25,22 @@ extern const Song song_jump, song_ember, song_stomp, song_hurt, song_lamp, song_
 static unsigned char level[LEVEL_H][LEVEL_W];
 #define SOLID(m) ((unsigned char)((m) - GRASS) <= STONE - GRASS)
 
-/* Moving: speeds and pulls in 16ths of a pixel a frame. */
+/* Moving, the way the classic console platformers do it. Speeds are in
+ * 16ths of a pixel a frame, each with a byte of 256ths under it, so speed
+ * builds slowly (most of a second to a run) and slides off as slowly; turning
+ * against it skids at twice the rate. The speed at take-off picks the jump:
+ * how hard up, and the pull while the jump is held on the way up (light)
+ * and otherwise (heavy), in 256ths of a pixel a frame each frame. */
 #define WALK 24
-#define RUN 36
-#define JUMP 76
-#define BOUNCE 56
-#define GRAVITY_RISING 3 /* while A is held on the way up */
-#define GRAVITY 6
-#define FALL_MAX 96
+#define RUN 40
+#define ACCEL_WALK 0x98
+#define ACCEL_RUN 0xE4
+#define RELEASE 0xD0
+#define FAST 25 /* a running jump from here */
+#define JUMP 64
+#define JUMP_FAST 80
+#define BOUNCE 48
+#define FALL_MAX 64
 #define COYOTE 6
 #define JUMP_BUFFER 6
 #define HEARTS 3
@@ -43,11 +52,14 @@ static unsigned char level[LEVEL_H][LEVEL_W];
 
 static unsigned x16, y16;
 static int vx, vy;
+static unsigned char vx_sub, vy_sub; /* 256ths, 16ths: under vx, vy */
+static unsigned char rise_pull, fall_pull;
 static unsigned char facing; /* 0, or SPRITE_FLIP_X: left */
 static unsigned char on_ground;
 static unsigned char coyote, jump_buffer;
 static unsigned char hearts, invulnerable, dying;
 static unsigned char run_anim;
+static unsigned char skidding;
 static unsigned camera;
 static unsigned char start_x, start_y; /* the cell to start again at */
 static unsigned char embers, embers_total, falls;
@@ -372,6 +384,8 @@ static void stomp(unsigned char i)
     e_spawn[i] = NONE;
     effect(e_x[i], e_y[i], FRAME_PUFF1);
     vy = held & JUMP_BUTTONS ? -JUMP : -BOUNCE;
+    rise_pull = 0x20;
+    fall_pull = 0x70;
     sfx_play(SFX_VOICE, &song_stomp);
 }
 
@@ -402,7 +416,7 @@ static void enemies(void)
                 }
             }
             frame = t & 16 ? FRAME_BEETLE1 : FRAME_BEETLE2;
-            top = 7;
+            top = 4;
             bottom = 16;
         } else {
             /* To and fro across 64 pixels, bobbing. */
@@ -421,7 +435,7 @@ static void enemies(void)
         if (dying || finished) {
             continue;
         }
-        if (px + 13 > e_x[i] + 2 && px + 3 < e_x[i] + 14 && py + 16 > e_y[i] + top && py + 2 < e_y[i] + bottom) {
+        if (px + 13 > e_x[i] + 2 && px + 3 < e_x[i] + 14 && py + 16 > e_y[i] + top && py < e_y[i] + bottom + 12) {
             if (vy > 0 && py + 16 < e_y[i] + top + 8) {
                 stomp(i);
             } else {
@@ -486,26 +500,63 @@ static void hurt(void)
     sfx_play(SFX_VOICE, &song_hurt);
 }
 
+/* vx and vx_sub as one number: `amount` 256ths of a 16th, to the right
+ * or left. */
+static void push(unsigned char amount, unsigned char right)
+{
+    if (right) {
+        if ((unsigned)vx_sub + amount > 255) {
+            ++vx;
+        }
+        vx_sub += amount;
+    } else {
+        if (vx_sub < amount) {
+            --vx;
+        }
+        vx_sub -= amount;
+    }
+}
+
 static void control(void)
 {
-    int target = 0;
-    unsigned char step;
+    unsigned char run = (held & RUN_BUTTONS) != 0;
+    unsigned char accel = run ? ACCEL_RUN : ACCEL_WALK;
+    unsigned char top = run ? RUN : WALK;
+    unsigned char speed = vx < 0 ? -vx : vx;
+    unsigned char right;
+    unsigned char pull;
+    signed char input = 0;
 
     if (held & PAD_LEFT) {
-        target = held & RUN_BUTTONS ? -RUN : -WALK;
+        input = -1;
         facing = SPRITE_FLIP_X;
     } else if (held & PAD_RIGHT) {
-        target = held & RUN_BUTTONS ? RUN : WALK;
+        input = 1;
         facing = 0;
     }
+    skidding = 0;
     if (invulnerable > 75) {
-        target = vx; /* knocked back: no say for a moment */
-    }
-    step = on_ground ? (target ? 3 : 4) : 2;
-    if (vx < target) {
-        vx = vx + step > target ? target : vx + step;
-    } else if (vx > target) {
-        vx = vx - step < target ? target : vx - step;
+        /* Knocked back: no say for a moment. */
+    } else if (input) {
+        right = input > 0;
+        if (vx && (vx > 0) != right) {
+            push(accel, right); /* against the speed */
+            if (on_ground) {
+                push(accel, right);
+                skidding = 1;
+            }
+        } else if (speed < top) {
+            push(accel, right);
+        } else if (speed > top && on_ground) {
+            push(RELEASE, !right); /* a run let go of: down to a walk */
+        }
+    } else if (on_ground && (vx || vx_sub)) {
+        right = vx < 0;
+        push(RELEASE, right);
+        if (right ? vx >= 0 : vx < 0) {
+            vx = 0; /* slid to a stop */
+            vx_sub = 0;
+        }
     }
 
     if (pressed & JUMP_BUTTONS) {
@@ -513,9 +564,15 @@ static void control(void)
     }
     if (on_ground) {
         coyote = COYOTE;
+        rise_pull = 0x20;
+        fall_pull = 0x70;
     }
     if (jump_buffer && coyote) {
-        vy = -JUMP;
+        speed = vx < 0 ? -vx : vx;
+        vy = speed >= FAST ? -JUMP_FAST : -JUMP;
+        vy_sub = 0;
+        rise_pull = speed >= FAST ? 0x28 : speed >= 16 ? 0x1E : 0x20;
+        fall_pull = speed >= FAST ? 0x90 : speed >= 16 ? 0x60 : 0x70;
         coyote = 0;
         jump_buffer = 0;
         sfx_play(SFX_VOICE, &song_jump);
@@ -526,32 +583,45 @@ static void control(void)
     if (coyote && !on_ground) {
         --coyote;
     }
-    vy += vy < 0 && (held & JUMP_BUTTONS) ? GRAVITY_RISING : GRAVITY;
+    pull = vy < 0 && (held & JUMP_BUTTONS) ? rise_pull : fall_pull;
+    vy += pull >> 4;
+    vy_sub += pull & 15;
+    if (vy_sub >= 16) {
+        vy_sub -= 16;
+        ++vy;
+    }
     if (vy > FALL_MAX) {
         vy = FALL_MAX;
     }
 }
 
+/* A wall at x, from the head down to the feet? */
+static unsigned char wall(unsigned x)
+{
+    unsigned py = y16 >> 4;
+
+    /* Above the level's top (py < 12), the head's cell is nothing. */
+    return SOLID(cell(x, py - 12)) || SOLID(cell(x, py + 2)) || SOLID(cell(x, py + 15));
+}
+
 static void move_x(void)
 {
-    unsigned top, bottom, edge;
+    unsigned edge;
 
     if (vx < 0 && x16 < (unsigned)-vx) {
         x16 = 0;
         vx = 0;
     }
     x16 += vx;
-    top = (y16 >> 4) + 2;
-    bottom = (y16 >> 4) + 15;
     if (vx > 0) {
         edge = (x16 >> 4) + 12;
-        if (SOLID(cell(edge, top)) || SOLID(cell(edge, bottom))) {
+        if (wall(edge)) {
             x16 = ((edge & ~15) - 13) << 4;
             vx = 0;
         }
     } else if (vx < 0) {
         edge = (x16 >> 4) + 3;
-        if (SOLID(cell(edge, top)) || SOLID(cell(edge, bottom))) {
+        if (wall(edge)) {
             x16 = ((edge | 15) + 1 - 3) << 4;
             vx = 0;
         }
@@ -582,9 +652,9 @@ static void move_y(void)
             on_ground = 1;
         }
     } else {
-        probe = (y16 >> 4) + 2;
+        probe = (y16 >> 4) - 12; /* the head */
         if (SOLID(cell(left, probe)) || SOLID(cell(right, probe))) {
-            y16 = ((probe | 15) + 1 - 2) << 4;
+            y16 = ((probe | 15) + 1 + 12) << 4;
             vy = 0;
         }
     }
@@ -603,6 +673,10 @@ static void touch(void)
         return;
     }
     m = cell(cx, cy);
+    if (m != EMBER && m != LAMP && py >= 12 && (cell(cx, py - 4) == EMBER || cell(cx, py - 4) == LAMP)) {
+        cy = py - 4; /* what the head touches */
+        m = cell(cx, cy);
+    }
     if (m == EMBER) {
         level[cy >> 4][cx >> 4] = AIR;
         draw_cell(cx >> 4, cy >> 4);
@@ -644,28 +718,36 @@ static void follow(void)
     }
 }
 
+static const unsigned char run_frames[] = {HERO_RUN1, HERO_RUN2, HERO_RUN3, HERO_RUN2};
+
 static void draw_lamplighter(void)
 {
     unsigned char frame;
     unsigned speed;
+    unsigned tile;
+    int x, y;
 
-    if (dying) {
-        frame = FRAME_HURT;
-    } else if (invulnerable > 75) {
-        frame = FRAME_HURT;
+    if (dying || invulnerable > 75) {
+        frame = HERO_HURT;
     } else if (!on_ground) {
-        frame = vy < 0 ? FRAME_JUMP : FRAME_FALL;
+        frame = vy < 0 ? HERO_JUMP : HERO_FALL;
+    } else if (skidding) {
+        frame = HERO_SKID;
     } else if (vx) {
         speed = vx < 0 ? -vx : vx;
-        run_anim += speed >> 2;
-        frame = run_anim & 0x40 ? FRAME_RUN1 : FRAME_RUN2;
+        run_anim += speed >> 1;
+        frame = run_frames[run_anim >> 6];
     } else {
-        frame = FRAME_IDLE;
+        frame = HERO_IDLE;
     }
     if (invulnerable && (invulnerable & 4) && !dying) {
         return; /* blinking */
     }
-    sprite((x16 >> 4) - camera, (y16 >> 4) + HUD_LINES, frame, facing);
+    tile = TILE_HERO + frame * 8;
+    x = (x16 >> 4) - camera;
+    y = (y16 >> 4) + HUD_LINES;
+    sprite_tile(x, y - 16, tile, facing);
+    sprite_tile(x, y, tile + 4, facing);
 }
 
 /* Start pauses; Start again goes on, Select goes back to the title. */
@@ -740,7 +822,7 @@ unsigned char __fastcall__ play(unsigned char n, Result *result)
         }
 
         if (dying) {
-            vy += GRAVITY;
+            vy += 0x70 >> 4; /* falling, heavily */
             y16 += vy;
             if (!--dying) {
                 respawn();
