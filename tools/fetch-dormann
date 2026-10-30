@@ -1,0 +1,12 @@
+#!/bin/sh
+# Fetch Klaus Dormann's 6502 functional test (GPL-3.0, not part of this
+# repository) into target/dormann/, where `cargo test dormann` runs it
+# against the CPU.
+set -e
+cd "$(dirname "$0")/.."
+mkdir -p target/dormann
+base=https://raw.githubusercontent.com/Klaus2m5/6502_65C02_functional_tests/master/bin_files
+for file in 6502_functional_test.bin 6502_functional_test.lst; do
+    curl -sSfL -o "target/dormann/$file" "$base/$file"
+done
+echo "target/dormann: ready; cargo test dormann -- --nocapture"

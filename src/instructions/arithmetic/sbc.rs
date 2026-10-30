@@ -17,37 +17,23 @@ impl CPU {
         self.a = result as u8;
     }
 
-    fn sbc_decimal(&mut self, operand: u8) {
-        let carry_in = u8::from(self.status.carry);
+    /// Decimal mode, as the NMOS 6502 does it: the flags are the binary
+    /// subtraction's, the result each digit borrowed from and adjusted by 6.
+    pub(crate) fn sbc_decimal(&mut self, operand: u8) {
+        let (a, b) = (self.a as i16, operand as i16);
+        let carry_in = i16::from(self.status.carry);
 
-        let mut low_nibble = (self.a & 0x0F)
-            .wrapping_sub(operand & 0x0F)
-            .wrapping_sub(1 - carry_in);
-        let mut high_nibble = (self.a >> 4).wrapping_sub(operand >> 4);
-        let mut borrow_from_high = false;
-
-        if (low_nibble & 0x10) != 0 {
-            low_nibble = low_nibble.wrapping_sub(6);
-            borrow_from_high = true;
+        let mut low = (a & 0x0F) - (b & 0x0F) + carry_in - 1;
+        if low < 0 {
+            low = ((low - 6) & 0x0F) - 0x10;
+        }
+        let mut result = (a & 0xF0) - (b & 0xF0) + low;
+        if result < 0 {
+            result -= 0x60;
         }
 
-        high_nibble = high_nibble.wrapping_sub(u8::from(borrow_from_high));
-
-        if (high_nibble & 0x10) != 0 {
-            high_nibble = (high_nibble.wrapping_add(10)) & 0x0f;
-            borrow_from_high = true;
-        } else {
-            borrow_from_high = false;
-        }
-
-        let result = (high_nibble << 4) | (low_nibble);
-
-        self.status.carry = !borrow_from_high;
-        self.status.zero = result == 0;
-        self.status.negative = (result & 0x80) != 0;
-        self.status.overflow = false; // Overflow flag behavior in decimal mode is undefined
-
-        self.a = result;
+        self.sbc_binary(operand); // the flags, and A, replaced below
+        self.a = result as u8;
     }
 
     pub fn sbc_immediate(&mut self, cycles: &mut u32) -> bool {
@@ -202,5 +188,27 @@ impl CPU {
         };
 
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::cpu::CPU;
+
+    /// Decimal subtracts borrow; the flags are the binary subtraction's.
+    #[test]
+    fn decimal_subtracts_borrow() {
+        let mut cpu = CPU::new();
+        cpu.status.decimal_mode = true;
+        for (a, b, carry_in, difference, carry) in [(0x00, 0x01, true, 0x99, false), (0x46, 0x12, true, 0x34, true), (0x40, 0x13, true, 0x27, true), (0x32, 0x02, false, 0x29, true)] {
+            cpu.a = a;
+            cpu.status.carry = carry_in;
+            cpu.sbc_decimal(b);
+            assert_eq!((cpu.a, cpu.status.carry), (difference, carry), "${a:02X} - ${b:02X}, carry {}", u8::from(carry_in));
+        }
+        cpu.a = 0x01;
+        cpu.status.carry = true;
+        cpu.sbc_decimal(0x01);
+        assert!(cpu.status.zero);
     }
 }

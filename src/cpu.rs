@@ -23,7 +23,7 @@ pub enum StatusFlag {
 /// Result of executing one instruction.
 pub enum Flow {
     Continue,
-    /// BRK, or an instruction that could not run (legacy end-of-frame).
+    /// An instruction that could not run in the cycles left.
     Stop,
     Illegal(u8),
 }
@@ -979,7 +979,6 @@ impl CPU {
                 if !self.brk(cycles) {
                     return Flow::Stop;
                 }
-                return Flow::Stop;
             }
             None => return Flow::Illegal(opcode),
         }

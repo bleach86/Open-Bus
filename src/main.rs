@@ -1,6 +1,7 @@
 mod backlight;
 mod cart;
 mod cpu;
+mod dormann;
 mod drive;
 mod gamepad;
 mod input;
