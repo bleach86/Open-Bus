@@ -9,10 +9,10 @@
 //!
 //! - The functional test: every documented instruction, addressing mode and
 //!   flag, decimal mode, BRK and RTI. A 64K image; starts at $0400 and
-//!   succeeds at $3469 in 80,242,715 cycles.
+//!   succeeds at $3469 in 96,241,364 cycles (as on the 6502).
 //! - The decimal test (Bruce Clark's): ADC and SBC in decimal mode for every
 //!   pair of bytes, both carries: the result and the carry. Assembled at
-//!   $0200, its start; ends at `done` in 43,730,212 cycles, with ERROR ($0B)
+//!   $0200, its start; ends at `done` in 46,089,505 cycles, with ERROR ($0B)
 //!   0 if all were right.
 
 #[cfg(test)]
@@ -44,7 +44,7 @@ mod tests {
         cpu.memory.data.copy_from_slice(&image);
         cpu.reset();
         cpu.pc = 0x0400;
-        cpu.execute(80_242_715 + 1_000);
+        cpu.execute(96_241_364 + 1_000);
 
         let listing = std::fs::read_to_string(dir().join("6502_functional_test.lst")).unwrap_or_default();
         assert!(
@@ -73,7 +73,7 @@ mod tests {
         cpu.memory.data[0x0200..0x0200 + program.len()].copy_from_slice(&program);
         cpu.reset();
         cpu.pc = 0x0200;
-        cpu.execute(43_730_212 + 1_000);
+        cpu.execute(46_089_505 + 1_000);
 
         let done = labels
             .lines()

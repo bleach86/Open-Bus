@@ -1,12 +1,7 @@
 use crate::cpu::CPU;
 
 impl CPU {
-    pub fn brk(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 7;
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn brk(&mut self, cycles: &mut u32) {
         self.pc = self.pc.wrapping_add(1);
         self.push_word(self.pc, cycles);
 
@@ -18,8 +13,6 @@ impl CPU {
 
         self.pc = self.read_word(0xFFFE, cycles);
 
-        *cycles = cycles.wrapping_sub(2);
-
-        true
+        *cycles = cycles.wrapping_add(1);
     }
 }

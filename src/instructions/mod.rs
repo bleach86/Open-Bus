@@ -67,6 +67,7 @@ pub mod status_flag_changes {
 
 pub mod system_functions {
     mod brk;
+    mod interrupt;
     mod nop;
     mod rti;
 }

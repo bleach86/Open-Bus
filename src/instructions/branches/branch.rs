@@ -1,15 +1,10 @@
 use crate::cpu::{CPU, StatusFlag};
 use crate::instructions::op_codes::Opcode;
 
-const CYCLES_REQUIRED: u32 = 4;
 const CHECK_SET: [Opcode; 4] = [Opcode::BCS, Opcode::BEQ, Opcode::BMI, Opcode::BVS];
 
 impl CPU {
-    pub fn branch(&mut self, cycles: &mut u32, status_flag: StatusFlag, op_code: Opcode) -> bool {
-        if *cycles < CYCLES_REQUIRED - 1 {
-            return false;
-        }
-
+    pub fn branch(&mut self, cycles: &mut u32, status_flag: StatusFlag, op_code: Opcode) {
         let offset: i8 = self.fetch_byte(cycles) as i8;
         let original_pc: u16 = self.pc;
 
@@ -29,13 +24,11 @@ impl CPU {
 
         if should_branch {
             self.pc = (self.pc as i32 + offset as i32) as u16;
-            *cycles = cycles.wrapping_sub(1);
+            *cycles = cycles.wrapping_add(1);
 
             if (self.pc & 0xFF00) != (original_pc & 0xFF00) {
-                *cycles = cycles.wrapping_sub(1);
+                *cycles = cycles.wrapping_add(1);
             }
         }
-
-        true
     }
 }

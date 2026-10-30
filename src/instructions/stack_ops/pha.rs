@@ -1,13 +1,8 @@
 use crate::cpu::CPU;
 
 impl CPU {
-    pub fn pha(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required = 3;
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn pha(&mut self, cycles: &mut u32) {
         self.push_byte(self.a, cycles);
-        true
+        *cycles = cycles.wrapping_add(1);
     }
 }

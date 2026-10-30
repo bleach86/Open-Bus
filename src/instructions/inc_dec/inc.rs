@@ -6,77 +6,49 @@ impl CPU {
         self.status.negative = (value & 0x80) != 0;
     }
 
-    pub fn inc_zero_page(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 5;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn inc_zero_page(&mut self, cycles: &mut u32) {
         let addr = self.fetch_byte(cycles) as u16;
         let mut value = self.read_byte(addr, cycles);
         value = value.wrapping_add(1);
         self.write_byte(addr, value, cycles);
 
-        *cycles = cycles.wrapping_sub(1);
+        *cycles = cycles.wrapping_add(1);
 
         self.inc_set_flags(value);
-        true
     }
 
-    pub fn inc_zero_page_x(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 6;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn inc_zero_page_x(&mut self, cycles: &mut u32) {
         let base_addr = self.fetch_byte(cycles);
         let addr = base_addr.wrapping_add(self.x) as u16;
         let mut value = self.read_byte(addr, cycles);
         value = value.wrapping_add(1);
         self.write_byte(addr, value, cycles);
 
-        *cycles = cycles.wrapping_sub(2);
+        *cycles = cycles.wrapping_add(2);
 
         self.inc_set_flags(value);
-        true
     }
 
-    pub fn inc_absolute(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 6;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn inc_absolute(&mut self, cycles: &mut u32) {
         let addr = self.fetch_word(cycles);
         let mut value = self.read_byte(addr, cycles);
         value = value.wrapping_add(1);
         self.write_byte(addr, value, cycles);
 
-        *cycles = cycles.wrapping_sub(1);
+        *cycles = cycles.wrapping_add(1);
 
         self.inc_set_flags(value);
-        true
     }
 
-    pub fn inc_absolute_x(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 7;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn inc_absolute_x(&mut self, cycles: &mut u32) {
         let base_addr = self.fetch_word(cycles);
         let addr = base_addr.wrapping_add(self.x as u16);
         let mut value = self.read_byte(addr, cycles);
         value = value.wrapping_add(1);
         self.write_byte(addr, value, cycles);
 
-        *cycles = cycles.wrapping_sub(2);
+        *cycles = cycles.wrapping_add(2);
 
         self.inc_set_flags(value);
-        true
     }
 }

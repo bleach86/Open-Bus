@@ -1,10 +1,10 @@
 use crate::instructions::op_codes::Opcode;
 use crate::ram::Memory;
 use std::collections::VecDeque;
-use std::u32;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
 use std::{
-    fs::File,
-    io::{Read, stdin},
+    io::{IsTerminal, Read, stdin},
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -24,8 +24,6 @@ pub enum StatusFlag {
 /// What an instruction leaves the run loop to do.
 pub enum Flow {
     Continue,
-    /// An instruction that could not run in the cycles left.
-    Stop,
     Illegal(u8),
 }
 
@@ -81,6 +79,8 @@ pub struct CPU {
     pub y: u8,                  // Y Register
     pub status: StatusRegister, // Status Register
     pub memory: Memory,         // Memory
+    pub irq: bool,              // IRQ line: held by a device until it's served
+    pub nmi: bool,              // NMI: an edge, taken once
 }
 
 impl CPU {
@@ -97,6 +97,18 @@ impl CPU {
         self.y = 0;
 
         self.status = StatusRegister::default();
+        self.status.interrupt_disable = true; // reset sets I, as on the 6502
+    }
+
+    pub fn execute_forever(&mut self) {
+        let terminal = &mut Terminal::new();
+
+        println!("PC set to {:04X}", self.pc);
+        //std::process::exit(0);
+
+        let cycles = u32::MAX;
+
+        self.execute_inner(cycles, terminal, true);
     }
 
     pub fn execute(&mut self, mut cycles: u32) {
@@ -105,27 +117,28 @@ impl CPU {
         println!("PC set to {:04X}", self.pc);
         //std::process::exit(0);
 
-        self.execute_inner(cycles, terminal);
+        self.execute_inner(cycles, terminal, false);
     }
 
-    /// The run loop: an instruction at a time, until one stops it.
-    fn execute_inner(&mut self, mut cycles: u32, terminal: &mut Terminal) {
+    /// The run loop: an instruction at a time, for `cycles` cycles. As on
+    /// the 6502, an instruction once fetched runs all its cycles: the last
+    /// one can end past `cycles`.
+    fn execute_inner(&mut self, cycles: u32, terminal: &mut Terminal, run_forever: bool) {
         let mut total_cycles: u64 = 0;
         let mut next_pace: u64 = PACE_INTERVAL_CYCLES;
         let start = Instant::now();
+        // The cycle counter: every cycle counts it on, wrapping round as a
+        // hardware counter does.
+        let mut clock: u32 = 0;
 
-        while cycles > 0 {
-            let cycle_start = cycles;
+        while run_forever || total_cycles < cycles as u64 {
+            let cycle_start = clock;
+            let i_before = self.status.interrupt_disable;
 
-            let opcode = self.fetch_byte(&mut cycles);
+            let opcode = self.fetch_byte(&mut clock);
 
-            match self.exec_opcode(opcode, &mut cycles) {
+            match self.exec_opcode(opcode, &mut clock) {
                 Flow::Continue => {}
-                Flow::Stop => {
-                    // Not enough cycles left to run it: PC back on its opcode.
-                    self.pc = self.pc.wrapping_sub(1);
-                    break;
-                }
                 Flow::Illegal(opcode) => {
                     println!("Unimplemented opcode: ${:02X}", opcode);
                     break;
@@ -134,7 +147,22 @@ impl CPU {
 
             terminal.poll_input(self);
 
-            let used = cycle_start.wrapping_sub(cycles) as u64;
+            // The 6502 looks at IRQ before an instruction's last cycle: the I
+            // that CLI, SEI and PLP set on that cycle counts from the next.
+            let masked = match Opcode::from_byte(opcode) {
+                Some(Opcode::CLI | Opcode::SEI | Opcode::PLP) => i_before,
+                _ => self.status.interrupt_disable,
+            };
+
+            // Interrupts are taken between instructions; NMI first.
+            if self.nmi {
+                self.interrupt(0xFFFA, &mut clock);
+                self.nmi = false;
+            } else if self.irq && !masked {
+                self.interrupt(0xFFFE, &mut clock);
+            }
+
+            let used = clock.wrapping_sub(cycle_start) as u64;
             total_cycles += used;
 
             if total_cycles >= next_pace {
@@ -158,762 +186,460 @@ impl CPU {
     pub(crate) fn exec_opcode(&mut self, opcode: u8, cycles: &mut u32) -> Flow {
         match Opcode::from_byte(opcode) {
             Some(Opcode::ADCImmediate) => {
-                if !self.adc_immediate(cycles) {
-                    return Flow::Stop;
-                }
+                self.adc_immediate(cycles);
             }
             Some(Opcode::ADCZeroPage) => {
-                if !self.adc_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.adc_zero_page(cycles);
             }
             Some(Opcode::ADCZeroPageX) => {
-                if !self.adc_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.adc_zero_page_x(cycles);
             }
             Some(Opcode::ADCAbsolute) => {
-                if !self.adc_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.adc_absolute(cycles);
             }
             Some(Opcode::ADCAbsoluteX) => {
-                if !self.adc_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.adc_absolute_x(cycles);
             }
             Some(Opcode::ADCAbsoluteY) => {
-                if !self.adc_absolute_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.adc_absolute_y(cycles);
             }
             Some(Opcode::ADCIndirectX) => {
-                if !self.adc_indirect_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.adc_indirect_x(cycles);
             }
             Some(Opcode::ADCIndirectY) => {
-                if !self.adc_indirect_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.adc_indirect_y(cycles);
             }
             Some(Opcode::ANDImmediate) => {
-                if !self.and_immediate(cycles) {
-                    return Flow::Stop;
-                }
+                self.and_immediate(cycles);
             }
             Some(Opcode::ANDZeroPage) => {
-                if !self.and_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.and_zero_page(cycles);
             }
             Some(Opcode::ANDZeroPageX) => {
-                if !self.and_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.and_zero_page_x(cycles);
             }
             Some(Opcode::ANDAbsolute) => {
-                if !self.and_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.and_absolute(cycles);
             }
             Some(Opcode::ANDAbsoluteX) => {
-                if !self.and_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.and_absolute_x(cycles);
             }
             Some(Opcode::ANDAbsoluteY) => {
-                if !self.and_absolute_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.and_absolute_y(cycles);
             }
             Some(Opcode::ANDIndirectX) => {
-                if !self.and_indirect_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.and_indirect_x(cycles);
             }
             Some(Opcode::ANDIndirectY) => {
-                if !self.and_indirect_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.and_indirect_y(cycles);
             }
             Some(Opcode::ASLAccumulator) => {
-                if !self.asl_accumulator(cycles) {
-                    return Flow::Stop;
-                }
+                self.asl_accumulator(cycles);
             }
             Some(Opcode::ASLZeroPage) => {
-                if !self.asl_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.asl_zero_page(cycles);
             }
             Some(Opcode::ASLZeroPageX) => {
-                if !self.asl_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.asl_zero_page_x(cycles);
             }
             Some(Opcode::ASLAbsolute) => {
-                if !self.asl_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.asl_absolute(cycles);
             }
             Some(Opcode::ASLAbsoluteX) => {
-                if !self.asl_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.asl_absolute_x(cycles);
             }
             Some(Opcode::BCC) => {
-                if !self.branch(cycles, StatusFlag::Carry, Opcode::BCC) {
-                    return Flow::Stop;
-                }
+                self.branch(cycles, StatusFlag::Carry, Opcode::BCC);
             }
             Some(Opcode::BCS) => {
-                if !self.branch(cycles, StatusFlag::Carry, Opcode::BCS) {
-                    return Flow::Stop;
-                }
+                self.branch(cycles, StatusFlag::Carry, Opcode::BCS);
             }
             Some(Opcode::BEQ) => {
-                if !self.branch(cycles, StatusFlag::Zero, Opcode::BEQ) {
-                    return Flow::Stop;
-                }
+                self.branch(cycles, StatusFlag::Zero, Opcode::BEQ);
             }
             Some(Opcode::BMI) => {
-                if !self.branch(cycles, StatusFlag::Negative, Opcode::BMI) {
-                    return Flow::Stop;
-                }
+                self.branch(cycles, StatusFlag::Negative, Opcode::BMI);
             }
             Some(Opcode::BNE) => {
-                if !self.branch(cycles, StatusFlag::Zero, Opcode::BNE) {
-                    return Flow::Stop;
-                }
+                self.branch(cycles, StatusFlag::Zero, Opcode::BNE);
             }
             Some(Opcode::BPL) => {
-                if !self.branch(cycles, StatusFlag::Negative, Opcode::BPL) {
-                    return Flow::Stop;
-                }
+                self.branch(cycles, StatusFlag::Negative, Opcode::BPL);
             }
             Some(Opcode::BVC) => {
-                if !self.branch(cycles, StatusFlag::Overflow, Opcode::BVC) {
-                    return Flow::Stop;
-                }
+                self.branch(cycles, StatusFlag::Overflow, Opcode::BVC);
             }
             Some(Opcode::BVS) => {
-                if !self.branch(cycles, StatusFlag::Overflow, Opcode::BVS) {
-                    return Flow::Stop;
-                }
+                self.branch(cycles, StatusFlag::Overflow, Opcode::BVS);
             }
             Some(Opcode::BITZeroPage) => {
-                if !self.bit_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.bit_zero_page(cycles);
             }
             Some(Opcode::BITAbsolute) => {
-                if !self.bit_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.bit_absolute(cycles);
             }
             Some(Opcode::CLC) => {
-                if !self.mod_flag(StatusFlag::Carry, false, cycles) {
-                    return Flow::Stop;
-                }
+                self.mod_flag(StatusFlag::Carry, false, cycles);
             }
             Some(Opcode::CLD) => {
-                if !self.mod_flag(StatusFlag::DecimalMode, false, cycles) {
-                    return Flow::Stop;
-                }
+                self.mod_flag(StatusFlag::DecimalMode, false, cycles);
             }
             Some(Opcode::CLI) => {
-                if !self.mod_flag(StatusFlag::InterruptDisable, false, cycles) {
-                    return Flow::Stop;
-                }
+                self.mod_flag(StatusFlag::InterruptDisable, false, cycles);
             }
             Some(Opcode::CLV) => {
-                if !self.mod_flag(StatusFlag::Overflow, false, cycles) {
-                    return Flow::Stop;
-                }
+                self.mod_flag(StatusFlag::Overflow, false, cycles);
             }
             Some(Opcode::CMPImmediate) => {
-                if !self.cmp_immediate(cycles) {
-                    return Flow::Stop;
-                }
+                self.cmp_immediate(cycles);
             }
             Some(Opcode::CMPZeroPage) => {
-                if !self.cmp_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.cmp_zero_page(cycles);
             }
             Some(Opcode::CMPZeroPageX) => {
-                if !self.cmp_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.cmp_zero_page_x(cycles);
             }
             Some(Opcode::CMPAbsolute) => {
-                if !self.cmp_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.cmp_absolute(cycles);
             }
             Some(Opcode::CMPAbsoluteX) => {
-                if !self.cmp_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.cmp_absolute_x(cycles);
             }
             Some(Opcode::CMPAbsoluteY) => {
-                if !self.cmp_absolute_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.cmp_absolute_y(cycles);
             }
             Some(Opcode::CMPIndirectX) => {
-                if !self.cmp_indirect_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.cmp_indirect_x(cycles);
             }
             Some(Opcode::CMPIndirectY) => {
-                if !self.cmp_indirect_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.cmp_indirect_y(cycles);
             }
             Some(Opcode::CPXImmediate) => {
-                if !self.cpx_immediate(cycles) {
-                    return Flow::Stop;
-                }
+                self.cpx_immediate(cycles);
             }
             Some(Opcode::CPXZeroPage) => {
-                if !self.cpx_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.cpx_zero_page(cycles);
             }
             Some(Opcode::CPXAbsolute) => {
-                if !self.cpx_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.cpx_absolute(cycles);
             }
             Some(Opcode::CPYImmediate) => {
-                if !self.cpy_immediate(cycles) {
-                    return Flow::Stop;
-                }
+                self.cpy_immediate(cycles);
             }
             Some(Opcode::CPYZeroPage) => {
-                if !self.cpy_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.cpy_zero_page(cycles);
             }
             Some(Opcode::CPYAbsolute) => {
-                if !self.cpy_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.cpy_absolute(cycles);
             }
             Some(Opcode::DEX) => {
-                if !self.dex(cycles) {
-                    return Flow::Stop;
-                }
+                self.dex(cycles);
             }
             Some(Opcode::DEY) => {
-                if !self.dey(cycles) {
-                    return Flow::Stop;
-                }
+                self.dey(cycles);
             }
             Some(Opcode::DECZeroPage) => {
-                if !self.dec_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.dec_zero_page(cycles);
             }
             Some(Opcode::DECZeroPageX) => {
-                if !self.dec_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.dec_zero_page_x(cycles);
             }
             Some(Opcode::DECAbsolute) => {
-                if !self.dec_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.dec_absolute(cycles);
             }
             Some(Opcode::DECAbsoluteX) => {
-                if !self.dec_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.dec_absolute_x(cycles);
             }
             Some(Opcode::EORImmediate) => {
-                if !self.eor_immediate(cycles) {
-                    return Flow::Stop;
-                }
+                self.eor_immediate(cycles);
             }
             Some(Opcode::EORZeroPage) => {
-                if !self.eor_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.eor_zero_page(cycles);
             }
             Some(Opcode::EORZeroPageX) => {
-                if !self.eor_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.eor_zero_page_x(cycles);
             }
             Some(Opcode::EORAbsolute) => {
-                if !self.eor_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.eor_absolute(cycles);
             }
             Some(Opcode::EORAbsoluteX) => {
-                if !self.eor_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.eor_absolute_x(cycles);
             }
             Some(Opcode::EORAbsoluteY) => {
-                if !self.eor_absolute_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.eor_absolute_y(cycles);
             }
             Some(Opcode::EORIndirectX) => {
-                if !self.eor_indirect_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.eor_indirect_x(cycles);
             }
             Some(Opcode::EORIndirectY) => {
-                if !self.eor_indirect_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.eor_indirect_y(cycles);
             }
             Some(Opcode::JMPAbsolute) => {
-                if !self.jmp_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.jmp_absolute(cycles);
             }
             Some(Opcode::JMPIndirect) => {
-                if !self.jmp_indirect(cycles) {
-                    return Flow::Stop;
-                }
+                self.jmp_indirect(cycles);
             }
             Some(Opcode::INX) => {
-                if !self.inx(cycles) {
-                    return Flow::Stop;
-                }
+                self.inx(cycles);
             }
             Some(Opcode::INY) => {
-                if !self.iny(cycles) {
-                    return Flow::Stop;
-                }
+                self.iny(cycles);
             }
             Some(Opcode::INCZeroPage) => {
-                if !self.inc_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.inc_zero_page(cycles);
             }
             Some(Opcode::INCZeroPageX) => {
-                if !self.inc_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.inc_zero_page_x(cycles);
             }
             Some(Opcode::INCAbsolute) => {
-                if !self.inc_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.inc_absolute(cycles);
             }
             Some(Opcode::INCAbsoluteX) => {
-                if !self.inc_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.inc_absolute_x(cycles);
             }
             Some(Opcode::LDAImmediate) => {
-                if !self.lda_immediate(cycles) {
-                    return Flow::Stop;
-                }
+                self.lda_immediate(cycles);
             }
             Some(Opcode::LDAZeroPage) => {
-                if !self.lda_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.lda_zero_page(cycles);
             }
             Some(Opcode::LDAZeroPageX) => {
-                if !self.lda_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.lda_zero_page_x(cycles);
             }
             Some(Opcode::LDAAbsolute) => {
-                if !self.lda_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.lda_absolute(cycles);
             }
             Some(Opcode::LDAAbsoluteX) => {
-                if !self.lda_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.lda_absolute_x(cycles);
             }
             Some(Opcode::LDAAbsoluteY) => {
-                if !self.lda_absolute_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.lda_absolute_y(cycles);
             }
             Some(Opcode::LDAIndirectX) => {
-                if !self.lda_indirect_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.lda_indirect_x(cycles);
             }
             Some(Opcode::LDAIndirectY) => {
-                if !self.lda_indirect_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.lda_indirect_y(cycles);
             }
             Some(Opcode::LDXImmediate) => {
-                if !self.ldx_immediate(cycles) {
-                    return Flow::Stop;
-                }
+                self.ldx_immediate(cycles);
             }
             Some(Opcode::LDXZeroPage) => {
-                if !self.ldx_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.ldx_zero_page(cycles);
             }
             Some(Opcode::LDXZeroPageY) => {
-                if !self.ldx_zero_page_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.ldx_zero_page_y(cycles);
             }
             Some(Opcode::LDXAbsolute) => {
-                if !self.ldx_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.ldx_absolute(cycles);
             }
             Some(Opcode::LDXAbsoluteY) => {
-                if !self.ldx_absolute_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.ldx_absolute_y(cycles);
             }
             Some(Opcode::LDYImmediate) => {
-                if !self.ldy_immediate(cycles) {
-                    return Flow::Stop;
-                }
+                self.ldy_immediate(cycles);
             }
             Some(Opcode::LDYZeroPage) => {
-                if !self.ldy_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.ldy_zero_page(cycles);
             }
             Some(Opcode::LDYZeroPageX) => {
-                if !self.ldy_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.ldy_zero_page_x(cycles);
             }
             Some(Opcode::LDYAbsolute) => {
-                if !self.ldy_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.ldy_absolute(cycles);
             }
             Some(Opcode::LDYAbsoluteX) => {
-                if !self.ldy_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.ldy_absolute_x(cycles);
             }
             Some(Opcode::LSRAccumulator) => {
-                if !self.lsr_accumulator(cycles) {
-                    return Flow::Stop;
-                }
+                self.lsr_accumulator(cycles);
             }
             Some(Opcode::LSRZeroPage) => {
-                if !self.lsr_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.lsr_zero_page(cycles);
             }
             Some(Opcode::LSRZeroPageX) => {
-                if !self.lsr_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.lsr_zero_page_x(cycles);
             }
             Some(Opcode::LSRAbsolute) => {
-                if !self.lsr_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.lsr_absolute(cycles);
             }
             Some(Opcode::LSRAbsoluteX) => {
-                if !self.lsr_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.lsr_absolute_x(cycles);
             }
             Some(Opcode::PHA) => {
-                if !self.pha(cycles) {
-                    return Flow::Stop;
-                }
+                self.pha(cycles);
             }
             Some(Opcode::PHP) => {
-                if !self.php(cycles) {
-                    return Flow::Stop;
-                }
+                self.php(cycles);
             }
             Some(Opcode::PLA) => {
-                if !self.pla(cycles) {
-                    return Flow::Stop;
-                }
+                self.pla(cycles);
             }
             Some(Opcode::PLP) => {
-                if !self.plp(cycles) {
-                    return Flow::Stop;
-                }
+                self.plp(cycles);
             }
             Some(Opcode::ORAbsoluteY) => {
-                if !self.or_absolute_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.or_absolute_y(cycles);
             }
             Some(Opcode::ORIndirectX) => {
-                if !self.or_indirect_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.or_indirect_x(cycles);
             }
             Some(Opcode::ORIndirectY) => {
-                if !self.or_indirect_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.or_indirect_y(cycles);
             }
             Some(Opcode::ORImmediate) => {
-                if !self.or_immediate(cycles) {
-                    return Flow::Stop;
-                }
+                self.or_immediate(cycles);
             }
             Some(Opcode::ORZeroPage) => {
-                if !self.or_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.or_zero_page(cycles);
             }
             Some(Opcode::ORZeroPageX) => {
-                if !self.or_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.or_zero_page_x(cycles);
             }
             Some(Opcode::ORAbsolute) => {
-                if !self.or_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.or_absolute(cycles);
             }
             Some(Opcode::ORAbsoluteX) => {
-                if !self.or_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.or_absolute_x(cycles);
             }
             Some(Opcode::SBCImmediate) => {
-                if !self.sbc_immediate(cycles) {
-                    return Flow::Stop;
-                }
+                self.sbc_immediate(cycles);
             }
             Some(Opcode::SBCZeroPage) => {
-                if !self.sbc_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.sbc_zero_page(cycles);
             }
             Some(Opcode::SBCZeroPageX) => {
-                if !self.sbc_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.sbc_zero_page_x(cycles);
             }
             Some(Opcode::SBCAbsolute) => {
-                if !self.sbc_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.sbc_absolute(cycles);
             }
             Some(Opcode::SBCAbsoluteX) => {
-                if !self.sbc_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.sbc_absolute_x(cycles);
             }
             Some(Opcode::SBCAbsoluteY) => {
-                if !self.sbc_absolute_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.sbc_absolute_y(cycles);
             }
             Some(Opcode::SBCIndirectX) => {
-                if !self.sbc_indirect_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.sbc_indirect_x(cycles);
             }
             Some(Opcode::SBCIndirectY) => {
-                if !self.sbc_indirect_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.sbc_indirect_y(cycles);
             }
             Some(Opcode::SEC) => {
-                if !self.mod_flag(StatusFlag::Carry, true, cycles) {
-                    return Flow::Stop;
-                }
+                self.mod_flag(StatusFlag::Carry, true, cycles);
             }
             Some(Opcode::SED) => {
-                if !self.mod_flag(StatusFlag::DecimalMode, true, cycles) {
-                    return Flow::Stop;
-                }
+                self.mod_flag(StatusFlag::DecimalMode, true, cycles);
             }
             Some(Opcode::SEI) => {
-                if !self.mod_flag(StatusFlag::InterruptDisable, true, cycles) {
-                    return Flow::Stop;
-                }
+                self.mod_flag(StatusFlag::InterruptDisable, true, cycles);
             }
             Some(Opcode::STAZeroPage) => {
-                if !self.sta_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.sta_zero_page(cycles);
             }
             Some(Opcode::STAZeroPageX) => {
-                if !self.sta_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.sta_zero_page_x(cycles);
             }
             Some(Opcode::STAAbsolute) => {
-                if !self.sta_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.sta_absolute(cycles);
             }
             Some(Opcode::STAAbsoluteX) => {
-                if !self.sta_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.sta_absolute_x(cycles);
             }
             Some(Opcode::STAAbsoluteY) => {
-                if !self.sta_absolute_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.sta_absolute_y(cycles);
             }
             Some(Opcode::STAIndirectX) => {
-                if !self.sta_indirect_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.sta_indirect_x(cycles);
             }
             Some(Opcode::STAIndirectY) => {
-                if !self.sta_indirect_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.sta_indirect_y(cycles);
             }
             Some(Opcode::STXZeroPage) => {
-                if !self.stx_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.stx_zero_page(cycles);
             }
             Some(Opcode::STXZeroPageY) => {
-                if !self.stx_zero_page_y(cycles) {
-                    return Flow::Stop;
-                }
+                self.stx_zero_page_y(cycles);
             }
             Some(Opcode::STXAbsolute) => {
-                if !self.stx_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.stx_absolute(cycles);
             }
             Some(Opcode::STYZeroPage) => {
-                if !self.sty_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.sty_zero_page(cycles);
             }
             Some(Opcode::STYZeroPageX) => {
-                if !self.sty_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.sty_zero_page_x(cycles);
             }
             Some(Opcode::STYAbsolute) => {
-                if !self.sty_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.sty_absolute(cycles);
             }
             Some(Opcode::TAX) => {
-                if !self.transfer_register(Registers::A, Registers::X, cycles) {
-                    return Flow::Stop;
-                }
+                self.transfer_register(Registers::A, Registers::X, cycles);
             }
             Some(Opcode::TAY) => {
-                if !self.transfer_register(Registers::A, Registers::Y, cycles) {
-                    return Flow::Stop;
-                }
+                self.transfer_register(Registers::A, Registers::Y, cycles);
             }
             Some(Opcode::TXA) => {
-                if !self.transfer_register(Registers::X, Registers::A, cycles) {
-                    return Flow::Stop;
-                }
+                self.transfer_register(Registers::X, Registers::A, cycles);
             }
             Some(Opcode::TYA) => {
-                if !self.transfer_register(Registers::Y, Registers::A, cycles) {
-                    return Flow::Stop;
-                }
+                self.transfer_register(Registers::Y, Registers::A, cycles);
             }
             Some(Opcode::TSX) => {
-                if !self.tsx(cycles) {
-                    return Flow::Stop;
-                }
+                self.tsx(cycles);
             }
             Some(Opcode::TXS) => {
-                if !self.txs(cycles) {
-                    return Flow::Stop;
-                }
+                self.txs(cycles);
             }
             Some(Opcode::JSRAbsolute) => {
-                if !self.jsr_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.jsr_absolute(cycles);
                 ////println!("JSR ${:04X}", sub_addr);
             }
             Some(Opcode::ROLAccumulator) => {
-                if !self.rol_accumulator(cycles) {
-                    return Flow::Stop;
-                }
+                self.rol_accumulator(cycles);
             }
             Some(Opcode::ROLZeroPage) => {
-                if !self.rol_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.rol_zero_page(cycles);
             }
             Some(Opcode::ROLZeroPageX) => {
-                if !self.rol_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.rol_zero_page_x(cycles);
             }
             Some(Opcode::ROLAbsolute) => {
-                if !self.rol_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.rol_absolute(cycles);
             }
             Some(Opcode::ROLAbsoluteX) => {
-                if !self.rol_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.rol_absolute_x(cycles);
             }
             Some(Opcode::RORAccumulator) => {
-                if !self.ror_accumulator(cycles) {
-                    return Flow::Stop;
-                }
+                self.ror_accumulator(cycles);
             }
             Some(Opcode::RORZeroPage) => {
-                if !self.ror_zero_page(cycles) {
-                    return Flow::Stop;
-                }
+                self.ror_zero_page(cycles);
             }
             Some(Opcode::RORZeroPageX) => {
-                if !self.ror_zero_page_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.ror_zero_page_x(cycles);
             }
             Some(Opcode::RORAbsolute) => {
-                if !self.ror_absolute(cycles) {
-                    return Flow::Stop;
-                }
+                self.ror_absolute(cycles);
             }
             Some(Opcode::RORAbsoluteX) => {
-                if !self.ror_absolute_x(cycles) {
-                    return Flow::Stop;
-                }
+                self.ror_absolute_x(cycles);
             }
             Some(Opcode::RTS) => {
-                if !self.rts(cycles) {
-                    return Flow::Stop;
-                }
+                self.rts(cycles);
 
                 ////println!("RTS to ${:04X}", self.pc);
             }
             Some(Opcode::RTI) => {
-                if !self.rti(cycles) {
-                    return Flow::Stop;
-                }
+                self.rti(cycles);
             }
             Some(Opcode::NOP) => {
-                if !self.nop(cycles) {
-                    return Flow::Stop;
-                }
+                self.nop(cycles);
             }
             Some(Opcode::BRK) => {
-                if !self.brk(cycles) {
-                    return Flow::Stop;
-                }
+                self.brk(cycles);
             }
             None => return Flow::Illegal(opcode),
         }
@@ -925,12 +651,12 @@ impl CPU {
     }
 
     pub fn read_byte(&mut self, addr: u16, cycles: &mut u32) -> u8 {
-        *cycles = cycles.saturating_sub(1);
+        *cycles = cycles.wrapping_add(1);
         self.memory.read(addr)
     }
 
     pub fn write_byte(&mut self, addr: u16, value: u8, cycles: &mut u32) {
-        *cycles = cycles.saturating_sub(1);
+        *cycles = cycles.wrapping_add(1);
         self.memory.write(addr, value);
     }
 
@@ -953,13 +679,19 @@ impl CPU {
         let lo = self.read_byte(zp_addr as u16, cycles) as u16;
         let hi = self.read_byte((zp_addr.wrapping_add(1) & 0x00FF) as u16, cycles) as u16;
         let base = (hi << 8) | lo;
-        base.wrapping_add(self.y as u16)
+        let addr = base.wrapping_add(self.y as u16);
+
+        // Additional cycle if page crossed
+        if (base & 0xFF00) != (addr & 0xFF00) {
+            *cycles = cycles.wrapping_add(1);
+        }
+        addr
     }
 
     pub fn fetch_byte(&mut self, cycles: &mut u32) -> u8 {
         let byte = self.memory.read(self.pc);
         self.pc = self.pc.wrapping_add(1);
-        *cycles = cycles.saturating_sub(1);
+        *cycles = cycles.wrapping_add(1);
 
         byte
     }
@@ -974,14 +706,14 @@ impl CPU {
         let addr = self.sp_to_addr();
         self.memory.write(addr, value);
         self.sp = self.sp.wrapping_sub(1); // decrement SP after push
-        *cycles = cycles.saturating_sub(1);
+        *cycles = cycles.wrapping_add(1);
     }
 
     pub fn pop_byte(&mut self, cycles: &mut u32) -> u8 {
         self.sp = self.sp.wrapping_add(1); // increment SP before pop
         let addr = self.sp_to_addr();
         let value = self.memory.read(addr);
-        *cycles = cycles.saturating_sub(1);
+        *cycles = cycles.wrapping_add(1);
         value
     }
 
@@ -999,30 +731,51 @@ impl CPU {
     }
 }
 
-use std::sync::{Arc, Mutex};
-use std::thread;
-
 #[derive(Default, Clone)]
 struct Terminal {
     rx_buffer: Arc<Mutex<VecDeque<u8>>>,
+    /// The first Terminal: it set up the host terminal, and puts it back.
+    first: bool,
 }
 
 impl Terminal {
     fn new() -> Self {
-        let rx_buffer = Arc::new(Mutex::new(VecDeque::new()));
-        let rx_clone = Arc::clone(&rx_buffer);
+        // One reader of stdin for the process: another Terminal's thread
+        // would take this one's keys.
+        static RX_BUFFER: OnceLock<Arc<Mutex<VecDeque<u8>>>> = OnceLock::new();
 
-        // Spawn a thread to read stdin asynchronously
-        thread::spawn(move || {
-            let stdin = stdin();
-            for byte in stdin.bytes() {
-                if let Ok(b) = byte {
-                    rx_clone.lock().unwrap().push_back(b);
-                }
-            }
-        });
+        let mut first = false;
+        let rx_buffer = RX_BUFFER
+            .get_or_init(|| {
+                first = true;
 
-        Self { rx_buffer }
+                // A key at a time and not echoed: the machine echoes what it
+                // reads. Ctrl-C comes in as a key too.
+                stty(&["-icanon", "-echo", "-isig"]);
+
+                let rx_buffer = Arc::new(Mutex::new(VecDeque::new()));
+                let rx_clone = Arc::clone(&rx_buffer);
+
+                // Spawn a thread to read stdin asynchronously
+                thread::spawn(move || {
+                    let stdin = stdin();
+                    for byte in stdin.bytes() {
+                        if let Ok(b) = byte {
+                            if b == 0x03 {
+                                // Ctrl-C: off
+                                stty(&["icanon", "echo", "isig"]);
+                                std::process::exit(0);
+                            }
+                            rx_clone.lock().unwrap().push_back(b);
+                        }
+                    }
+                });
+
+                rx_buffer
+            })
+            .clone();
+
+        Self { rx_buffer, first }
     }
 
     fn poll_input(&mut self, cpu: &mut CPU) {
@@ -1034,5 +787,20 @@ impl Terminal {
             cpu.memory.write(0xFFF9, ascii);
             //println!("Emulator input (ASCII): {}", ascii);
         }
+    }
+}
+
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        if self.first {
+            stty(&["icanon", "echo", "isig"]);
+        }
+    }
+}
+
+/// Set the host terminal's modes; nothing to set when stdin isn't one.
+fn stty(settings: &[&str]) {
+    if stdin().is_terminal() {
+        let _ = std::process::Command::new("stty").args(settings).status();
     }
 }

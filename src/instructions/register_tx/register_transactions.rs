@@ -6,13 +6,7 @@ impl CPU {
         source: Registers,
         destination: Registers,
         cycles: &mut u32,
-    ) -> bool {
-        let cycles_required: u32 = 2;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    ) {
         let value = match source {
             Registers::A => self.a,
             Registers::X => self.x,
@@ -34,7 +28,6 @@ impl CPU {
         self.status.zero = dest_value == 0;
         self.status.negative = (dest_value & 0x80) != 0;
 
-        *cycles = cycles.wrapping_sub(1);
-        true
+        *cycles = cycles.wrapping_add(1);
     }
 }

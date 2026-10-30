@@ -1,19 +1,11 @@
 use crate::cpu::CPU;
 
 impl CPU {
-    pub fn dex(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 2;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn dex(&mut self, cycles: &mut u32) {
         self.x = self.x.wrapping_sub(1);
         self.status.zero = self.x == 0;
         self.status.negative = self.x & 0x80 != 0;
 
-        *cycles = cycles.wrapping_sub(1);
-
-        true
+        *cycles = cycles.wrapping_add(1);
     }
 }

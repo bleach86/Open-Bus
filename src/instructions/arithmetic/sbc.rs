@@ -46,30 +46,16 @@ impl CPU {
         self.a = result;
     }
 
-    pub fn sbc_immediate(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 2;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn sbc_immediate(&mut self, cycles: &mut u32) {
         let operand = self.fetch_byte(cycles);
 
         match self.status.decimal_mode {
             false => self.sbc_binary(operand),
             true => self.sbc_decimal(operand),
         };
-
-        true
     }
 
-    pub fn sbc_zero_page(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 3;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn sbc_zero_page(&mut self, cycles: &mut u32) {
         let addr = self.fetch_byte(cycles) as u16;
         let operand = self.read_byte(addr, cycles);
 
@@ -77,17 +63,9 @@ impl CPU {
             false => self.sbc_binary(operand),
             true => self.sbc_decimal(operand),
         };
-
-        true
     }
 
-    pub fn sbc_zero_page_x(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 4;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn sbc_zero_page_x(&mut self, cycles: &mut u32) {
         let base_addr = self.fetch_byte(cycles);
         let addr = base_addr.wrapping_add(self.x) as u16;
         let operand = self.read_byte(addr, cycles);
@@ -97,18 +75,10 @@ impl CPU {
             true => self.sbc_decimal(operand),
         };
 
-        *cycles = cycles.wrapping_sub(1);
-
-        true
+        *cycles = cycles.wrapping_add(1);
     }
 
-    pub fn sbc_absolute(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 4;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn sbc_absolute(&mut self, cycles: &mut u32) {
         let addr = self.fetch_word(cycles);
         let operand = self.read_byte(addr, cycles);
 
@@ -116,87 +86,58 @@ impl CPU {
             false => self.sbc_binary(operand),
             true => self.sbc_decimal(operand),
         };
-
-        true
     }
 
-    pub fn sbc_absolute_x(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 4;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn sbc_absolute_x(&mut self, cycles: &mut u32) {
         let base_addr = self.fetch_word(cycles);
         let addr = base_addr.wrapping_add(u16::from(self.x));
         let operand = self.read_byte(addr, cycles);
 
+        // Additional cycle if page crossed
+        if (base_addr & 0xFF00) != (addr & 0xFF00) {
+            *cycles = cycles.wrapping_add(1);
+        }
+
         match self.status.decimal_mode {
             false => self.sbc_binary(operand),
             true => self.sbc_decimal(operand),
         };
-
-        true
     }
 
-    pub fn sbc_absolute_y(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 4;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
+    pub fn sbc_absolute_y(&mut self, cycles: &mut u32) {
         let base_addr = self.fetch_word(cycles);
         let addr = base_addr.wrapping_add(u16::from(self.y));
         let operand = self.read_byte(addr, cycles);
 
+        // Additional cycle if page crossed
+        if (base_addr & 0xFF00) != (addr & 0xFF00) {
+            *cycles = cycles.wrapping_add(1);
+        }
+
         match self.status.decimal_mode {
             false => self.sbc_binary(operand),
             true => self.sbc_decimal(operand),
         };
-        true
     }
 
-    pub fn sbc_indirect_x(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 6;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
-        let base_addr = self.fetch_byte(cycles);
-        let ptr = base_addr.wrapping_add(self.x);
-        let addr = self.read_word(ptr as u16, cycles);
+    pub fn sbc_indirect_x(&mut self, cycles: &mut u32) {
+        let addr = self.fetch_addr_indirect_x(cycles);
         let operand = self.read_byte(addr, cycles);
 
         match self.status.decimal_mode {
             false => self.sbc_binary(operand),
             true => self.sbc_decimal(operand),
         };
-        *cycles = cycles.wrapping_sub(1);
-
-        true
+        *cycles = cycles.wrapping_add(1);
     }
 
-    pub fn sbc_indirect_y(&mut self, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 5;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
-        let base_addr = self.fetch_byte(cycles);
-        let ptr = base_addr;
-        let addr = self
-            .read_word(ptr as u16, cycles)
-            .wrapping_add(u16::from(self.y));
+    pub fn sbc_indirect_y(&mut self, cycles: &mut u32) {
+        let addr = self.fetch_addr_indirect_y(cycles);
         let operand = self.read_byte(addr, cycles);
 
         match self.status.decimal_mode {
             false => self.sbc_binary(operand),
             true => self.sbc_decimal(operand),
         };
-
-        true
     }
 }

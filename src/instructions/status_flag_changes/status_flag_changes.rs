@@ -1,14 +1,8 @@
 use crate::cpu::{CPU, StatusFlag};
 
 impl CPU {
-    pub fn mod_flag(&mut self, flag: StatusFlag, value: bool, cycles: &mut u32) -> bool {
-        let cycles_required: u32 = 2;
-
-        if *cycles < cycles_required - 1 {
-            return false;
-        }
-
-        *cycles = cycles.wrapping_sub(1);
+    pub fn mod_flag(&mut self, flag: StatusFlag, value: bool, cycles: &mut u32) {
+        *cycles = cycles.wrapping_add(1);
 
         match flag {
             StatusFlag::Carry => self.status.carry = value,
@@ -19,7 +13,5 @@ impl CPU {
             StatusFlag::Overflow => self.status.overflow = value,
             StatusFlag::Negative => self.status.negative = value,
         }
-
-        true
     }
 }

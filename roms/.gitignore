@@ -1,0 +1,5 @@
+# Built by make
+*.bin
+*.o
+*.map
+*.lbl
