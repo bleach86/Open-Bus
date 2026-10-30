@@ -1,4 +1,4 @@
-; Game over.
+// Game over.
 tempo 100
 instrument lead pulse 2048 decay 6 sustain 7 release 8 volume 9
 instrument bass saw decay 8 sustain 5 release 8 volume 10

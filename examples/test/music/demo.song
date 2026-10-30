@@ -1,4 +1,4 @@
-; The test cart's tune: four bars on all four voices, round and round.
+// The test cart's tune: four bars on all four voices, round and round.
 tempo 132
 filter 700 resonance 9 lowpass
 instrument lead pulse 1024 attack 1 decay 6 sustain 9 release 5 volume 10

@@ -1,4 +1,4 @@
-; It needs you.
+// It needs you.
 tempo 90
 instrument chime pulse 1536 attack 1 decay 4 sustain 8 release 4 volume 9 filter
 voice 0 chime: o5 a16 r32 a16

@@ -3,9 +3,9 @@
 //! docs/machine.md ("Music") describes the text; in short:
 //!
 //! ```text
-//! ; comments, to the end of the line
-//! tempo 132                                   ; quarter notes a minute
-//! filter 900 resonance 8 lowpass              ; the chip's filter, if used
+//! // comments, to the end of the line
+//! tempo 132                                   // quarter notes a minute
+//! filter 900 resonance 8 lowpass              // the chip's filter, if used
 //! instrument lead pulse 1024 attack 1 decay 6 sustain 10 release 6 volume 11
 //! instrument bass saw decay 5 sustain 8 release 4 volume 13 filter
 //! voice 0 lead: o4 l8 L e g a b > c4 < b a | g4 e4 d4 e4
@@ -238,9 +238,9 @@ impl Mml<'_> {
     }
 }
 
-/// A line up to its comment, which starts at a `;`.
+/// A line up to its comment, which starts at `//`, as in C.
 fn without_comment(line: &str) -> &str {
-    line.split(';').next().unwrap_or("")
+    line.split("//").next().unwrap_or("")
 }
 
 /// A song from its text.
@@ -416,7 +416,7 @@ mod tests {
     use super::*;
 
     const SONG: &str = "
-        ; A test.
+        // A test.
         tempo 120
         filter 900 resonance 8 lowpass
         instrument lead pulse 1024 attack 1 decay 6 sustain 10 release 6 volume 11
@@ -455,10 +455,10 @@ mod tests {
         assert!(source.contains(".addr   song_test_0, song_test_1, 0, 0"));
     }
 
-    /// A comment runs from `;` to the end of the line; `#` is a sharp.
+    /// A comment runs from `//` to the end of the line; `#` is a sharp.
     #[test]
-    fn comments_start_at_a_semicolon_and_hash_is_a_sharp() {
-        let song = compile("; a song\ninstrument a triangle ; the only one\nvoice 0 a: g# a+ ; c d").unwrap();
+    fn comments_start_at_two_slashes_and_hash_is_a_sharp() {
+        let song = compile("// a song\ninstrument a triangle // the only one\nvoice 0 a: g# a+ // c d").unwrap();
         let notes: Vec<u16> = song.voices[0].as_ref().unwrap().iter().filter_map(|e| if let Event::Note(f, _) = e { Some(*f) } else { None }).collect();
         assert_eq!(notes, [frequency(4, 8), frequency(4, 10)], "g sharp, a sharp; the rest a comment");
     }

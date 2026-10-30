@@ -1,4 +1,4 @@
-; It hatched.
+// It hatched.
 tempo 112
 instrument chime pulse 1536 attack 1 decay 4 sustain 8 release 4 volume 9 filter
 voice 0 chime: o5 l16 c e g > c4

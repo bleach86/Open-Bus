@@ -1,4 +1,4 @@
-; In flight: round and round on voices 0-2; voice 3 is the effects'.
+// In flight: round and round on voices 0-2; voice 3 is the effects'.
 tempo 140
 filter 1000 resonance 7 lowpass
 instrument lead pulse 1600 decay 5 sustain 9 release 4 volume 9
