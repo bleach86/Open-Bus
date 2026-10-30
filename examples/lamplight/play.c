@@ -37,6 +37,7 @@ static unsigned char level[LEVEL_H][LEVEL_W];
 #define ACCEL_RUN 0xE4
 #define RELEASE 0xD0 /* from a run let go of, down to a walk */
 #define STOP 0x300   /* braking: letting go, or turning */
+#define STEER 0x200  /* in the air, either way */
 #define FAST 25 /* a running jump from here */
 #define JUMP 64
 #define JUMP_FAST 80
@@ -550,10 +551,10 @@ static void control(void)
                 push(STOP, right);
                 skidding = 1;
             } else {
-                push(accel, right);
+                push(STEER, right);
             }
         } else if (speed < top) {
-            push(accel, right);
+            push(on_ground ? accel : STEER, right);
         } else if (speed > top && on_ground) {
             push(RELEASE, !right); /* a run let go of: down to a walk */
         }
