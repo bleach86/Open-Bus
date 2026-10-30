@@ -1,0 +1,4 @@
+# The room, while the light is on: a soft loop on voice 1.
+tempo 96
+instrument calm triangle attack 3 decay 8 sustain 6 release 8 volume 6
+voice 1 calm: o4 l8 L c e g e f a > c < a | g b > d < b c4 r4 | e g > c < g f a > c < a | g f e d c4 r4

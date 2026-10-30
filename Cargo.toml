@@ -1,0 +1,19 @@
+[package]
+name = "cpu_emu"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+[workspace]
+members = ["sdk/gfx", "sdk/song"]
+
+[dependencies]
+glium = "0.36.0"
+glutin-winit = "0.5"
+evdev = "0.13"
+
+[build-dependencies]
+gfx = { path = "sdk/gfx" }
+
+[dev-dependencies]
+gfx = { path = "sdk/gfx" }
