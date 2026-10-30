@@ -27,15 +27,16 @@ static unsigned char level[LEVEL_H][LEVEL_W];
 
 /* Moving, the way the classic console platformers do it. Speeds are in
  * 16ths of a pixel a frame, each with a byte of 256ths under it, so speed
- * builds slowly (most of a second to a run) and slides off as slowly; turning
- * against it skids at twice the rate. The speed at take-off picks the jump:
+ * builds slowly (most of a second to a run) but stops short: letting go or
+ * turning against it brakes hard (STOP), with a skid. The speed at take-off picks the jump:
  * how hard up, and the pull while the jump is held on the way up (light)
  * and otherwise (heavy), in 256ths of a pixel a frame each frame. */
 #define WALK 24
 #define RUN 40
 #define ACCEL_WALK 0x98
 #define ACCEL_RUN 0xE4
-#define RELEASE 0xD0
+#define RELEASE 0xD0 /* from a run let go of, down to a walk */
+#define STOP 0x300   /* braking: letting go, or turning */
 #define FAST 25 /* a running jump from here */
 #define JUMP 64
 #define JUMP_FAST 80
@@ -502,18 +503,22 @@ static void hurt(void)
 
 /* vx and vx_sub as one number: `amount` 256ths of a 16th, to the right
  * or left. */
-static void push(unsigned char amount, unsigned char right)
+static void push(unsigned amount, unsigned char right)
 {
+    unsigned char sub = amount;
+
     if (right) {
-        if ((unsigned)vx_sub + amount > 255) {
+        vx += amount >> 8;
+        if ((unsigned)vx_sub + sub > 255) {
             ++vx;
         }
-        vx_sub += amount;
+        vx_sub += sub;
     } else {
-        if (vx_sub < amount) {
+        vx -= amount >> 8;
+        if (vx_sub < sub) {
             --vx;
         }
-        vx_sub -= amount;
+        vx_sub -= sub;
     }
 }
 
@@ -540,10 +545,12 @@ static void control(void)
     } else if (input) {
         right = input > 0;
         if (vx && (vx > 0) != right) {
-            push(accel, right); /* against the speed */
+            /* Against the speed: on the ground a skid, in the air a turn. */
             if (on_ground) {
-                push(accel, right);
+                push(STOP, right);
                 skidding = 1;
+            } else {
+                push(accel, right);
             }
         } else if (speed < top) {
             push(accel, right);
@@ -552,7 +559,7 @@ static void control(void)
         }
     } else if (on_ground && (vx || vx_sub)) {
         right = vx < 0;
-        push(RELEASE, right);
+        push(STOP, right);
         if (right ? vx >= 0 : vx < 0) {
             vx = 0; /* slid to a stop */
             vx_sub = 0;
