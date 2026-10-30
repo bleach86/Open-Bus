@@ -1,9 +1,0 @@
-[package]
-name = "gfx"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.85"
-description = "PNG to the 6502 machine's tiles, palettes and cart icons"
-
-[dependencies]
-png = "0.18"

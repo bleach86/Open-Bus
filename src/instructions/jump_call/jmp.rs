@@ -22,12 +22,7 @@ impl CPU {
         }
 
         let ptr_addr = self.fetch_word(cycles);
-        // NMOS quirk: the high byte is fetched from the same page, so a
-        // pointer at $xxFF wraps to $xx00 rather than crossing the page.
-        let low = self.read_byte(ptr_addr, cycles) as u16;
-        let high_addr = (ptr_addr & 0xFF00) | (ptr_addr.wrapping_add(1) & 0x00FF);
-        let high = self.read_byte(high_addr, cycles) as u16;
-        let addr = (high << 8) | low;
+        let addr = self.read_word(ptr_addr, cycles);
 
         self.pc = addr;
         true

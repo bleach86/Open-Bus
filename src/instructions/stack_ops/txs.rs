@@ -10,7 +10,7 @@ impl CPU {
 
         self.sp = self.x;
 
-        self.read_next_ignored(cycles);
+        *cycles = cycles.wrapping_sub(1);
         true
     }
 }

@@ -21,9 +21,10 @@ impl CPU {
         }
 
         let base_addr = self.fetch_byte(cycles);
-        self.read_byte(base_addr as u16, cycles); // read while X is added
         let addr = base_addr.wrapping_add(self.x) as u16;
         self.write_byte(addr, self.y, cycles);
+
+        *cycles = cycles.wrapping_sub(1);
         true
     }
 

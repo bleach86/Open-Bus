@@ -8,7 +8,7 @@ impl CPU {
             return false;
         }
 
-        self.read_next_ignored(cycles);
+        *cycles = cycles.wrapping_sub(1);
 
         true
     }

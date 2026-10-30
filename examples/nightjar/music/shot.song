@@ -1,3 +1,0 @@
-tempo 240
-instrument pew pulse 512 decay 1 sustain 0 release 1 volume 5
-voice 0 pew: o6 l64 c < g

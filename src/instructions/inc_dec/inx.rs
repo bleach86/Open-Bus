@@ -12,7 +12,7 @@ impl CPU {
         self.status.zero = self.x == 0;
         self.status.negative = (self.x & 0x80) != 0;
 
-        self.read_next_ignored(cycles);
+        *cycles = cycles.wrapping_sub(1);
 
         true
     }

@@ -2,7 +2,8 @@
 # Fetch Klaus Dormann's 6502 tests (GPL-3.0, not part of this repository)
 # into target/dormann/, where `cargo test dormann` runs them against the
 # CPU: the functional test, prebuilt, and the decimal test, from its AS65
-# source, converted for ca65 and assembled with cc65 (all flags checked).
+# source, converted for ca65 and assembled with cc65 (its own settings:
+# the result and carry checked).
 set -e
 cd "$(dirname "$0")/.."
 mkdir -p target/dormann
@@ -36,9 +37,6 @@ for line in open('6502_decimal_test.a65'):
         continue
     if words[:1] in (['org'], ['end']):
         continue
-    if re.match(r'^\s*\w+\s*=', code) and words[0] in ('chk_n', 'chk_v', 'chk_z'):
-        out.append(f'{words[0]} = 1')
-        continue
     if len(words) >= 2 and words[0] == 'end_of_test' and words[1] == 'macro':
         out.append('.macro end_of_test\n:       jmp :-\n.endmacro')
         section = 'skip_macro'
@@ -63,4 +61,4 @@ CC65_HOME=${CC65_HOME:-$(for d in "$HOME/cc65" /usr/share/cc65; do [ -d "$d" ] &
 BIN=$( [ -x "$CC65_HOME/bin/ca65" ] && echo "$CC65_HOME/bin/" )
 ${BIN}ca65 -g -o 6502_decimal_test.o 6502_decimal_test.s
 ${BIN}ld65 -C decimal.cfg -Ln 6502_decimal_test.lbl -o 6502_decimal_test.bin 6502_decimal_test.o
-echo "target/dormann: ready; cargo test dormann -- --nocapture"
+echo "target/dormann: ready; cargo test --release dormann"

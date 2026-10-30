@@ -34,7 +34,7 @@ impl CPU {
         self.status.zero = dest_value == 0;
         self.status.negative = (dest_value & 0x80) != 0;
 
-        self.read_next_ignored(cycles);
+        *cycles = cycles.wrapping_sub(1);
         true
     }
 }

@@ -1,6 +1,1 @@
 /target
-build/
-*.crt
-/sdk/gfx/target
-/drive
-/sdk/song/target

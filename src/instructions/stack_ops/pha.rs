@@ -7,7 +7,6 @@ impl CPU {
             return false;
         }
 
-        self.read_next_ignored(cycles);
         self.push_byte(self.a, cycles);
         true
     }

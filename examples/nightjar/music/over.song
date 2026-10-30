@@ -1,6 +1,0 @@
-// Game over.
-tempo 100
-instrument lead pulse 2048 decay 6 sustain 7 release 8 volume 9
-instrument bass saw decay 8 sustain 5 release 8 volume 10
-voice 0 lead: o5 l8 e d c < b a2
-voice 2 bass: o2 l2 a a

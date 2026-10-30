@@ -1,12 +1,13 @@
 use crate::instructions::op_codes::Opcode;
 use crate::ram::Memory;
-use std::io::Write;
+use std::collections::VecDeque;
+use std::u32;
 use std::{
+    fs::File,
+    io::{Read, stdin},
     thread::sleep,
     time::{Duration, Instant},
 };
-
-use std::sync::atomic::AtomicBool;
 
 pub enum StatusFlag {
     Carry = 0,
@@ -20,7 +21,7 @@ pub enum StatusFlag {
     Negative = 7,
 }
 
-/// Result of executing one instruction.
+/// What an instruction leaves the run loop to do.
 pub enum Flow {
     Continue,
     /// An instruction that could not run in the cycles left.
@@ -69,11 +70,9 @@ impl StatusRegister {
 }
 
 const NS_PER_CYCLE: u64 = 125; // 8 MHz
-const PACE_INTERVAL_CYCLES: u64 = 16_000; // check every 2 ms of emulated time
-const CYCLES_PER_FRAME: u64 = 8_000_000 / 60; // vblank at 60 Hz
+const PACE_INTERVAL_CYCLES: u64 = 4_000; // check every 0.5 ms of emulated time
 
-
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct CPU {
     pub pc: u16,                // Program Counter
     pub sp: u8,                 // Stack Pointer (8-bit, page $0100)
@@ -85,143 +84,77 @@ pub struct CPU {
 }
 
 impl CPU {
-    #[allow(dead_code)]
     pub fn new() -> Self {
         CPU::default()
     }
 
-    /// Power on: system ROM mapped at `$C000-$FFFF`, the cart slot empty,
-    /// registers cleared, PC from the reset vector at `$FFFC`.
-    pub fn power_on(&mut self, rom: &[u8; crate::cart::ROM_SIZE]) {
+    pub fn reset(&mut self) {
+        let mut cycles = u32::MAX;
+        self.pc = self.read_word(0xFFFC, &mut cycles); // the reset vector
+        self.sp = 0xFF; // typical reset value on 6502
         self.a = 0;
         self.x = 0;
         self.y = 0;
-        self.sp = 0xFD;
+
         self.status = StatusRegister::default();
-        self.status.interrupt_disable = true;
-        self.memory.power_on(rom);
-        let mut cycles = u32::MAX;
-        self.pc = self.read_word(0xFFFC, &mut cycles);
     }
 
-    /// Run until the CPU stops; true if it stopped because the host asked for
-    /// a reset.
-    #[allow(dead_code)]
-    pub fn execute(&mut self, cycles: u32) -> bool {
-        self.execute_inner(cycles, true)
+    pub fn execute(&mut self, mut cycles: u32) {
+        let terminal = &mut Terminal::new();
+
+        println!("PC set to {:04X}", self.pc);
+        //std::process::exit(0);
+
+        self.execute_inner(cycles, terminal);
     }
 
-    fn execute_inner(&mut self, mut cycles: u32, pace: bool) -> bool {
-        const REPORT_CHECK_CYCLES: u64 = 1_000_000;
-
+    /// The run loop: an instruction at a time, until one stops it.
+    fn execute_inner(&mut self, mut cycles: u32, terminal: &mut Terminal) {
         let mut total_cycles: u64 = 0;
         let mut next_pace: u64 = PACE_INTERVAL_CYCLES;
-        let mut next_frame: u64 = CYCLES_PER_FRAME;
-        let mut executed: u64 = 0;
-        let mut next_check: u64 = REPORT_CHECK_CYCLES;
-        let mut start = Instant::now();
-        let mut report_start = start;
-        let mut report_executed: u64 = 0;
+        let start = Instant::now();
 
         while cycles > 0 {
             let cycle_start = cycles;
-
-            // The interrupt lines, sampled between instructions as the 6502
-            // does: a chip raising IRQ (with the I flag clear) or NMI sends
-            // the CPU through $FFFE or $FFFA, the return address and the
-            // status (B clear) on the stack, in 7 cycles. The bus learns from
-            // the cycle within the frame where the video chip's beam is.
-            let frame_cycle = total_cycles + CYCLES_PER_FRAME - next_frame;
-            if let Some(vector) = self.memory.interrupt(frame_cycle, self.status.interrupt_disable) {
-                // Two cycles reading at PC, as BRK's opcode and padding.
-                self.read_byte(self.pc, &mut cycles);
-                self.read_byte(self.pc, &mut cycles);
-                self.push_word(self.pc, &mut cycles);
-                self.status.break_command = false;
-                let status = self.status.to_byte();
-                self.push_byte(status, &mut cycles);
-                self.status.interrupt_disable = true;
-                self.pc = self.read_word(vector, &mut cycles);
-            }
-
-            // The monitor (monitor.rs), when one is attached: it may stop the
-            // CPU here, before the instruction at PC, and have it until told
-            // to go on. The pacing then starts again from where the CPU is,
-            // rather than racing to make up the time stopped.
-            if self.memory.monitor_wants(self.pc) {
-                crate::monitor::session(self);
-                start = Instant::now() - Duration::from_nanos(total_cycles * NS_PER_CYCLE);
-            }
 
             let opcode = self.fetch_byte(&mut cycles);
 
             match self.exec_opcode(opcode, &mut cycles) {
                 Flow::Continue => {}
-                Flow::Stop => break,
-                Flow::Illegal(op) => {
-                    println!("Unimplemented opcode: ${:02X}", op);
+                Flow::Stop => {
+                    // Not enough cycles left to run it: PC back on its opcode.
+                    self.pc = self.pc.wrapping_sub(1);
+                    break;
+                }
+                Flow::Illegal(opcode) => {
+                    println!("Unimplemented opcode: ${:02X}", opcode);
                     break;
                 }
             }
 
+            terminal.poll_input(self);
+
             let used = cycle_start.wrapping_sub(cycles) as u64;
             total_cycles += used;
-            executed += used;
 
-            if !pace && executed >= next_check {
-                next_check = executed + REPORT_CHECK_CYCLES;
-                let elapsed = report_start.elapsed();
-                if elapsed >= Duration::from_secs(1) {
-                    let mhz = (executed - report_executed) as f64 / elapsed.as_secs_f64() / 1e6;
-                    eprintln!("{mhz:.1} MHz");
-                    report_start = Instant::now();
-                    report_executed = executed;
-                }
-            }
-
-            // Frame wait halts the CPU until the next vblank, or until an
-            // interrupt a chip has coming sooner (the video chip's raster
-            // line), as a 65C02's WAI does.
-            if self.memory.take_frame_wait() {
-                let frame_start = next_frame - CYCLES_PER_FRAME;
-                let wake = self
-                    .memory
-                    .next_interrupt(total_cycles - frame_start)
-                    .map_or(next_frame, |at| (frame_start + at).min(next_frame));
-                total_cycles = total_cycles.max(wake);
-            }
-            if total_cycles >= next_frame {
-                next_frame += CYCLES_PER_FRAME;
-                self.memory.end_frame();
-                // A host call hands control back to whatever started the
-                // emulator (on the RG351MP, the launcher that runs ES-DE).
-                if let Some(status) = self.memory.take_host_call() {
-                    self.memory.keep_save();
-                    std::process::exit(status.into());
-                }
-                if self.memory.take_reset() {
-                    return true;
-                }
-            }
-
-            if pace && total_cycles >= next_pace {
+            if total_cycles >= next_pace {
                 next_pace = total_cycles + PACE_INTERVAL_CYCLES;
                 let target = Duration::from_nanos(total_cycles * NS_PER_CYCLE);
                 let elapsed = start.elapsed();
                 if target > elapsed {
-                    // Sleeping can overshoot by tens of microseconds, but the
-                    // target is absolute, so the next interval makes up for
-                    // it: no busy-wait, and the average rate stays exact.
-                    sleep(target - elapsed);
+                    let ahead = target - elapsed;
+                    if ahead > Duration::from_micros(300) {
+                        sleep(ahead - Duration::from_micros(200));
+                    }
+                    while start.elapsed() < target {
+                        std::hint::spin_loop();
+                    }
                 }
             }
-
-            cycles = u32::MAX;
         }
-        false
     }
 
-    /// Execute a single, already-fetched opcode.
+    /// One instruction, already fetched: what execute_inner's loop does next.
     pub(crate) fn exec_opcode(&mut self, opcode: u8, cycles: &mut u32) -> Flow {
         match Opcode::from_byte(opcode) {
             Some(Opcode::ADCImmediate) => {
@@ -1001,14 +934,6 @@ impl CPU {
         self.memory.write(addr, value);
     }
 
-    /// Read a 16-bit pointer stored in the zero page. The high byte comes
-    /// from `(ptr + 1) & $FF`, so a pointer at `$FF` wraps to `$00`.
-    pub fn read_zero_page_word(&mut self, ptr: u8, cycles: &mut u32) -> u16 {
-        let low = self.read_byte(ptr as u16, cycles) as u16;
-        let high = self.read_byte(ptr.wrapping_add(1) as u16, cycles) as u16;
-        (high << 8) | low
-    }
-
     pub fn read_word(&mut self, addr: u16, cycles: &mut u32) -> u16 {
         let low = self.read_byte(addr, cycles) as u16;
         let high = self.read_byte(addr.wrapping_add(1), cycles) as u16;
@@ -1017,39 +942,18 @@ impl CPU {
 
     pub fn fetch_addr_indirect_x(&mut self, cycles: &mut u32) -> u16 {
         let zp_addr = self.fetch_byte(cycles);
-        self.read_byte(zp_addr as u16, cycles); // read while X is added
         let effective_addr_lo = zp_addr.wrapping_add(self.x);
         let lo = self.read_byte(effective_addr_lo as u16, cycles) as u16;
         let hi = self.read_byte((effective_addr_lo.wrapping_add(1) & 0x00FF) as u16, cycles) as u16;
         (hi << 8) | lo
     }
 
-    /// (ind),Y's address; `store` for a store, which always takes the
-    /// index cycle (index_cycle).
-    pub fn fetch_addr_indirect_y(&mut self, store: bool, cycles: &mut u32) -> u16 {
+    pub fn fetch_addr_indirect_y(&mut self, cycles: &mut u32) -> u16 {
         let zp_addr = self.fetch_byte(cycles);
         let lo = self.read_byte(zp_addr as u16, cycles) as u16;
         let hi = self.read_byte((zp_addr.wrapping_add(1) & 0x00FF) as u16, cycles) as u16;
         let base = (hi << 8) | lo;
-        let addr = base.wrapping_add(self.y as u16);
-        self.index_cycle(base, addr, store, cycles);
-        addr
-    }
-
-    /// The cycle a one-byte instruction spends reading the byte after it,
-    /// which it ignores. (A 6502 reads or writes every cycle.)
-    pub fn read_next_ignored(&mut self, cycles: &mut u32) {
-        self.read_byte(self.pc, cycles);
-    }
-
-    /// The cycle a 6502 spends when an index carries into the high byte:
-    /// a read at the address with the high byte not yet fixed. A read takes
-    /// it only when the page is crossed; a store or a change in place
-    /// always (`always`).
-    pub fn index_cycle(&mut self, base: u16, addr: u16, always: bool, cycles: &mut u32) {
-        if always || (base & 0xFF00) != (addr & 0xFF00) {
-            self.read_byte((base & 0xFF00) | (addr & 0x00FF), cycles);
-        }
+        base.wrapping_add(self.y as u16)
     }
 
     pub fn fetch_byte(&mut self, cycles: &mut u32) -> u8 {
@@ -1092,5 +996,43 @@ impl CPU {
         let low = self.pop_byte(cycles) as u16;
         let high = self.pop_byte(cycles) as u16;
         (high << 8) | low
+    }
+}
+
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+#[derive(Default, Clone)]
+struct Terminal {
+    rx_buffer: Arc<Mutex<VecDeque<u8>>>,
+}
+
+impl Terminal {
+    fn new() -> Self {
+        let rx_buffer = Arc::new(Mutex::new(VecDeque::new()));
+        let rx_clone = Arc::clone(&rx_buffer);
+
+        // Spawn a thread to read stdin asynchronously
+        thread::spawn(move || {
+            let stdin = stdin();
+            for byte in stdin.bytes() {
+                if let Ok(b) = byte {
+                    rx_clone.lock().unwrap().push_back(b);
+                }
+            }
+        });
+
+        Self { rx_buffer }
+    }
+
+    fn poll_input(&mut self, cpu: &mut CPU) {
+        if cpu.memory.read(0xFFF9) != 0 {
+            return; // Input not requested
+        }
+
+        if let Some(ascii) = self.rx_buffer.lock().unwrap().pop_front() {
+            cpu.memory.write(0xFFF9, ascii);
+            //println!("Emulator input (ASCII): {}", ascii);
+        }
     }
 }

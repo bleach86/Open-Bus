@@ -28,12 +28,11 @@ impl CPU {
         };
 
         if should_branch {
-            self.read_byte(self.pc, cycles); // the next opcode, read while the offset is added
             self.pc = (self.pc as i32 + offset as i32) as u16;
+            *cycles = cycles.wrapping_sub(1);
 
             if (self.pc & 0xFF00) != (original_pc & 0xFF00) {
-                // Read before the high byte is fixed.
-                self.read_byte((original_pc & 0xFF00) | (self.pc & 0x00FF), cycles);
+                *cycles = cycles.wrapping_sub(1);
             }
         }
 

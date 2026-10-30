@@ -15,9 +15,10 @@ impl CPU {
 
         let addr = self.fetch_byte(cycles) as u16;
         let mut value = self.read_byte(addr, cycles);
-        self.write_byte(addr, value, cycles); // written back while it changes
         value = value.wrapping_sub(1);
         self.write_byte(addr, value, cycles);
+
+        *cycles = cycles.wrapping_sub(1);
 
         self.dec_set_flags(value);
         true
@@ -31,12 +32,12 @@ impl CPU {
         }
 
         let base_addr = self.fetch_byte(cycles);
-        self.read_byte(base_addr as u16, cycles); // read while X is added
         let addr = base_addr.wrapping_add(self.x) as u16;
         let mut value = self.read_byte(addr, cycles);
-        self.write_byte(addr, value, cycles); // written back while it changes
         value = value.wrapping_sub(1);
         self.write_byte(addr, value, cycles);
+
+        *cycles = cycles.wrapping_sub(2);
 
         self.dec_set_flags(value);
         true
@@ -51,9 +52,10 @@ impl CPU {
 
         let addr = self.fetch_word(cycles);
         let mut value = self.read_byte(addr, cycles);
-        self.write_byte(addr, value, cycles); // written back while it changes
         value = value.wrapping_sub(1);
         self.write_byte(addr, value, cycles);
+
+        *cycles = cycles.wrapping_sub(1);
 
         self.dec_set_flags(value);
         true
@@ -68,11 +70,11 @@ impl CPU {
 
         let base_addr = self.fetch_word(cycles);
         let addr = base_addr.wrapping_add(self.x as u16);
-        self.index_cycle(base_addr, addr, true, cycles);
         let mut value = self.read_byte(addr, cycles);
-        self.write_byte(addr, value, cycles); // written back while it changes
         value = value.wrapping_sub(1);
         self.write_byte(addr, value, cycles);
+
+        *cycles = cycles.wrapping_sub(2);
 
         self.dec_set_flags(value);
         true

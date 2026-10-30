@@ -1,8 +1,0 @@
-// Through the door: the level done.
-tempo 140
-instrument lead pulse 1024 attack 0 decay 6 sustain 9 release 8 volume 10
-instrument bell triangle attack 0 decay 8 sustain 6 release 9 volume 9
-instrument bass saw decay 6 sustain 5 release 6 volume 11
-voice 0 lead: o5 l16 c e g o6 c8 o5 g o6 c2
-voice 1 bell: o4 l16 e g o5 c e8 c e2
-voice 2 bass: o3 l16 c c c c8 c o2 c2

@@ -1,8 +1,0 @@
-[package]
-name = "song"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.85"
-description = "Songs for the 6502 machine's sound chip, from text to the SDK's music driver's data"
-
-[dependencies]
