@@ -10,6 +10,7 @@ impl CPU {
         // PHP always pushes with the B flag (bit 4) set.
         let status = self.status.to_byte() | 0x10;
 
+        self.read_next_ignored(cycles);
         self.push_byte(status, cycles);
         true
     }

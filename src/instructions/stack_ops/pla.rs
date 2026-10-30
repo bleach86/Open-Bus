@@ -7,6 +7,8 @@ impl CPU {
             return false;
         }
 
+        self.read_next_ignored(cycles);
+        self.read_byte(self.sp_to_addr(), cycles); // the stack as it stands, read while S moves
         self.a = self.pop_byte(cycles);
         self.status.zero = self.a == 0;
         self.status.negative = (self.a & 0x80) != 0;

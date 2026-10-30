@@ -133,13 +133,15 @@ impl CPU {
             // the cycle within the frame where the video chip's beam is.
             let frame_cycle = total_cycles + CYCLES_PER_FRAME - next_frame;
             if let Some(vector) = self.memory.interrupt(frame_cycle, self.status.interrupt_disable) {
+                // Two cycles reading at PC, as BRK's opcode and padding.
+                self.read_byte(self.pc, &mut cycles);
+                self.read_byte(self.pc, &mut cycles);
                 self.push_word(self.pc, &mut cycles);
                 self.status.break_command = false;
                 let status = self.status.to_byte();
                 self.push_byte(status, &mut cycles);
                 self.status.interrupt_disable = true;
                 self.pc = self.read_word(vector, &mut cycles);
-                cycles = cycles.wrapping_sub(2);
             }
 
             // The monitor (monitor.rs), when one is attached: it may stop the
@@ -1015,18 +1017,39 @@ impl CPU {
 
     pub fn fetch_addr_indirect_x(&mut self, cycles: &mut u32) -> u16 {
         let zp_addr = self.fetch_byte(cycles);
+        self.read_byte(zp_addr as u16, cycles); // read while X is added
         let effective_addr_lo = zp_addr.wrapping_add(self.x);
         let lo = self.read_byte(effective_addr_lo as u16, cycles) as u16;
         let hi = self.read_byte((effective_addr_lo.wrapping_add(1) & 0x00FF) as u16, cycles) as u16;
         (hi << 8) | lo
     }
 
-    pub fn fetch_addr_indirect_y(&mut self, cycles: &mut u32) -> u16 {
+    /// (ind),Y's address; `store` for a store, which always takes the
+    /// index cycle (index_cycle).
+    pub fn fetch_addr_indirect_y(&mut self, store: bool, cycles: &mut u32) -> u16 {
         let zp_addr = self.fetch_byte(cycles);
         let lo = self.read_byte(zp_addr as u16, cycles) as u16;
         let hi = self.read_byte((zp_addr.wrapping_add(1) & 0x00FF) as u16, cycles) as u16;
         let base = (hi << 8) | lo;
-        base.wrapping_add(self.y as u16)
+        let addr = base.wrapping_add(self.y as u16);
+        self.index_cycle(base, addr, store, cycles);
+        addr
+    }
+
+    /// The cycle a one-byte instruction spends reading the byte after it,
+    /// which it ignores. (A 6502 reads or writes every cycle.)
+    pub fn read_next_ignored(&mut self, cycles: &mut u32) {
+        self.read_byte(self.pc, cycles);
+    }
+
+    /// The cycle a 6502 spends when an index carries into the high byte:
+    /// a read at the address with the high byte not yet fixed. A read takes
+    /// it only when the page is crossed; a store or a change in place
+    /// always (`always`).
+    pub fn index_cycle(&mut self, base: u16, addr: u16, always: bool, cycles: &mut u32) {
+        if always || (base & 0xFF00) != (addr & 0xFF00) {
+            self.read_byte((base & 0xFF00) | (addr & 0x00FF), cycles);
+        }
     }
 
     pub fn fetch_byte(&mut self, cycles: &mut u32) -> u8 {

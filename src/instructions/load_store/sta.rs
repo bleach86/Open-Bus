@@ -21,10 +21,9 @@ impl CPU {
         }
 
         let base_addr = self.fetch_byte(cycles);
+        self.read_byte(base_addr as u16, cycles); // read while X is added
         let addr = base_addr.wrapping_add(self.x) as u16;
         self.write_byte(addr, self.a, cycles);
-
-        *cycles = cycles.wrapping_sub(1);
         true
     }
 
@@ -47,7 +46,9 @@ impl CPU {
             return false;
         }
 
-        let addr = self.fetch_word(cycles).wrapping_add(self.x as u16);
+        let base_addr = self.fetch_word(cycles);
+        let addr = base_addr.wrapping_add(self.x as u16);
+        self.index_cycle(base_addr, addr, true, cycles);
         self.write_byte(addr, self.a, cycles);
         true
     }
@@ -59,7 +60,9 @@ impl CPU {
             return false;
         }
 
-        let addr = self.fetch_word(cycles).wrapping_add(self.y as u16);
+        let base_addr = self.fetch_word(cycles);
+        let addr = base_addr.wrapping_add(self.y as u16);
+        self.index_cycle(base_addr, addr, true, cycles);
         self.write_byte(addr, self.a, cycles);
         true
     }
@@ -72,10 +75,9 @@ impl CPU {
         }
 
         let base_addr = self.fetch_byte(cycles);
+        self.read_byte(base_addr as u16, cycles); // read while X is added
         let ptr = base_addr.wrapping_add(self.x);
         let addr = self.read_zero_page_word(ptr, cycles);
-
-        *cycles = cycles.wrapping_sub(1);
 
         self.write_byte(addr, self.a, cycles);
         true
@@ -92,8 +94,7 @@ impl CPU {
         let ptr = base_addr;
         let base_addr = self.read_zero_page_word(ptr, cycles);
         let addr = base_addr.wrapping_add(self.y as u16);
-
-        *cycles = cycles.wrapping_sub(1);
+        self.index_cycle(base_addr, addr, true, cycles);
 
         self.write_byte(addr, self.a, cycles);
         true

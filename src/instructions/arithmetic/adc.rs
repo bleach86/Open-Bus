@@ -96,6 +96,7 @@ impl CPU {
         }
 
         let base_addr = self.fetch_byte(cycles);
+        self.read_byte(base_addr as u16, cycles); // read while X is added
         let addr = base_addr.wrapping_add(self.x) as u16;
         let operand = self.read_byte(addr, cycles);
 
@@ -107,7 +108,6 @@ impl CPU {
                 self.adc_decimal(operand);
             }
         }
-        *cycles = cycles.wrapping_sub(1);
 
         true
     }
@@ -141,7 +141,9 @@ impl CPU {
             return false;
         }
 
-        let addr = self.fetch_word(cycles).wrapping_add(self.x as u16);
+        let base_addr = self.fetch_word(cycles);
+        let addr = base_addr.wrapping_add(self.x as u16);
+        self.index_cycle(base_addr, addr, false, cycles);
         let operand = self.read_byte(addr, cycles);
 
         match self.status.decimal_mode {
@@ -152,7 +154,6 @@ impl CPU {
                 self.adc_decimal(operand);
             }
         }
-        *cycles = cycles.wrapping_sub(1);
 
         true
     }
@@ -164,7 +165,9 @@ impl CPU {
             return false;
         }
 
-        let addr = self.fetch_word(cycles).wrapping_add(self.y as u16);
+        let base_addr = self.fetch_word(cycles);
+        let addr = base_addr.wrapping_add(self.y as u16);
+        self.index_cycle(base_addr, addr, false, cycles);
         let operand = self.read_byte(addr, cycles);
 
         match self.status.decimal_mode {
@@ -175,7 +178,6 @@ impl CPU {
                 self.adc_decimal(operand);
             }
         }
-        *cycles = cycles.wrapping_sub(1);
 
         true
     }
@@ -188,6 +190,7 @@ impl CPU {
         }
 
         let base_addr = self.fetch_byte(cycles);
+        self.read_byte(base_addr as u16, cycles); // read while X is added
         let ptr = base_addr.wrapping_add(self.x);
         let addr = self.read_zero_page_word(ptr, cycles);
         let operand = self.read_byte(addr, cycles);
@@ -200,7 +203,6 @@ impl CPU {
                 self.adc_decimal(operand);
             }
         }
-        *cycles = cycles.wrapping_sub(1);
 
         true
     }
@@ -214,9 +216,9 @@ impl CPU {
 
         let base_addr = self.fetch_byte(cycles);
         let ptr = base_addr;
-        let addr = self
-            .read_zero_page_word(ptr, cycles)
-            .wrapping_add(self.y as u16);
+        let indirect = self.read_zero_page_word(ptr, cycles);
+        let addr = indirect.wrapping_add(self.y as u16);
+        self.index_cycle(indirect, addr, false, cycles);
         let operand = self.read_byte(addr, cycles);
 
         match self.status.decimal_mode {

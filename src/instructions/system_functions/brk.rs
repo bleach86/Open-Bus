@@ -7,7 +7,7 @@ impl CPU {
             return false;
         }
 
-        self.pc = self.pc.wrapping_add(1);
+        self.fetch_byte(cycles); // the byte after BRK, read and skipped
         self.push_word(self.pc, cycles);
 
         self.status.break_command = true;
@@ -17,8 +17,6 @@ impl CPU {
         self.status.interrupt_disable = true;
 
         self.pc = self.read_word(0xFFFE, cycles);
-
-        *cycles = cycles.wrapping_sub(2);
 
         true
     }

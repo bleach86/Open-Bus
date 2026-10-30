@@ -8,10 +8,12 @@ impl CPU {
             return false;
         }
 
+        self.read_next_ignored(cycles);
+        self.read_byte(self.sp_to_addr(), cycles); // the stack as it stands, read while S moves
         let ret_addr = self.pop_word(cycles);
+        self.read_byte(ret_addr, cycles); // read while one is added to it
 
         self.pc = ret_addr.wrapping_add(1);
-        *cycles = cycles.wrapping_sub(3);
         true
     }
 }

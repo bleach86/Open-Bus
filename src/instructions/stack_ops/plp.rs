@@ -7,6 +7,8 @@ impl CPU {
             return false;
         }
 
+        self.read_next_ignored(cycles);
+        self.read_byte(self.sp_to_addr(), cycles); // the stack as it stands, read while S moves
         let status = self.pop_byte(cycles);
         self.status.from_byte(status);
         true

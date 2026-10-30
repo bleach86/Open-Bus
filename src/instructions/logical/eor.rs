@@ -41,10 +41,9 @@ impl CPU {
         }
 
         let base_addr = self.fetch_byte(cycles);
+        self.read_byte(base_addr as u16, cycles); // read while X is added
         let addr = base_addr.wrapping_add(self.x) as u16;
         let value = self.read_byte(addr, cycles);
-
-        *cycles = cycles.wrapping_sub(1);
         self.a ^= value;
         self.eor_set_flags();
         true
@@ -73,9 +72,8 @@ impl CPU {
 
         let base_addr = self.fetch_word(cycles);
         let addr = base_addr.wrapping_add(self.x as u16);
+        self.index_cycle(base_addr, addr, false, cycles);
         let value = self.read_byte(addr, cycles);
-
-        *cycles = cycles.wrapping_sub(1);
         self.a ^= value;
         self.eor_set_flags();
         true
@@ -90,9 +88,8 @@ impl CPU {
 
         let base_addr = self.fetch_word(cycles);
         let addr = base_addr.wrapping_add(self.y as u16);
+        self.index_cycle(base_addr, addr, false, cycles);
         let value = self.read_byte(addr, cycles);
-
-        *cycles = cycles.wrapping_sub(1);
         self.a ^= value;
         self.eor_set_flags();
         true
@@ -120,10 +117,8 @@ impl CPU {
             return false;
         }
 
-        let addr = self.fetch_addr_indirect_y(cycles);
+        let addr = self.fetch_addr_indirect_y(false, cycles);
         let value = self.read_byte(addr, cycles);
-
-        *cycles = cycles.wrapping_sub(1);
         self.a ^= value;
         self.eor_set_flags();
         true

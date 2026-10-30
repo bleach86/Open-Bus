@@ -8,7 +8,7 @@ impl CPU {
             return false;
         }
 
-        *cycles = cycles.wrapping_sub(1);
+        self.read_next_ignored(cycles);
 
         match flag {
             StatusFlag::Carry => self.status.carry = value,
