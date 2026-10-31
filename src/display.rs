@@ -8,6 +8,25 @@ pub trait Display {
     /// The next key pressed, if there is one; the machine makes of it what
     /// its own keyboard would.
     fn key(&mut self) -> Option<Key>;
+
+    /// The joystick as it is now; centred and its buttons up, if there is
+    /// none.
+    fn joystick(&self) -> Joystick {
+        Joystick::CENTRED
+    }
+}
+
+/// A joystick as the host has it: its stick, -1 to 1 each way, right and
+/// down positive; and its buttons, pressed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Joystick {
+    pub x: f32,
+    pub y: f32,
+    pub buttons: [bool; 3],
+}
+
+impl Joystick {
+    pub const CENTRED: Joystick = Joystick { x: 0.0, y: 0.0, buttons: [false; 3] };
 }
 
 /// A key as the host has it.

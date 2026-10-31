@@ -1,5 +1,5 @@
 //! The Apple II (the II+): a 6502 at 1.023 MHz; 48K of RAM; the keyboard,
-//! the speaker and the soft switches at $C000; a Disk II card in slot 6,
+//! the speaker, the soft switches and the joystick at $C000; a Disk II card in slot 6,
 //! if there is one; and 12K of ROM at $D000, the monitor and BASIC, from a
 //! dump of the machine's own (not part of this repository). Its picture is drawn a line at a time, as the
 //! video circuit draws it, and shown in a window once a frame; or its text
@@ -10,7 +10,7 @@ pub mod disk_image;
 pub mod video;
 
 use crate::bus::Bus;
-use crate::display::{Display, Key};
+use crate::display::{Display, Joystick, Key};
 use crate::terminal::Terminal;
 use std::io::Write;
 
@@ -19,6 +19,10 @@ pub const CLOCK_HZ: u32 = 1_022_727;
 /// 65 cycles a line, 262 lines: 192 seen, the rest the beam's way back.
 pub const CYCLES_PER_LINE: u32 = 65;
 pub const CYCLES_PER_FRAME: u32 = 17_030;
+/// A paddle's timer runs 11 cycles a step of its 0 to 255: as long as the
+/// monitor's PREAD takes to count one.
+const CYCLES_PER_PADDLE_STEP: u64 = 11;
+
 /// The flashing characters' half period.
 const FLASH_FRAMES: u32 = 16;
 
@@ -39,7 +43,10 @@ pub struct Apple2 {
     pub mixed: bool,
     pub page2: bool,
     pub hires: bool,
-    /// Cycles into the frame, and frames since power-on.
+    /// When each paddle's timer runs out, started by $C070.
+    paddle_until: [u64; 4],
+    /// Cycles since power-on; cycles into the frame, and frames.
+    now: u64,
     cycle: u32,
     pub frames: u32,
     /// The screen as last drawn in the terminal.
@@ -62,6 +69,8 @@ impl Apple2 {
             mixed: false,
             page2: false,
             hires: false,
+            paddle_until: [0; 4],
+            now: 0,
             cycle: 0,
             frames: 0,
             shown: String::new(),
@@ -112,6 +121,23 @@ impl Apple2 {
         })
     }
 
+    /// The joystick, from the window: centred, without one.
+    fn joystick(&self) -> Joystick {
+        self.display.as_ref().map_or(Joystick::CENTRED, |display| display.joystick())
+    }
+
+    /// The paddles' timers started, at $C070: each to run as long as its
+    /// position, 0 to 255; the stick's two across and down, and the other
+    /// two, with nothing on them, as far as they go.
+    fn start_paddles(&mut self) {
+        let joystick = self.joystick();
+        let position = |axis: f32| ((axis.clamp(-1.0, 1.0) + 1.0) * 127.5).round() as u64;
+        let positions = [position(joystick.x), position(joystick.y), 255, 255];
+        for (until, position) in self.paddle_until.iter_mut().zip(positions) {
+            *until = self.now + position * CYCLES_PER_PADDLE_STEP;
+        }
+    }
+
     /// The soft switches, for the video circuit.
     fn switches(&self) -> video::Switches {
         video::Switches { graphics: self.graphics, mixed: self.mixed, page2: self.page2, hires: self.hires }
@@ -154,6 +180,17 @@ impl Apple2 {
             }
             0xC050 if addr <= 0xC057 => {
                 self.switch(addr);
+                0
+            }
+            // The game port: the buttons, bit 7 while pressed, and the
+            // paddles, while their timers run.
+            0xC060 => match addr & 7 {
+                button @ 1..=3 => (self.joystick().buttons[button as usize - 1] as u8) << 7,
+                paddle @ 4..=7 => ((self.now < self.paddle_until[paddle as usize - 4]) as u8) << 7,
+                _ => 0,
+            },
+            0xC070 => {
+                self.start_paddles();
                 0
             }
             0xC0E0 => self.disk2.as_mut().map_or(0, |card| card.io(addr, written)),
@@ -235,6 +272,7 @@ impl Bus for Apple2 {
         if let Some(card) = &mut self.disk2 {
             card.tick();
         }
+        self.now += 1;
         self.cycle += 1;
         // A line ended: drawn, if it is one of those seen.
         if self.cycle % CYCLES_PER_LINE == 0 {

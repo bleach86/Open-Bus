@@ -10,7 +10,7 @@ mod tests {
     use crate::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME, CYCLES_PER_LINE};
     use crate::bus::Bus;
     use crate::cpu::CPU;
-    use crate::display::{Display, Key};
+    use crate::display::{Display, Joystick, Key};
     use std::cell::RefCell;
     use std::path::Path;
     use std::rc::Rc;
@@ -242,5 +242,57 @@ mod tests {
         assert_eq!(at(0, 128), LORES[0x0], "line 128: low-res, row 16's top: black");
         assert_eq!(at(0, 132), LORES[0x2], "line 132: row 16's bottom: the $20's dark blue");
         assert_eq!(at(7, 132), LORES[0xA], "line 132: the next block's, $A0's, grey");
+    }
+
+    /// A window of the test's with a joystick held as it says.
+    struct Stick(Joystick);
+
+    impl Display for Stick {
+        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
+
+        fn key(&mut self) -> Option<Key> {
+            None
+        }
+
+        fn joystick(&self) -> Joystick {
+            self.0
+        }
+    }
+
+    #[test]
+    fn the_paddles_time_the_sticks_position() {
+        let mut apple = machine();
+        // Left and down: paddle 0 at 0, paddle 1 at 255.
+        let stick = Joystick { x: -1.0, y: 1.0, buttons: [false; 3] };
+        apple.display = Some(Box::new(Stick(stick)));
+        apple.read(0xC070);
+        assert_eq!(apple.read(0xC064) & 0x80, 0, "paddle 0, at 0: still counting");
+        for _ in 0..255 * 11 - 1 {
+            apple.tick();
+        }
+        assert_eq!(apple.read(0xC065) & 0x80, 0x80, "paddle 1, at 255: out before 255 steps");
+        apple.tick();
+        assert_eq!(apple.read(0xC065) & 0x80, 0, "paddle 1: still counting after 255 steps");
+
+        // Centred: 128, started again by a write.
+        apple.display = Some(Box::new(Stick(Joystick::CENTRED)));
+        apple.write(0xC070, 0);
+        for _ in 0..128 * 11 - 1 {
+            apple.tick();
+        }
+        assert_eq!(apple.read(0xC064) & 0x80, 0x80, "centred: out before 128 steps");
+        apple.tick();
+        assert_eq!(apple.read(0xC064) & 0x80, 0, "centred: still counting after 128 steps");
+    }
+
+    #[test]
+    fn the_buttons_are_bit_7() {
+        let mut apple = machine();
+        assert_eq!(apple.read(0xC061) & 0x80, 0, "a button without a joystick");
+        let stick = Joystick { buttons: [true, false, true], ..Joystick::CENTRED };
+        apple.display = Some(Box::new(Stick(stick)));
+        assert_eq!(apple.read(0xC061) & 0x80, 0x80, "button 0");
+        assert_eq!(apple.read(0xC062) & 0x80, 0, "button 1");
+        assert_eq!(apple.read(0xC063) & 0x80, 0x80, "button 2");
     }
 }
