@@ -136,6 +136,7 @@ impl<B: Bus> CPU<B> {
         self.execute_inner(cycles, true);
     }
 
+    #[allow(dead_code)]
     pub fn execute(&mut self, cycles: u32) {
         println!("PC set to {:04X}", self.pc);
         //std::process::exit(0);
@@ -165,7 +166,6 @@ impl<B: Bus> CPU<B> {
                     break;
                 }
             }
-
 
             // The 6502 looks at IRQ before an instruction's last cycle: the I
             // that CLI, SEI and PLP set on that cycle counts from the next.

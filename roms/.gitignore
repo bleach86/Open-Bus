@@ -3,3 +3,5 @@
 *.o
 *.map
 *.lbl
+# ROM dumps of real machines: their makers', not part of the repository
+*.rom
