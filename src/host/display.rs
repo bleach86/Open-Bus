@@ -19,6 +19,11 @@ pub trait Display {
         Joystick::CENTRED
     }
 
+    /// Whether the machine's Reset key is held.
+    fn reset_held(&self) -> bool {
+        false
+    }
+
     /// Sound to play: samples at SAMPLE_RATE, -1 to 1, following on from
     /// the last.
     fn play(&mut self, _samples: &[f32]) {}

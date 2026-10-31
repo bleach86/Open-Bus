@@ -1,8 +1,9 @@
 //! The host's window, by SDL2: a machine's frames, scaled up; the keys
 //! typed in it; and a joystick, a gamepad's (its left stick or D-pad, A and
 //! B its buttons) or the numeric keypad's (8, 2, 4 and 6 and the corners;
-//! 0 and . its buttons), the Alt keys buttons too; and the machine's
-//! sound, through an audio queue. Closing it turns the machine off.
+//! 0 and . its buttons), the Alt keys buttons too; F12, the machine's
+//! Reset key; and the machine's sound, through an audio queue. Closing it
+//! turns the machine off.
 
 use crate::host::display::{Display, Joystick, Key, SAMPLE_RATE};
 use sdl2::EventPump;
@@ -29,6 +30,8 @@ pub struct Window {
     pad_held: HashSet<Button>,
     keypad_held: HashSet<Keycode>,
     alt_held: [bool; 2],
+    /// F12, the Reset key.
+    reset_held: bool,
     /// A keypad key's own text, which it would type too: not typed.
     keypad_text: Option<char>,
 }
@@ -85,6 +88,7 @@ impl Window {
             pad_held: HashSet::new(),
             keypad_held: HashSet::new(),
             alt_held: [false; 2],
+            reset_held: false,
             keypad_text: None,
         }
     }
@@ -111,6 +115,7 @@ impl Window {
                     match keycode {
                         Keycode::LAlt => self.alt_held[0] = true,
                         Keycode::RAlt => self.alt_held[1] = true,
+                        Keycode::F12 => self.reset_held = true,
                         _ => {}
                     }
                     let ctrl = keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
@@ -143,6 +148,7 @@ impl Window {
                     match keycode {
                         Keycode::LAlt => self.alt_held[0] = false,
                         Keycode::RAlt => self.alt_held[1] = false,
+                        Keycode::F12 => self.reset_held = false,
                         _ => {}
                     }
                 }
@@ -246,5 +252,9 @@ impl Display for Window {
                 false,
             ],
         }
+    }
+
+    fn reset_held(&self) -> bool {
+        self.reset_held
     }
 }

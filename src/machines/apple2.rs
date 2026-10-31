@@ -1,17 +1,21 @@
 //! The Apple II (the II+): a 6502 at 1.023 MHz; 48K of RAM; the keyboard,
-//! the speaker, the soft switches and the joystick at $C000; a Disk II card in slot 6,
-//! if there is one; and 12K of ROM at $D000, the monitor and BASIC, from a
-//! dump of the machine's own (not part of this repository). Its picture is drawn a line at a time, as the
-//! video circuit draws it, and shown in a window once a frame; or its text
-//! screen alone in the host's terminal.
+//! the speaker, the soft switches and the joystick at $C000; a language
+//! card in slot 0 and a Disk II card in slot 6, if there are; and 12K of
+//! ROM at $D000, the monitor and BASIC, from a dump of the machine's own
+//! (not part of this repository). Its picture is drawn a line at a time, as
+//! the video circuit draws it, and shown in a window once a frame; or its
+//! text screen alone in the host's terminal. Its Reset key holds the RESET
+//! line, the CPU's and the cards'.
 
 pub mod disk2;
 pub mod disk_image;
+pub mod language_card;
 pub mod video;
 
 #[cfg(test)]
 mod tests {
     mod disk2;
+    mod language_card;
     mod machine;
 }
 
@@ -40,12 +44,18 @@ const SETTLE: f32 = 0.995;
 /// The flashing characters' half period.
 const FLASH_FRAMES: u32 = 16;
 
+/// The Reset key pressed in the terminal, which has no key let go: held 6
+/// frames, a tenth of a second.
+const RESET_FRAMES: u32 = 6;
+
 pub struct Apple2 {
     pub ram: Vec<u8>,
     pub rom: Vec<u8>,
     /// The keyboard: the last key, bit 7 set until $C010 clears it.
     pub keyboard: u8,
     pub terminal: Option<Terminal>,
+    /// The language card, in slot 0.
+    pub language_card: Option<language_card::LanguageCard>,
     /// The Disk II card, in slot 6.
     pub disk2: Option<disk2::Disk2>,
     /// The window the picture is shown in, and the keys come from.
@@ -69,6 +79,9 @@ pub struct Apple2 {
     sound: Vec<f32>,
     /// When each paddle's timer runs out, started by $C070.
     paddle_until: [u64; 4],
+    /// The Reset key held, and the frames a terminal's press holds it on for.
+    reset_held: bool,
+    reset_frames: u32,
     /// Cycles since power-on; cycles into the frame, and frames.
     now: u64,
     cycle: u32,
@@ -86,6 +99,7 @@ impl Apple2 {
             rom,
             keyboard: 0,
             terminal: None,
+            language_card: None,
             disk2: None,
             display: None,
             picture: vec![0; video::WIDTH * video::HEIGHT],
@@ -100,6 +114,8 @@ impl Apple2 {
             settle: (-1.0, 0.0), // the cone in, at rest
             sound: Vec::new(),
             paddle_until: [0; 4],
+            reset_held: false,
+            reset_frames: 0,
             now: 0,
             cycle: 0,
             frames: 0,
@@ -188,6 +204,25 @@ impl Apple2 {
         }
     }
 
+    /// The Reset key, as a frame ends: held in the window; pressed in the
+    /// terminal, held RESET_FRAMES. While it is, the cards are held reset,
+    /// and the CPU.
+    fn reset_key(&mut self) {
+        if self.terminal.as_ref().is_some_and(Terminal::reset_pressed) {
+            self.reset_frames = RESET_FRAMES;
+        }
+        self.reset_held = self.display.as_ref().is_some_and(|display| display.reset_held()) || self.reset_frames > 0;
+        self.reset_frames = self.reset_frames.saturating_sub(1);
+        if self.reset_held {
+            if let Some(card) = &mut self.language_card {
+                card.reset();
+            }
+            if let Some(card) = &mut self.disk2 {
+                card.reset();
+            }
+        }
+    }
+
     /// The soft switches, for the video circuit.
     fn switches(&self) -> video::Switches {
         video::Switches { graphics: self.graphics, mixed: self.mixed, page2: self.page2, hires: self.hires }
@@ -247,6 +282,12 @@ impl Apple2 {
                 self.start_paddles();
                 0
             }
+            0xC080 => {
+                if let Some(card) = &mut self.language_card {
+                    card.switch(addr, written.is_none());
+                }
+                0
+            }
             0xC0E0 => self.disk2.as_mut().map_or(0, |card| card.io(addr, written)),
             _ => 0,
         }
@@ -258,7 +299,8 @@ impl Apple2 {
         &self.ram[start..start + 40]
     }
 
-    /// The text screen as 24 lines of 40 characters.
+    /// The text screen as 24 lines of 40 characters: for the tests.
+    #[cfg(test)]
     pub fn text(&self) -> Vec<String> {
         (0..24).map(|row| self.row(row).iter().map(|&b| glyph(b)).collect()).collect()
     }
@@ -308,7 +350,11 @@ impl Bus for Apple2 {
             0xC000..=0xC0FF => self.io(addr, None),
             0xC600..=0xC6FF => self.disk2.as_ref().map_or(0, |card| card.rom(addr)),
             0xC100..=0xCFFF => 0, // no other cards
-            _ => self.rom[addr as usize - 0xD000],
+            // The language card's RAM, if it is read; or the ROM.
+            _ => match self.language_card.as_ref().and_then(|card| card.read(addr)) {
+                Some(value) => value,
+                None => self.rom[addr as usize - 0xD000],
+            },
         }
     }
 
@@ -318,7 +364,12 @@ impl Bus for Apple2 {
             0xC000..=0xC0FF => {
                 self.io(addr, Some(value));
             }
-            _ => {} // no cards; ROM
+            0xD000..=0xFFFF => {
+                if let Some(card) = &mut self.language_card {
+                    card.write(addr, value);
+                }
+            }
+            _ => {} // no cards there
         }
     }
 
@@ -350,19 +401,25 @@ impl Bus for Apple2 {
             if self.terminal.is_some() {
                 self.draw();
             }
+            self.reset_key();
         }
+    }
+
+    fn reset_held(&self) -> bool {
+        self.reset_held
     }
 }
 
-/// An Apple II+ run: `rom_path` a dump of its ROM (its last 12K, $D000 up);
-/// `disk` a .dsk or .nib in a Disk II, whose ROMs are found beside it; in a
-/// window, or `text`, its text screen in the terminal.
+/// An Apple II+ run, with a language card: `rom_path` a dump of its ROM (its
+/// last 12K, $D000 up); `disk` a .dsk or .nib in a Disk II, whose ROMs are
+/// found beside it; in a window, or `text`, its text screen in the terminal.
 pub fn run(rom_path: &str, disk: Option<&str>, text: bool) {
     let read = |path: &Path| std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let rom_path = Path::new(rom_path);
     let rom = read(rom_path);
     assert!(rom.len() >= 0x3000, "the ROM is 12K, $D000 to $FFFF");
     let mut apple = Apple2::new(rom[rom.len() - 0x3000..].to_vec());
+    apple.language_card = Some(language_card::LanguageCard::new());
 
     if let Some(disk) = disk {
         let beside = |name: &str| read(&rom_path.with_file_name(name));

@@ -1,10 +1,18 @@
 //! The host's terminal, for the machine's terminal ports: the keys typed,
-//! a key at a time, for the machine to take.
+//! a key at a time, for the machine to take; and F12, the machine's Reset
+//! key, pressed.
 
 use std::collections::VecDeque;
 use std::io::{IsTerminal, Read, stdin};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+
+/// F12, as the terminal sends it.
+const F12: &[u8] = b"\x1B[24~";
+
+/// F12 pressed, and not yet taken.
+static RESET_PRESSED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default, Clone, Debug)]
 pub struct Terminal {
@@ -42,7 +50,14 @@ impl Terminal {
                                 stty(&["icanon", "echo", "isig"]);
                                 std::process::exit(0);
                             }
-                            rx_clone.lock().unwrap().push_back(b);
+                            let mut rx = rx_clone.lock().unwrap();
+                            rx.push_back(b);
+                            // F12: the Reset key, not keys typed.
+                            if rx.len() >= F12.len() && rx.iter().rev().take(F12.len()).eq(F12.iter().rev()) {
+                                let typed = rx.len() - F12.len();
+                                rx.truncate(typed);
+                                RESET_PRESSED.store(true, Ordering::Relaxed);
+                            }
                         }
                     }
                 });
@@ -57,6 +72,11 @@ impl Terminal {
     /// The next key typed, if there is one.
     pub fn key(&self) -> Option<u8> {
         self.rx_buffer.lock().unwrap().pop_front()
+    }
+
+    /// Whether the Reset key has been pressed since this was last asked.
+    pub fn reset_pressed(&self) -> bool {
+        RESET_PRESSED.swap(false, Ordering::Relaxed)
     }
 }
 

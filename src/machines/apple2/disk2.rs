@@ -14,8 +14,9 @@
 //! a 1 a read pulse in its first; the stepper moves the head a half-track
 //! at a time toward a magnet next to it. Switched off, the motor runs on
 //! for a second, held by a timer on the card: DOS counts on it, to find
-//! the disk still turning when it next reads. Writing isn't yet: the disk is
-//! write protected.
+//! the disk still turning when it next reads. RESET clears the switches'
+//! latch: the magnets off, the motor switched off (it runs on), drive 1,
+//! Q6 and Q7 off. Writing isn't yet: the disk is write protected.
 
 use super::disk_image::{Disk, TRACKS};
 
@@ -115,6 +116,13 @@ impl Disk2 {
             self.bus = value;
         }
         if switch & 1 == 0 { self.data } else { 0 }
+    }
+
+    /// RESET: every switch off, as the latch holding them is cleared.
+    pub fn reset(&mut self) {
+        for switch in (0..16).step_by(2) {
+            self.io(0xC0E0 + switch, None);
+        }
     }
 
     /// The head toward a magnet on next to it, a half-track: the magnet

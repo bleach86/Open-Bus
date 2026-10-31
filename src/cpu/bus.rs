@@ -9,4 +9,10 @@ pub trait Bus {
     /// A cycle gone by, as the CPU makes its access on it: for the chips
     /// clocked with the CPU.
     fn tick(&mut self) {}
+
+    /// The RESET line, held by the machine (its Reset key, say): the CPU
+    /// does nothing while it is, and resets when it's let go.
+    fn reset_held(&self) -> bool {
+        false
+    }
 }

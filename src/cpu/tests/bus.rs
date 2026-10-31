@@ -1,7 +1,7 @@
 //! The CPU on another machine's bus: a test board, 64K of RAM with a
-//! register at $D000 that counts the reads and writes it sees, and a count
-//! of the cycles it is ticked. It runs roms/bus_test.s, whose comments say
-//! what the 6502 does to the register. `make -C roms` builds the program;
+//! register at $D000 that counts the reads and writes it sees, a count of
+//! the cycles it is ticked, and a RESET line. It runs roms/bus_test.s,
+//! whose comments say what the 6502 does to the register. `make -C roms` builds the program;
 //! without it each test says so and passes.
 
 #[cfg(test)]
@@ -17,6 +17,7 @@ mod tests {
         reads: u32,
         writes: u32,
         ticks: u32,
+        reset: bool,
     }
 
     impl Bus for Board {
@@ -37,6 +38,10 @@ mod tests {
         fn tick(&mut self) {
             self.ticks += 1;
         }
+
+        fn reset_held(&self) -> bool {
+            self.reset
+        }
     }
 
     /// The program run to its end, on the board: the CPU, and where the end is.
@@ -52,7 +57,7 @@ mod tests {
         let line = labels.lines().find(|line| line.ends_with(" .done")).unwrap();
         let done = u16::from_str_radix(&line[3..9], 16).unwrap();
 
-        let mut cpu = CPU::with_bus(Board { ram, reads: 0, writes: 0, ticks: 0 });
+        let mut cpu = CPU::with_bus(Board { ram, reads: 0, writes: 0, ticks: 0, reset: false });
         cpu.reset();
         // LDA abs 4, LDX # 2, LDA abs,X crossing 5, INC abs 6, LDX # 2,
         // STA abs,X 5: to the end.
@@ -78,5 +83,29 @@ mod tests {
         let Some((cpu, _)) = run() else { return };
         assert_eq!(cpu.memory.reads, 4, "reads: LDA, LDA abs,X, INC, STA abs,X's before the carry");
         assert_eq!(cpu.memory.writes, 2, "writes: INC's old value back, then its new");
+    }
+
+    #[test]
+    fn reset_held_stops_the_cpu_and_let_go_resets_it() {
+        let Some((mut cpu, done)) = run() else { return };
+        let start = u16::from_le_bytes([cpu.memory.ram[0xFFFC], cpu.memory.ram[0xFFFD]]);
+        let (a, x, sp) = (cpu.a, cpu.x, cpu.sp);
+        cpu.status.interrupt_disable = false;
+
+        cpu.memory.reset = true;
+        let (clock, writes) = (cpu.clock, cpu.memory.writes);
+        cpu.execute(100);
+        assert_eq!(cpu.pc, done, "it ran, held");
+        assert_eq!(cpu.clock - clock, 100, "its cycles, held");
+        assert_eq!(cpu.memory.ticks, cpu.clock, "the bus not ticked, held");
+        assert_eq!(cpu.memory.writes, writes, "the register written, held");
+
+        cpu.memory.reset = false;
+        cpu.execute(7);
+        assert_eq!(cpu.clock - clock, 107, "reset's 7 cycles");
+        assert_eq!(cpu.pc, start, "PC not from the reset vector");
+        assert_eq!(cpu.sp, sp.wrapping_sub(3), "S not down 3");
+        assert!(cpu.status.interrupt_disable, "I not set");
+        assert_eq!((cpu.a, cpu.x), (a, x), "A and X not as they were");
     }
 }

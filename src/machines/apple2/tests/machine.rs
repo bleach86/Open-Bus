@@ -1,17 +1,19 @@
 //! The Apple II: its memory map, keyboard, soft switches, text screen and
-//! frames, on the bus; its picture's pixels, a line at a time; and the CPU
-//! running a ROM of the test's own on it, roms/apple2_test.s (`make -C
-//! roms` builds it; without it that test says so and passes). The Apple's
-//! own ROM isn't needed, or used.
+//! frames, on the bus; its picture's pixels, a line at a time; the CPU
+//! running a ROM of the test's own on it, roms/apple2_test.s, and its Reset
+//! key starting it over (`make -C roms` builds it; without it those tests
+//! say so and pass). The Apple's own ROM isn't needed, or used.
 
 #[cfg(test)]
 mod tests {
+    use crate::machines::apple2::disk2::Disk2;
+    use crate::machines::apple2::language_card::LanguageCard;
     use crate::machines::apple2::video::{self, LORES, Switches, HEIGHT, WIDTH};
     use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME, CYCLES_PER_LINE};
     use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
     use crate::host::display::{Display, Joystick, Key};
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::path::Path;
     use std::rc::Rc;
 
@@ -118,6 +120,59 @@ mod tests {
         assert_eq!(cpu.memory.keyboard & 0x80, 0, "the key not taken");
         assert!(cpu.memory.graphics, "graphics not switched on");
         assert_eq!(cpu.memory.frames, 0, "a frame: 4,000 cycles are less");
+    }
+
+    /// A window of the test's: its Reset key held as the test says.
+    struct ResetKey(Rc<Cell<bool>>);
+
+    impl Display for ResetKey {
+        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
+
+        fn key(&mut self) -> Option<Key> {
+            None
+        }
+
+        fn reset_held(&self) -> bool {
+            self.0.get()
+        }
+    }
+
+    #[test]
+    fn the_reset_key_holds_the_cpu_and_cards_then_starts_over() {
+        let roms = Path::new(env!("CARGO_MANIFEST_DIR")).join("roms");
+        let Ok(rom) = std::fs::read(roms.join("apple2_test.bin")) else {
+            eprintln!("apple2 test: no program; run make -C roms");
+            return;
+        };
+        let mut apple = Apple2::new(rom);
+        let held = Rc::new(Cell::new(false));
+        apple.display = Some(Box::new(ResetKey(held.clone())));
+        apple.language_card = Some(LanguageCard::new());
+        apple.disk2 = Some(Disk2::new(vec![0; 256], &[0; 256]).unwrap());
+        let mut cpu = CPU::with_bus(apple);
+        cpu.clock_hz = u32::MAX; // as fast as it goes
+        cpu.reset();
+        cpu.execute(2_000); // HELLO, then waiting for a key
+        cpu.memory.read(0xC08A); // the card: bank 1, write protected
+        cpu.memory.read(0xC0E9); // the drive's motor on
+        cpu.memory.write(0x0400, 0xA0); // HELLO's H rubbed out
+
+        // Held: seen as the frame ends; then nothing runs.
+        held.set(true);
+        cpu.execute(CYCLES_PER_FRAME);
+        let pc = cpu.pc;
+        cpu.execute(CYCLES_PER_FRAME);
+        assert_eq!(cpu.pc, pc, "the CPU ran, held");
+        let card = cpu.memory.language_card.as_ref().unwrap();
+        assert!(!card.read_ram && card.write_enabled && card.bank2, "the language card not reset");
+        let drive = cpu.memory.disk2.as_ref().unwrap();
+        assert!(!drive.motor && drive.spinning(), "the motor not switched off, or not running on");
+        assert_eq!(&cpu.memory.text()[0][..5], " ELLO");
+
+        // Let go: from the reset vector, HELLO again.
+        held.set(false);
+        cpu.execute(CYCLES_PER_FRAME + 2_000);
+        assert_eq!(&cpu.memory.text()[0][..5], "HELLO", "not started over");
     }
 
     /// Line `y` of the picture, drawn from `ram` by `switches`.

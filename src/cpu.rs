@@ -92,6 +92,7 @@ pub struct CPU<B: Bus = Memory> {
     pub memory: B,              // Memory: what it's wired to
     pub irq: bool,              // IRQ line: held by a device until it's served
     pub nmi: bool,              // NMI: an edge, taken once
+    in_reset: bool,             // held in reset: resets when RESET is let go
     pub clock: u32,             // CPU clock counter
     pub clock_hz: u32,          // its speed: cycles a second
 }
@@ -115,6 +116,7 @@ impl<B: Bus> CPU<B> {
             memory,
             irq: false,
             nmi: false,
+            in_reset: false,
             clock: 0,
             clock_hz: DEFAULT_CLOCK_HZ,
         }
@@ -122,7 +124,8 @@ impl<B: Bus> CPU<B> {
 
     /// Reset, in the 6502's 7 cycles: as an interrupt, but with its three
     /// pushes made reads (S goes down 3, from 0 at power-on to $FD), then the
-    /// reset vector.
+    /// reset vector. It sets I, and leaves A, X, Y and the other flags as
+    /// they were: at power-on, 0.
     pub fn reset(&mut self) {
         self.read_byte(self.pc);
         self.read_byte(self.pc);
@@ -131,11 +134,7 @@ impl<B: Bus> CPU<B> {
             self.sp = self.sp.wrapping_sub(1);
         }
         self.pc = self.read_word(0xFFFC); // the reset vector
-        self.a = 0;
-        self.x = 0;
-        self.y = 0;
 
-        self.status = StatusRegister::default();
         self.status.interrupt_disable = true; // reset sets I, as on the 6502
     }
 
@@ -167,31 +166,18 @@ impl<B: Bus> CPU<B> {
 
         while run_forever || total_cycles < cycles as u64 {
             let cycle_start = self.clock;
-            let i_before = self.status.interrupt_disable;
 
-            let opcode = self.fetch_byte();
-
-            match self.exec_opcode(opcode) {
-                Flow::Continue => {}
-                Flow::Illegal(opcode) => {
-                    println!("Unimplemented opcode: ${:02X}", opcode);
-                    break;
-                }
-            }
-
-            // The 6502 looks at IRQ before an instruction's last cycle: the I
-            // that CLI, SEI and PLP set on that cycle counts from the next.
-            let masked = match Opcode::from_byte(opcode) {
-                Some(Opcode::CLI | Opcode::SEI | Opcode::PLP) => i_before,
-                _ => self.status.interrupt_disable,
-            };
-
-            // Interrupts are taken between instructions; NMI first.
-            if self.nmi {
-                self.interrupt(0xFFFA);
-                self.nmi = false;
-            } else if self.irq && !masked {
-                self.interrupt(0xFFFE);
+            // RESET held: the 6502 only reads, a cycle at a time, until it's
+            // let go; then it resets, and runs on from the reset vector.
+            if self.memory.reset_held() {
+                self.read_byte(self.pc);
+                self.in_reset = true;
+            } else if self.in_reset {
+                self.in_reset = false;
+                self.reset();
+            } else if let Flow::Illegal(opcode) = self.step() {
+                println!("Unimplemented opcode: ${:02X}", opcode);
+                break;
             }
 
             let used = self.clock.wrapping_sub(cycle_start) as u64;
@@ -210,6 +196,33 @@ impl<B: Bus> CPU<B> {
                 }
             }
         }
+    }
+
+    /// An instruction, and the interrupt after it, if one is due.
+    fn step(&mut self) -> Flow {
+        let i_before = self.status.interrupt_disable;
+
+        let opcode = self.fetch_byte();
+
+        if let Flow::Illegal(opcode) = self.exec_opcode(opcode) {
+            return Flow::Illegal(opcode);
+        }
+
+        // The 6502 looks at IRQ before an instruction's last cycle: the I
+        // that CLI, SEI and PLP set on that cycle counts from the next.
+        let masked = match Opcode::from_byte(opcode) {
+            Some(Opcode::CLI | Opcode::SEI | Opcode::PLP) => i_before,
+            _ => self.status.interrupt_disable,
+        };
+
+        // Interrupts are taken between instructions; NMI first.
+        if self.nmi {
+            self.interrupt(0xFFFA);
+            self.nmi = false;
+        } else if self.irq && !masked {
+            self.interrupt(0xFFFE);
+        }
+        Flow::Continue
     }
 
     /// One instruction, already fetched: what execute_inner's loop does next.
