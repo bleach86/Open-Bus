@@ -1,5 +1,7 @@
-/// The host's sound: samples a second, for every machine.
+/// The host's sound: frames a second, for every machine; each frame its
+/// channels' samples, left then right.
 pub const SAMPLE_RATE: u32 = 48_000;
+pub const CHANNELS: usize = 2;
 
 /// Where a machine's picture and sound go, and its keys and joystick come
 /// from: the host's window. A machine without one (its tests) shows and
@@ -39,8 +41,8 @@ pub trait Display {
     /// The window's title: the machine's say, what disks are in it.
     fn title(&mut self, _title: &str) {}
 
-    /// Sound to play: samples at SAMPLE_RATE, -1 to 1, following on from
-    /// the last.
+    /// Sound to play: frames at SAMPLE_RATE, each a left sample then a
+    /// right, -1 to 1, following on from the last.
     fn play(&mut self, _samples: &[f32]) {}
 }
 

@@ -2,11 +2,11 @@
 //! typed in it; and a joystick, a gamepad's (its left stick or D-pad, A and
 //! B its buttons) or the numeric keypad's (8, 2, 4 and 6 and the corners;
 //! 0 and . its buttons), the Alt keys buttons too; F1 to F11, for the
-//! machine's own uses, and F12, its Reset key; and the machine's sound,
-//! through an audio queue. Closed, it tells the machine, to turn itself
+//! machine's own uses, and F12, its Reset key; and the machine's sound, in
+//! stereo, through an audio queue. Closed, it tells the machine, to turn itself
 //! off.
 
-use crate::host::display::{Display, Joystick, Key, SAMPLE_RATE};
+use crate::host::display::{Display, Joystick, Key, CHANNELS, SAMPLE_RATE};
 use sdl2::EventPump;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::controller::{Axis, Button, GameController};
@@ -70,9 +70,9 @@ impl Window {
         // The sound, if the host has any: a queue of samples, a cushion of
         // silence in it to start.
         let audio = sdl.audio().ok().and_then(|audio| {
-            let spec = AudioSpecDesired { freq: Some(SAMPLE_RATE as i32), channels: Some(1), samples: Some(512) };
+            let spec = AudioSpecDesired { freq: Some(SAMPLE_RATE as i32), channels: Some(CHANNELS as u8), samples: Some(512) };
             let queue = audio.open_queue::<f32, _>(None, &spec).ok()?;
-            queue.queue_audio(&vec![0.0; (SAMPLE_RATE as f32 * AUDIO_CUSHION) as usize]).ok()?;
+            queue.queue_audio(&vec![0.0; (SAMPLE_RATE as f32 * AUDIO_CUSHION) as usize * CHANNELS]).ok()?;
             queue.resume();
             Some(queue)
         });
@@ -242,7 +242,7 @@ impl Display for Window {
 
     fn play(&mut self, samples: &[f32]) {
         if let Some(queue) = &self.audio {
-            let queued = queue.size() as f32 / (4.0 * SAMPLE_RATE as f32);
+            let queued = queue.size() as f32 / (4.0 * CHANNELS as f32 * SAMPLE_RATE as f32);
             if queued < AUDIO_MOST {
                 let _ = queue.queue_audio(samples);
             }

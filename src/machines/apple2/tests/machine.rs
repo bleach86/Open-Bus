@@ -433,7 +433,10 @@ mod tests {
                 apple.read(0xC030);
             }
         }
-        heard.take()
+        // In stereo, a left sample then a right: the speaker in both.
+        let (left, right): (Vec<f32>, Vec<f32>) = heard.take().chunks(2).map(|frame| (frame[0], frame[1])).unzip();
+        assert_eq!(left, right, "the speaker not the same in both channels");
+        left
     }
 
     #[test]
