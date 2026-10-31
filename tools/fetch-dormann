@@ -1,25 +1,41 @@
 #!/bin/sh
 # Fetch Klaus Dormann's 6502 tests (GPL-3.0, not part of this repository)
 # into target/dormann/, where `cargo test dormann` runs them against the
-# CPU: the functional test, prebuilt, and the decimal test, from its AS65
-# source, converted for ca65 and assembled with cc65 (its own settings:
-# the result and carry checked).
+# CPU: the functional test and the 65C02 extended opcodes test, prebuilt
+# (that set for the WDC 65C02: the bit instructions tested, WAI and STP
+# not); and the decimal test, from its AS65 source, converted for ca65 and
+# assembled with cc65, twice: for the 6502 with its own settings (the
+# result and carry checked), and for the 65C02 (cputype 1), N, V and Z
+# checked as well.
 set -e
 cd "$(dirname "$0")/.."
 mkdir -p target/dormann
 cd target/dormann
 base=https://raw.githubusercontent.com/Klaus2m5/6502_65C02_functional_tests/master
-for file in bin_files/6502_functional_test.bin bin_files/6502_functional_test.lst 6502_decimal_test.a65; do
+for file in bin_files/6502_functional_test.bin bin_files/6502_functional_test.lst \
+            bin_files/65C02_extended_opcodes_test.bin bin_files/65C02_extended_opcodes_test.lst \
+            6502_decimal_test.a65; do
     curl -sSfL -o "$(basename $file)" "$base/$file"
 done
 
+# The 65C02's: its type, every flag checked.
+sed -e 's/^cputype = 0 /cputype = 1 /' -e 's/^\(chk_[nvz] *\)= 0/\1= 1/' 6502_decimal_test.a65 > 65C02_decimal_test.a65
+
+cat > decimal.cfg <<'CFG'
+MEMORY { RAM: start = $0200, size = $7E00, file = %O; }
+SEGMENTS { CODE: load = RAM, type = rw; }
+CFG
+CC65_HOME=${CC65_HOME:-$(for d in "$HOME/cc65" /usr/share/cc65; do [ -d "$d" ] && echo "$d" && break; done)}
+BIN=$( [ -x "$CC65_HOME/bin/ca65" ] && echo "$CC65_HOME/bin/" )
+
+for test in 6502_decimal_test 65C02_decimal_test; do
 # AS65 to ca65: dotted directives, labels without colons, the zero page
 # variables as addresses, the end a jump to itself at `done`.
-python3 - <<'PY'
-import re
+python3 - $test.a65 $test.s <<'PY'
+import re, sys
 out = ['.feature labels_without_colons', '.setcpu "6502"']
 section, zp = None, 0
-for line in open('6502_decimal_test.a65'):
+for line in open(sys.argv[1]):
     code = line.split(';')[0].rstrip()
     words = code.split()
     first = words[0] if words else ''
@@ -51,14 +67,9 @@ for line in open('6502_decimal_test.a65'):
     if code.startswith('DONE'):
         code = 'done:\nDONE'
     out.append(code)
-open('6502_decimal_test.s', 'w').write('\n'.join(out) + '\n')
+open(sys.argv[2], 'w').write('\n'.join(out) + '\n')
 PY
-cat > decimal.cfg <<'CFG'
-MEMORY { RAM: start = $0200, size = $7E00, file = %O; }
-SEGMENTS { CODE: load = RAM, type = rw; }
-CFG
-CC65_HOME=${CC65_HOME:-$(for d in "$HOME/cc65" /usr/share/cc65; do [ -d "$d" ] && echo "$d" && break; done)}
-BIN=$( [ -x "$CC65_HOME/bin/ca65" ] && echo "$CC65_HOME/bin/" )
-${BIN}ca65 -g -o 6502_decimal_test.o 6502_decimal_test.s
-${BIN}ld65 -C decimal.cfg -Ln 6502_decimal_test.lbl -o 6502_decimal_test.bin 6502_decimal_test.o
+${BIN}ca65 -g -o $test.o $test.s
+${BIN}ld65 -C decimal.cfg -Ln $test.lbl -o $test.bin $test.o
+done
 echo "target/dormann: ready; cargo test --release dormann"

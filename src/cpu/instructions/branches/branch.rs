@@ -7,7 +7,6 @@ const CHECK_SET: [Opcode; 4] = [Opcode::BCS, Opcode::BEQ, Opcode::BMI, Opcode::B
 impl<B: Bus> CPU<B> {
     pub fn branch(&mut self, status_flag: StatusFlag, op_code: Opcode) {
         let offset: i8 = self.fetch_byte() as i8;
-        let original_pc: u16 = self.pc;
 
         let flag_set = match status_flag {
             StatusFlag::Carry => self.status.carry,
@@ -24,13 +23,25 @@ impl<B: Bus> CPU<B> {
         };
 
         if should_branch {
-            self.read_byte(original_pc); // the next opcode, read and thrown away
-            self.pc = (self.pc as i32 + offset as i32) as u16;
-
-            // Another page: the target is read first with the old high byte
-            if (self.pc & 0xFF00) != (original_pc & 0xFF00) {
-                self.read_byte((original_pc & 0xFF00) | (self.pc & 0x00FF));
-            }
+            self.take_branch(offset);
         }
+    }
+
+    /// A branch taken, by `offset` from the PC, past its operand.
+    pub(crate) fn take_branch(&mut self, offset: i8) {
+        let original_pc: u16 = self.pc;
+        self.read_byte(original_pc); // the next opcode, read and thrown away
+        self.pc = (self.pc as i32 + offset as i32) as u16;
+
+        // Another page: the target is read first with the old high byte
+        if (self.pc & 0xFF00) != (original_pc & 0xFF00) {
+            self.read_byte((original_pc & 0xFF00) | (self.pc & 0x00FF));
+        }
+    }
+
+    /// The 65C02's BRA: a branch always taken.
+    pub fn bra(&mut self) {
+        let offset = self.fetch_byte() as i8;
+        self.take_branch(offset);
     }
 }

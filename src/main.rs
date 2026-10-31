@@ -31,10 +31,12 @@ mod machines {
 /// (its ROMs, disk2-p5-341-0027.bin and disk2-p6-341-0028.bin, beside ROM),
 /// the first in drive 1, F9 and F10 changing drive 1's and drive 2's; a
 /// Mockingboard in slot 4, or with `--mockingboards=N` none, or two (4 and
-/// 5); in a window, or with `--text` its text screen in the terminal.
+/// 5); its CPU a 6502, or with `--cpu=` a 65C02 (`65c02`, the base one, as
+/// the enhanced IIe's; `r65c02`, Rockwell's; `w65c02`, WDC's); in a
+/// window, or with `--text` its text screen in the terminal.
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "cpu_emu apple2 ROM [DISK...] [--mockingboards=0|1|2] [--text]";
+    let usage = "cpu_emu apple2 ROM [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--text]";
     match args.get(1).map(String::as_str) {
         Some("apple2") => {
             let files: Vec<&String> = args[2..].iter().filter(|arg| !arg.starts_with("--")).collect();
@@ -44,8 +46,15 @@ fn main() {
                 Some(count) => count.parse().ok().filter(|&count| count <= 2).expect(usage),
                 None => 1,
             };
+            let variant = match args.iter().find_map(|arg| arg.strip_prefix("--cpu=")) {
+                None | Some("6502") => cpu::Variant::Nmos6502,
+                Some("65c02") => cpu::Variant::Synertek65C02,
+                Some("r65c02") => cpu::Variant::Rockwell65C02,
+                Some("w65c02") => cpu::Variant::Wdc65C02,
+                Some(_) => panic!("{usage}"),
+            };
             let disks: Vec<&str> = files[1..].iter().map(|disk| disk.as_str()).collect();
-            machines::apple2::run(rom, &disks, mockingboards, text);
+            machines::apple2::run(rom, &disks, mockingboards, variant, text);
         }
         _ => machines::basic::run(),
     }

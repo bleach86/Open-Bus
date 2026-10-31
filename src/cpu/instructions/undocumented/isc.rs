@@ -5,7 +5,7 @@ impl<B: Bus> CPU<B> {
     /// ISC: INC the byte, then SBC it from A; in decimal mode, as SBC is.
     fn isc(&mut self, addr: u16) {
         let mut value = self.read_byte(addr);
-        self.write_byte(addr, value); // written back first, as it was
+        self.modify_cycle(addr, value);
         value = value.wrapping_add(1);
         self.write_byte(addr, value);
         match self.status.decimal_mode {

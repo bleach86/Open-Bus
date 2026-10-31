@@ -1,3 +1,5 @@
+use crate::cpu::Variant;
+
 #[derive(PartialEq, Eq)]
 pub enum Opcode {
     ADCImmediate,
@@ -222,9 +224,119 @@ pub enum Opcode {
     TASAbsoluteY,
     LASAbsoluteY,
     JAM,
+    // The 65C02's.
+    TSBZeroPage,
+    TSBAbsolute,
+    TRBZeroPage,
+    TRBAbsolute,
+    ORZeroPageIndirect,
+    ANDZeroPageIndirect,
+    EORZeroPageIndirect,
+    ADCZeroPageIndirect,
+    STAZeroPageIndirect,
+    LDAZeroPageIndirect,
+    CMPZeroPageIndirect,
+    SBCZeroPageIndirect,
+    INCAccumulator,
+    DECAccumulator,
+    BITZeroPageX,
+    BITAbsoluteX,
+    BITImmediate,
+    PHY,
+    PLY,
+    PHX,
+    PLX,
+    STZZeroPage,
+    STZZeroPageX,
+    STZAbsolute,
+    STZAbsoluteX,
+    JMPAbsoluteIndexedIndirect,
+    BRA,
+    /// The Rockwell and WDC 65C02s': a bit of a zero page byte reset or set,
+    /// or branched on, reset or set; the bit's number.
+    RMB(u8),
+    SMB(u8),
+    BBR(u8),
+    BBS(u8),
+    /// The WDC 65C02's: wait for an interrupt; stop, until reset.
+    WAI,
+    STP,
+    /// The 65C02's unused opcodes: NOPs, of a byte and a cycle; and of
+    /// three bytes, four cycles or three.
+    NOPOneByte,
+    NOPThreeBytes,
+    NOPThreeBytesShort,
 }
 
 impl Opcode {
+    /// The opcode a byte is on `variant`: the 6502's, or a 65C02's.
+    pub fn decode(byte: u8, variant: Variant) -> Opcode {
+        match variant {
+            Variant::Nmos6502 => Opcode::from_byte(byte),
+            _ => Opcode::from_byte_65c02(byte, variant),
+        }
+    }
+
+    /// A 65C02's: the 6502's documented ones; its own; the Rockwell's and
+    /// WDC's bit instructions, the WDC's WAI and STP; and the rest NOPs,
+    /// the Synertek's where the others have their bit instructions their
+    /// lengths, as Harte's tests have them.
+    fn from_byte_65c02(byte: u8, variant: Variant) -> Opcode {
+        let bits = variant != Variant::Synertek65C02;
+        let wdc = variant == Variant::Wdc65C02;
+        match byte {
+            0x04 => Opcode::TSBZeroPage,
+            0x0C => Opcode::TSBAbsolute,
+            0x14 => Opcode::TRBZeroPage,
+            0x1C => Opcode::TRBAbsolute,
+            0x12 => Opcode::ORZeroPageIndirect,
+            0x32 => Opcode::ANDZeroPageIndirect,
+            0x52 => Opcode::EORZeroPageIndirect,
+            0x72 => Opcode::ADCZeroPageIndirect,
+            0x92 => Opcode::STAZeroPageIndirect,
+            0xB2 => Opcode::LDAZeroPageIndirect,
+            0xD2 => Opcode::CMPZeroPageIndirect,
+            0xF2 => Opcode::SBCZeroPageIndirect,
+            0x1A => Opcode::INCAccumulator,
+            0x3A => Opcode::DECAccumulator,
+            0x34 => Opcode::BITZeroPageX,
+            0x3C => Opcode::BITAbsoluteX,
+            0x89 => Opcode::BITImmediate,
+            0x5A => Opcode::PHY,
+            0x7A => Opcode::PLY,
+            0xDA => Opcode::PHX,
+            0xFA => Opcode::PLX,
+            0x64 => Opcode::STZZeroPage,
+            0x74 => Opcode::STZZeroPageX,
+            0x9C => Opcode::STZAbsolute,
+            0x9E => Opcode::STZAbsoluteX,
+            0x7C => Opcode::JMPAbsoluteIndexedIndirect,
+            0x80 => Opcode::BRA,
+            _ if bits && byte & 0x0F == 0x07 => match byte >> 4 {
+                bit @ 0..=7 => Opcode::RMB(bit),
+                bit => Opcode::SMB(bit - 8),
+            },
+            _ if bits && byte & 0x0F == 0x0F => match byte >> 4 {
+                bit @ 0..=7 => Opcode::BBR(bit),
+                bit => Opcode::BBS(bit - 8),
+            },
+            0xCB if wdc => Opcode::WAI,
+            0xDB if wdc => Opcode::STP,
+            0xCB => Opcode::NOP,
+            0xDB => Opcode::NOPZeroPageX,
+            _ if byte & 0x0F == 0x07 && byte & 0x10 == 0 => Opcode::NOPZeroPage,
+            _ if byte & 0x0F == 0x07 => Opcode::NOPZeroPageX,
+            _ if byte & 0x0F == 0x0F && byte & 0x10 == 0 => Opcode::NOPThreeBytesShort,
+            _ if byte & 0x0F == 0x0F => Opcode::NOPThreeBytes,
+            0x02 | 0x22 | 0x42 | 0x62 | 0x82 | 0xC2 | 0xE2 => Opcode::NOPImmediate,
+            0x44 => Opcode::NOPZeroPage,
+            0x54 | 0xD4 | 0xF4 => Opcode::NOPZeroPageX,
+            0x5C | 0xDC | 0xFC => Opcode::NOPThreeBytes,
+            _ if byte & 0x03 == 0x03 => Opcode::NOPOneByte,
+            _ => Opcode::from_byte(byte), // the 6502's documented ones
+        }
+    }
+
     /// The opcode a byte is: every one of the 256 is one.
     pub fn from_byte(byte: u8) -> Opcode {
         match byte {

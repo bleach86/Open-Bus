@@ -5,7 +5,7 @@ impl<B: Bus> CPU<B> {
     /// DCP: DEC the byte, then CMP A with it; the flags CMP's.
     fn dcp(&mut self, addr: u16) {
         let mut value = self.read_byte(addr);
-        self.write_byte(addr, value); // written back first, as it was
+        self.modify_cycle(addr, value);
         value = value.wrapping_sub(1);
         self.write_byte(addr, value);
         self.cmp_set_flags(self.a.wrapping_sub(value), value);

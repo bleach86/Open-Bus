@@ -8,7 +8,7 @@ impl<B: Bus> CPU<B> {
     /// the high byte is what's stored, not the carried one.
     fn store_and_high(&mut self, base_addr: u16, index: u8, value: u8) {
         let addr = base_addr.wrapping_add(index as u16);
-        self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF)); // before the carry
+        self.read_before_carry(base_addr, addr);
         let value = value & ((base_addr >> 8) as u8).wrapping_add(1);
         let addr = if (base_addr ^ addr) & 0xFF00 != 0 { ((value as u16) << 8) | (addr & 0x00FF) } else { addr };
         self.write_byte(addr, value);

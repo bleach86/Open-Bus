@@ -23,7 +23,7 @@ impl<B: Bus> CPU<B> {
         let base_addr = self.fetch_word();
         let addr = base_addr.wrapping_add(self.x as u16);
 
-        self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF)); // before the carry
+        self.read_before_carry(base_addr, addr);
 
         self.write_byte(addr, self.a);
     }
@@ -32,7 +32,7 @@ impl<B: Bus> CPU<B> {
         let base_addr = self.fetch_word();
         let addr = base_addr.wrapping_add(self.y as u16);
 
-        self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF)); // before the carry
+        self.read_before_carry(base_addr, addr);
 
         self.write_byte(addr, self.a);
     }
@@ -53,8 +53,13 @@ impl<B: Bus> CPU<B> {
         let base_addr = (hi << 8) | lo;
         let addr = base_addr.wrapping_add(self.y as u16);
 
-        self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF)); // before the carry
+        self.read_before_carry(base_addr, addr);
 
+        self.write_byte(addr, self.a);
+    }
+
+    pub fn sta_zero_page_indirect(&mut self) {
+        let addr = self.fetch_addr_zero_page_indirect();
         self.write_byte(addr, self.a);
     }
 }

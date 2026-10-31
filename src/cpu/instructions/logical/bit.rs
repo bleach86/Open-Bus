@@ -19,4 +19,28 @@ impl<B: Bus> CPU<B> {
         self.status.overflow = (value & 0x40) != 0;
         self.status.negative = (value & 0x80) != 0;
     }
+
+    /// The 65C02's BIT immediate: Z alone; N and V as they were.
+    pub fn bit_immediate(&mut self) {
+        let value = self.fetch_byte();
+        self.status.zero = (self.a & value) == 0;
+    }
+
+    pub fn bit_zero_page_x(&mut self) {
+        let addr = self.fetch_addr_zero_page_indexed(self.x);
+        let value = self.read_byte(addr);
+
+        self.status.zero = (self.a & value) == 0;
+        self.status.overflow = (value & 0x40) != 0;
+        self.status.negative = (value & 0x80) != 0;
+    }
+
+    pub fn bit_absolute_x(&mut self) {
+        let addr = self.fetch_addr_absolute_indexed(self.x);
+        let value = self.read_byte(addr);
+
+        self.status.zero = (self.a & value) == 0;
+        self.status.overflow = (value & 0x40) != 0;
+        self.status.negative = (value & 0x80) != 0;
+    }
 }

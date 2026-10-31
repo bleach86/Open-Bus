@@ -10,7 +10,7 @@ impl<B: Bus> CPU<B> {
     pub fn dec_zero_page(&mut self) {
         let addr = self.fetch_byte() as u16;
         let mut value = self.read_byte(addr);
-        self.write_byte(addr, value); // written back first, as it was
+        self.modify_cycle(addr, value);
         value = value.wrapping_sub(1);
         self.write_byte(addr, value);
 
@@ -23,7 +23,7 @@ impl<B: Bus> CPU<B> {
         let addr = base_addr.wrapping_add(self.x) as u16;
         self.read_byte(base_addr as u16); // the base, read before the index is added
         let mut value = self.read_byte(addr);
-        self.write_byte(addr, value); // written back first, as it was
+        self.modify_cycle(addr, value);
         value = value.wrapping_sub(1);
         self.write_byte(addr, value);
 
@@ -34,7 +34,7 @@ impl<B: Bus> CPU<B> {
     pub fn dec_absolute(&mut self) {
         let addr = self.fetch_word();
         let mut value = self.read_byte(addr);
-        self.write_byte(addr, value); // written back first, as it was
+        self.modify_cycle(addr, value);
         value = value.wrapping_sub(1);
         self.write_byte(addr, value);
 
@@ -45,13 +45,20 @@ impl<B: Bus> CPU<B> {
     pub fn dec_absolute_x(&mut self) {
         let base_addr = self.fetch_word();
         let addr = base_addr.wrapping_add(self.x as u16);
-        self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF)); // before the carry
+        self.read_before_carry(base_addr, addr);
         let mut value = self.read_byte(addr);
-        self.write_byte(addr, value); // written back first, as it was
+        self.modify_cycle(addr, value);
         value = value.wrapping_sub(1);
         self.write_byte(addr, value);
 
 
         self.dec_set_flags(value);
+    }
+
+    /// The 65C02's DEC A.
+    pub fn dec_accumulator(&mut self) {
+        self.read_byte(self.pc); // the next byte, read and thrown away
+        self.a = self.a.wrapping_sub(1);
+        self.dec_set_flags(self.a);
     }
 }

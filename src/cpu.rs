@@ -8,6 +8,7 @@ mod tests {
     mod dormann;
     mod harte;
     mod interrupts;
+    mod wai_stp;
 }
 
 use crate::cpu::bus::Bus;
@@ -75,6 +76,20 @@ const PACES_PER_SECOND: u64 = 2_000; // check every 0.5 ms of emulated time
 
 /// The 6502, wired to its bus: the machine around it. Plain CPU is this
 /// machine's, its Memory.
+/// Which of the 6502 family the CPU is: the NMOS 6502, its undocumented
+/// opcodes and all; or a CMOS 65C02, the base one (Synertek's, as in the
+/// enhanced Apple IIe), Rockwell's with its bit instructions, or WDC's with
+/// those and WAI and STP. The 65C02s fix the 6502's bugs, make its unused
+/// opcodes NOPs, and take their dummy cycles differently.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Variant {
+    #[default]
+    Nmos6502,
+    Synertek65C02,
+    Rockwell65C02,
+    Wdc65C02,
+}
+
 #[derive(Clone)]
 pub struct CPU<B: Bus = Memory> {
     pub pc: u16,                // Program Counter
@@ -88,8 +103,11 @@ pub struct CPU<B: Bus = Memory> {
     pub nmi: bool,              // NMI: an edge, taken once
     in_reset: bool,             // held in reset: resets when RESET is let go
     jammed: Option<u8>,         // stopped by a JAM: its cycles since, up to 3
+    waiting: bool,              // a WDC 65C02 at WAI, for an interrupt
+    stopped: bool,              // a WDC 65C02 at STP, until reset
     pub clock: u32,             // CPU clock counter
     pub clock_hz: u32,          // its speed: cycles a second
+    pub variant: Variant,       // which of the family it is
 }
 
 impl CPU {
@@ -113,9 +131,17 @@ impl<B: Bus> CPU<B> {
             nmi: false,
             in_reset: false,
             jammed: None,
+            waiting: false,
+            stopped: false,
             clock: 0,
             clock_hz: DEFAULT_CLOCK_HZ,
+            variant: Variant::Nmos6502,
         }
+    }
+
+    /// Whether it's a 65C02, of any make.
+    pub fn cmos(&self) -> bool {
+        self.variant != Variant::Nmos6502
     }
 
     /// Reset, in the 6502's 7 cycles: as an interrupt, but with its three
@@ -132,7 +158,12 @@ impl<B: Bus> CPU<B> {
         self.pc = self.read_word(0xFFFC); // the reset vector
 
         self.status.interrupt_disable = true; // reset sets I, as on the 6502
-        self.jammed = None; // the one way out of a JAM
+        if self.cmos() {
+            self.status.decimal_mode = false; // and on a 65C02 clears D
+        }
+        self.jammed = None; // the one way out of a JAM, and of STP
+        self.waiting = false;
+        self.stopped = false;
     }
 
     pub fn execute_forever(&mut self) {
@@ -168,6 +199,10 @@ impl<B: Bus> CPU<B> {
                 self.reset();
             } else if self.jammed.is_some() {
                 self.jammed_cycle();
+            } else if self.stopped {
+                self.advance_clock(); // its clock going, nothing on its bus
+            } else if self.waiting {
+                self.wait_cycle();
             } else {
                 self.step();
             }
@@ -190,6 +225,25 @@ impl<B: Bus> CPU<B> {
         }
     }
 
+    /// A cycle at WAI: still waiting, with nothing on the bus; or, an
+    /// interrupt come, on: an NMI taken; an IRQ taken unless I is set, and
+    /// then the next instruction.
+    fn wait_cycle(&mut self) {
+        let irq = self.irq || self.memory.irq();
+        if self.nmi {
+            self.waiting = false;
+            self.interrupt(0xFFFA);
+            self.nmi = false;
+        } else if irq {
+            self.waiting = false;
+            if !self.status.interrupt_disable {
+                self.interrupt(0xFFFE);
+            }
+        } else {
+            self.advance_clock();
+        }
+    }
+
     /// An instruction, and the interrupt after it, if one is due.
     fn step(&mut self) {
         let i_before = self.status.interrupt_disable;
@@ -205,7 +259,7 @@ impl<B: Bus> CPU<B> {
 
         // The 6502 looks at IRQ before an instruction's last cycle: the I
         // that CLI, SEI and PLP set on that cycle counts from the next.
-        let masked = match Opcode::from_byte(opcode) {
+        let masked = match Opcode::decode(opcode, self.variant) {
             Opcode::CLI | Opcode::SEI | Opcode::PLP => i_before,
             _ => self.status.interrupt_disable,
         };
@@ -221,7 +275,7 @@ impl<B: Bus> CPU<B> {
 
     /// One instruction, already fetched: what execute_inner's loop does next.
     pub(crate) fn exec_opcode(&mut self, opcode: u8) {
-        match Opcode::from_byte(opcode) {
+        match Opcode::decode(opcode, self.variant) {
             Opcode::ADCImmediate => {
                 self.adc_immediate();
             }
@@ -678,6 +732,112 @@ impl<B: Bus> CPU<B> {
             Opcode::BRK => {
                 self.brk();
             }
+            Opcode::TSBZeroPage => {
+                self.tsb_zero_page();
+            }
+            Opcode::TSBAbsolute => {
+                self.tsb_absolute();
+            }
+            Opcode::TRBZeroPage => {
+                self.trb_zero_page();
+            }
+            Opcode::TRBAbsolute => {
+                self.trb_absolute();
+            }
+            Opcode::ORZeroPageIndirect => {
+                self.or_zero_page_indirect();
+            }
+            Opcode::ANDZeroPageIndirect => {
+                self.and_zero_page_indirect();
+            }
+            Opcode::EORZeroPageIndirect => {
+                self.eor_zero_page_indirect();
+            }
+            Opcode::ADCZeroPageIndirect => {
+                self.adc_zero_page_indirect();
+            }
+            Opcode::STAZeroPageIndirect => {
+                self.sta_zero_page_indirect();
+            }
+            Opcode::LDAZeroPageIndirect => {
+                self.lda_zero_page_indirect();
+            }
+            Opcode::CMPZeroPageIndirect => {
+                self.cmp_zero_page_indirect();
+            }
+            Opcode::SBCZeroPageIndirect => {
+                self.sbc_zero_page_indirect();
+            }
+            Opcode::INCAccumulator => {
+                self.inc_accumulator();
+            }
+            Opcode::DECAccumulator => {
+                self.dec_accumulator();
+            }
+            Opcode::BITZeroPageX => {
+                self.bit_zero_page_x();
+            }
+            Opcode::BITAbsoluteX => {
+                self.bit_absolute_x();
+            }
+            Opcode::BITImmediate => {
+                self.bit_immediate();
+            }
+            Opcode::PHY => {
+                self.phy();
+            }
+            Opcode::PLY => {
+                self.ply();
+            }
+            Opcode::PHX => {
+                self.phx();
+            }
+            Opcode::PLX => {
+                self.plx();
+            }
+            Opcode::STZZeroPage => {
+                self.stz_zero_page();
+            }
+            Opcode::STZZeroPageX => {
+                self.stz_zero_page_x();
+            }
+            Opcode::STZAbsolute => {
+                self.stz_absolute();
+            }
+            Opcode::STZAbsoluteX => {
+                self.stz_absolute_x();
+            }
+            Opcode::JMPAbsoluteIndexedIndirect => {
+                self.jmp_absolute_indexed_indirect();
+            }
+            Opcode::BRA => {
+                self.bra();
+            }
+            Opcode::RMB(bit) => {
+                self.rmb(bit);
+            }
+            Opcode::SMB(bit) => {
+                self.smb(bit);
+            }
+            Opcode::BBR(bit) => {
+                self.bbr(bit);
+            }
+            Opcode::BBS(bit) => {
+                self.bbs(bit);
+            }
+            Opcode::WAI => {
+                self.wai();
+            }
+            Opcode::STP => {
+                self.stp();
+            }
+            Opcode::NOPOneByte => {} // its fetch, its one cycle
+            Opcode::NOPThreeBytes => {
+                self.nop_three_bytes();
+            }
+            Opcode::NOPThreeBytesShort => {
+                self.fetch_word(); // the operand, read and thrown away
+            }
             Opcode::SLOZeroPage => {
                 self.slo_zero_page();
             }
@@ -932,12 +1092,45 @@ impl<B: Bus> CPU<B> {
         let base = (hi << 8) | lo;
         let addr = base.wrapping_add(self.y as u16);
 
-        // Additional cycle if page crossed: the address is read first with
-        // the high byte not yet carried into
-        if (base & 0xFF00) != (addr & 0xFF00) {
-            self.read_byte((base & 0xFF00) | (addr & 0x00FF));
-        }
+        self.read_if_page_crossed(base, addr);
         addr
+    }
+
+    /// The cycle an indexed address takes to carry into its high byte: the
+    /// 6502 reads the address with its high byte not yet carried into; a
+    /// 65C02, the instruction's last byte again.
+    pub fn read_before_carry(&mut self, base_addr: u16, addr: u16) {
+        if self.cmos() {
+            self.read_byte(self.pc.wrapping_sub(1));
+        } else {
+            self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF));
+        }
+    }
+
+    /// For a read: that cycle only if a page is crossed.
+    pub fn read_if_page_crossed(&mut self, base_addr: u16, addr: u16) {
+        if (base_addr & 0xFF00) != (addr & 0xFF00) {
+            self.read_before_carry(base_addr, addr);
+        }
+    }
+
+    /// A read-modify-write's cycle between its read and its write: the
+    /// 6502 writes the byte back as it was; a 65C02 reads it again.
+    pub fn modify_cycle(&mut self, addr: u16, value: u8) {
+        if self.cmos() {
+            self.read_byte(addr);
+        } else {
+            self.write_byte(addr, value);
+        }
+    }
+
+    /// (zp), the 65C02's: the address at a zero page pointer, its high byte
+    /// wrapping round in the zero page.
+    pub fn fetch_addr_zero_page_indirect(&mut self) -> u16 {
+        let zp_addr = self.fetch_byte();
+        let lo = self.read_byte(zp_addr as u16) as u16;
+        let hi = self.read_byte(zp_addr.wrapping_add(1) as u16) as u16;
+        (hi << 8) | lo
     }
 
     /// zp,X or zp,Y: the base read before the index is added, the sum
@@ -953,9 +1146,7 @@ impl<B: Bus> CPU<B> {
     pub fn fetch_addr_absolute_indexed(&mut self, index: u8) -> u16 {
         let base_addr = self.fetch_word();
         let addr = base_addr.wrapping_add(index as u16);
-        if (base_addr & 0xFF00) != (addr & 0xFF00) {
-            self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF));
-        }
+        self.read_if_page_crossed(base_addr, addr);
         addr
     }
 
@@ -964,7 +1155,7 @@ impl<B: Bus> CPU<B> {
     pub fn fetch_addr_absolute_indexed_for_write(&mut self, index: u8) -> u16 {
         let base_addr = self.fetch_word();
         let addr = base_addr.wrapping_add(index as u16);
-        self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF)); // before the carry
+        self.read_before_carry(base_addr, addr);
         addr
     }
 
@@ -976,7 +1167,7 @@ impl<B: Bus> CPU<B> {
         let hi = self.read_byte(zp_addr.wrapping_add(1) as u16) as u16;
         let base = (hi << 8) | lo;
         let addr = base.wrapping_add(self.y as u16);
-        self.read_byte((base & 0xFF00) | (addr & 0x00FF)); // before the carry
+        self.read_before_carry(base, addr);
         addr
     }
 

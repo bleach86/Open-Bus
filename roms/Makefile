@@ -1,8 +1,8 @@
-# The ROMs, and the interrupt, bus, Apple II and Mockingboard tests'
-# programs, built with cc65 (from ~/cc65 if it is there).
+# The ROMs, and the interrupt, bus, WAI and STP, Apple II and Mockingboard
+# tests' programs, built with cc65 (from ~/cc65 if it is there).
 CC65 ?= $(if $(wildcard $(HOME)/cc65/bin/cl65),$(HOME)/cc65/bin/)
 
-all: monitor.bin interrupt_test.bin bus_test.bin apple2_test.bin mockingboard_test.bin
+all: monitor.bin interrupt_test.bin bus_test.bin wai_stp_test.bin apple2_test.bin mockingboard_test.bin
 
 monitor.bin: monitor.c crt0.s monitor.cfg
 	$(CC65)cl65 -t none -O -C monitor.cfg -m monitor.map -o $@ crt0.s monitor.c
@@ -16,6 +16,11 @@ bus_test.bin: bus_test.s interrupt_test.cfg
 	$(CC65)ca65 -g -o bus_test.o bus_test.s
 	$(CC65)ld65 -C interrupt_test.cfg -Ln bus_test.lbl -o $@ bus_test.o
 
+# The same layout as the interrupt test's.
+wai_stp_test.bin: wai_stp_test.s interrupt_test.cfg
+	$(CC65)ca65 -g -o wai_stp_test.o wai_stp_test.s
+	$(CC65)ld65 -C interrupt_test.cfg -Ln wai_stp_test.lbl -o $@ wai_stp_test.o
+
 apple2_test.bin: apple2_test.s apple2_test.cfg
 	$(CC65)ca65 -g -o apple2_test.o apple2_test.s
 	$(CC65)ld65 -C apple2_test.cfg -Ln apple2_test.lbl -o $@ apple2_test.o
@@ -26,4 +31,4 @@ mockingboard_test.bin: mockingboard_test.s apple2_test.cfg
 	$(CC65)ld65 -C apple2_test.cfg -Ln mockingboard_test.lbl -o $@ mockingboard_test.o
 
 clean:
-	rm -f monitor.bin monitor.map interrupt_test.bin interrupt_test.lbl bus_test.bin bus_test.lbl apple2_test.bin apple2_test.lbl mockingboard_test.bin mockingboard_test.lbl *.o
+	rm -f monitor.bin monitor.map interrupt_test.bin interrupt_test.lbl bus_test.bin bus_test.lbl wai_stp_test.bin wai_stp_test.lbl apple2_test.bin apple2_test.lbl mockingboard_test.bin mockingboard_test.lbl *.o

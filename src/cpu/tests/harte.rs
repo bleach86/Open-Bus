@@ -1,25 +1,29 @@
-//! Tom Harte's 6502 tests (SingleStepTests): for each of the 256 opcodes,
-//! documented or not, 10,000 cases of one instruction each, all run, the
-//! state before and after and its cycles. Each runs as the Dormann tests
+//! Tom Harte's 6502 family tests (SingleStepTests): for the NMOS 6502 and
+//! the Synertek, Rockwell and WDC 65C02s, each run on the CPU as that
+//! variant; for each of their opcodes, documented or not, 10,000 cases of
+//! one instruction each, all run, the state before and after and its
+//! cycles. Each runs as the Dormann tests
 //! do: memory loaded, reset, the registers set as the case has them,
 //! execute for the instruction's cycles; then the registers and memory are
 //! compared with the case's.
 //!
-//! The cycles are checked by the byte after the instruction, whose value it
-//! doesn't use: it is made a JAM ($02), which stops the CPU dead, so that
-//! if any cycles are left over the CPU starts on it, and stops one past
-//! it. Run for its cycles, the instruction must leave none; run for one
+//! On the 6502, the cycles are checked by the byte after the instruction,
+//! whose value it doesn't use: it is made a JAM ($02), which stops the CPU
+//! dead, so that if any cycles are left over the CPU starts on it, and
+//! stops one past it. Run for its cycles, the instruction must leave none; run for one
 //! more, it must leave that one. Where one is wrong, the cycles it does
 //! take are the most it can be given and still leave none. Then its bus
 //! cycles, from the memory's bus log, are compared with the case's: each
-//! read or write, its address and value, in order.
+//! read or write, its address and value, in order. A 65C02 has no JAM: its
+//! bus cycles alone check its cycles, one too many or too few an access
+//! more or less in the log.
 //!
 //! `tools/fetch-harte` puts the tests (MIT, not part of the repository) in
 //! target/harte/; without them the test says so and passes.
 
 #[cfg(test)]
 mod tests {
-    use crate::cpu::CPU;
+    use crate::cpu::{Variant, CPU};
     use std::path::{Path, PathBuf};
 
     const JAM: u8 = 0x02;
@@ -87,12 +91,13 @@ mod tests {
 
     /// The case run for `cycles` cycles, the bus logged from after reset;
     /// whether the byte after the instruction was made a JAM.
-    fn run(case: &Case, cycles: u32) -> (CPU, bool) {
+    fn run(case: &Case, cycles: u32, variant: Variant) -> (CPU, bool) {
         let mut cpu = CPU::new();
+        cpu.variant = variant;
         for &(addr, value) in &case.initial.ram {
             cpu.memory.data[addr as usize] = value;
         }
-        let jam = can_jam(case);
+        let jam = variant == Variant::Nmos6502 && can_jam(case);
         if jam {
             cpu.memory.data[case.last.pc as usize] = JAM;
         }
@@ -128,17 +133,17 @@ mod tests {
     /// none over, with the right result. None if no count up to a few more
     /// than it should take does that: it takes fewer than it won't start
     /// without.
-    fn cycles_taken(case: &Case) -> Option<u32> {
+    fn cycles_taken(case: &Case, variant: Variant) -> Option<u32> {
         let cycles = case.cycles.len() as u32;
-        (1..=cycles + 4).rev().find(|&given| regs(&run(case, given).0) == want(&case.last))
+        (1..=cycles + 4).rev().find(|&given| regs(&run(case, given, variant).0) == want(&case.last))
     }
 
     /// What's wrong with the CPU's run of the case, if anything.
-    fn check(case: &Case) -> Option<String> {
+    fn check(case: &Case, variant: Variant) -> Option<String> {
         let cycles = case.cycles.len() as u32;
         let last = &case.last;
-        let (cpu, jam) = run(case, cycles);
-        let wrong_cycles = || match cycles_taken(case) {
+        let (cpu, jam) = run(case, cycles, variant);
+        let wrong_cycles = || match cycles_taken(case, variant) {
             Some(taken) => format!("takes {taken} cycles, not {cycles}"),
             None => format!("takes fewer than {cycles} cycles, but won't start with fewer"),
         };
@@ -159,7 +164,7 @@ mod tests {
             }
         }
 
-        if jam && run(case, cycles + 1).0.pc == last.pc {
+        if jam && run(case, cycles + 1, variant).0.pc == last.pc {
             return Some(wrong_cycles());
         }
 
@@ -185,7 +190,7 @@ mod tests {
     }
 
     /// What's wrong with an opcode's cases, if anything.
-    fn check_file(file: &Path) -> Option<String> {
+    fn check_file(file: &Path, variant: Variant) -> Option<String> {
         let text = std::fs::read_to_string(file).unwrap();
         let mut count = 0;
         let mut total = 0;
@@ -193,7 +198,7 @@ mod tests {
         for line in text.lines() {
             total += 1;
             let case = parse(line);
-            if let Some(wrong) = check(&case) {
+            if let Some(wrong) = check(&case, variant) {
                 count += 1;
                 let bytes: Vec<String> = (0..3)
                     .map(|i| {
@@ -206,17 +211,28 @@ mod tests {
             }
         }
         let name = file.file_stem().unwrap().to_string_lossy().to_uppercase();
-        first.map(|first| format!("${name}: {count}/{total} wrong, first {first}"))
+        first.map(|first| format!("{variant:?} ${name}: {count}/{total} wrong, first {first}"))
     }
 
     #[test]
     fn harte() {
-        let Ok(entries) = std::fs::read_dir(dir()) else {
-            eprintln!("harte: no tests; run tools/fetch-harte");
-            return;
-        };
-        let mut files: Vec<PathBuf> = entries.map(|entry| entry.unwrap().path()).collect();
-        files.sort();
+        // Each set there is, its opcodes' files, for its variant.
+        let sets = [
+            ("6502", Variant::Nmos6502),
+            ("synertek65c02", Variant::Synertek65C02),
+            ("rockwell65c02", Variant::Rockwell65C02),
+            ("wdc65c02", Variant::Wdc65C02),
+        ];
+        let mut files: Vec<(PathBuf, Variant)> = Vec::new();
+        for (set, variant) in sets {
+            let Ok(entries) = std::fs::read_dir(dir().join(set)) else {
+                eprintln!("harte: no {set} tests; run tools/fetch-harte");
+                continue;
+            };
+            let mut set_files: Vec<PathBuf> = entries.map(|entry| entry.unwrap().path()).collect();
+            set_files.sort();
+            files.extend(set_files.into_iter().map(|file| (file, variant)));
+        }
 
         // The opcodes shared out among the host's cores.
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -226,7 +242,7 @@ mod tests {
                 .map(|t| {
                     scope.spawn(move || {
                         let mine = files.iter().skip(t).step_by(threads);
-                        mine.filter_map(|file| check_file(file)).collect::<Vec<_>>()
+                        mine.filter_map(|(file, variant)| check_file(file, *variant)).collect::<Vec<_>>()
                     })
                 })
                 .collect();

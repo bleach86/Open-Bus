@@ -12,7 +12,7 @@ impl<B: Bus> CPU<B> {
     /// as it was, then written rotated; what it wrote.
     pub(crate) fn rol_memory(&mut self, addr: u16) -> u8 {
         let original = self.read_byte(addr);
-        self.write_byte(addr, original); // written back first, as it was
+        self.modify_cycle(addr, original);
         let carry_in = if self.status.carry { 1 } else { 0 };
         let result = (original << 1) | carry_in;
         self.write_byte(addr, result);
@@ -49,7 +49,13 @@ impl<B: Bus> CPU<B> {
     pub fn rol_absolute_x(&mut self) {
         let base_addr = self.fetch_word();
         let addr = base_addr.wrapping_add(self.x as u16);
-        self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF)); // before the carry
+        // The 6502 takes the cycle before the carry, a page crossed or not;
+        // a 65C02's shifts, only if one is.
+        if self.cmos() {
+            self.read_if_page_crossed(base_addr, addr);
+        } else {
+            self.read_before_carry(base_addr, addr);
+        }
         self.rol_memory(addr);
     }
 }

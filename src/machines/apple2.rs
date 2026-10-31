@@ -25,7 +25,7 @@ mod tests {
     mod mockingboard;
 }
 
-use crate::cpu::CPU;
+use crate::cpu::{Variant, CPU};
 use crate::cpu::bus::Bus;
 use crate::host::display::{Display, Joystick, Key, SAMPLE_RATE};
 use crate::host::terminal::Terminal;
@@ -595,11 +595,11 @@ impl Bus for Apple2 {
 }
 
 /// An Apple II+ run, with a language card and `mockingboards` (0 to 2) in
-/// slots 4 and 5: `rom_path` a dump of its ROM (its last 12K, $D000 up);
+/// slots 4 and 5, its CPU `variant`: `rom_path` a dump of its ROM (its last 12K, $D000 up);
 /// `disks` .dsk, .do, .po, .nib or .woz images, for a Disk II, whose ROMs
 /// are found beside it, the first in drive 1; in a window, or `text`, its
 /// text screen in the terminal.
-pub fn run(rom_path: &str, disks: &[&str], mockingboards: usize, text: bool) {
+pub fn run(rom_path: &str, disks: &[&str], mockingboards: usize, variant: Variant, text: bool) {
     let read = |path: &Path| std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let rom_path = Path::new(rom_path);
     let rom = read(rom_path);
@@ -631,6 +631,7 @@ pub fn run(rom_path: &str, disks: &[&str], mockingboards: usize, text: bool) {
 
     let mut cpu = CPU::with_bus(apple);
     cpu.clock_hz = CLOCK_HZ;
+    cpu.variant = variant;
     cpu.reset();
     cpu.execute_forever();
 }

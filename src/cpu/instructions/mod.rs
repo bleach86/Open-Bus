@@ -7,6 +7,7 @@ pub mod arithmetic {
 }
 
 pub mod branches {
+    mod bit_branches;
     mod branch;
 }
 
@@ -32,6 +33,7 @@ pub mod load_store {
     mod sta;
     mod stx;
     mod sty;
+    mod stz;
 }
 
 pub mod logical {
@@ -39,6 +41,7 @@ pub mod logical {
     mod bit;
     mod eor;
     mod ora;
+    mod tsb_trb;
 }
 
 pub mod register_tx {
@@ -55,8 +58,12 @@ pub mod shifts {
 pub mod stack_ops {
     mod pha;
     mod php;
+    mod phx;
+    mod phy;
     mod pla;
     mod plp;
+    mod plx;
+    mod ply;
     mod tsx;
     mod txs;
 }
@@ -70,6 +77,7 @@ pub mod system_functions {
     mod interrupt;
     mod nop;
     mod rti;
+    mod wai_stp;
 }
 
 /// The opcodes the 6502's makers didn't document, there all the same: the

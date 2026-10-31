@@ -9,8 +9,12 @@ impl<B: Bus> CPU<B> {
         self.status.break_command = true;
         let status_byte = self.status.to_byte();
         self.push_byte(status_byte);
-        // As for an IRQ: the handler isn't interrupted.
+        // As for an IRQ: the handler isn't interrupted; on a 65C02, it's
+        // binary.
         self.status.interrupt_disable = true;
+        if self.cmos() {
+            self.status.decimal_mode = false;
+        }
 
         self.pc = self.read_word(0xFFFE);
     }

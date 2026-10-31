@@ -12,6 +12,9 @@ impl<B: Bus> CPU<B> {
         let status_byte = self.status.to_byte() & !0x10;
         self.push_byte(status_byte);
         self.status.interrupt_disable = true;
+        if self.cmos() {
+            self.status.decimal_mode = false; // a 65C02's handler, binary
+        }
 
         self.pc = self.read_word(vector);
     }

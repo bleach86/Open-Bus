@@ -14,10 +14,17 @@
 //!   pair of bytes, both carries: the result and the carry. Assembled at
 //!   $0200, its start; ends at `done` in 46,089,505 cycles, with ERROR ($0B)
 //!   0 if all were right.
+//! - The 65C02 extended opcodes test: the 65C02's own instructions and
+//!   addressing modes, its unused opcodes as NOPs, and the Rockwell and WDC
+//!   bit instructions; run on those two 65C02s (WAI and STP it leaves out).
+//!   A 64K image; starts at $0400 and succeeds at $24F1.
+//! - The decimal test assembled for the 65C02, N, V and Z checked too; run
+//!   on each 65C02. These two are run until the CPU is caught in a jump to
+//!   itself, as fast as it goes, then where it was caught is checked.
 
 #[cfg(test)]
 mod tests {
-    use crate::cpu::CPU;
+    use crate::cpu::{Variant, CPU};
     use std::path::{Path, PathBuf};
 
     fn dir() -> PathBuf {
@@ -83,5 +90,75 @@ mod tests {
         assert_eq!(cpu.pc, done, "stopped short of done");
         // The zero page: N1 N2 HA HNVZC DA DNVZC AR NF VF ZF CF ERROR.
         assert_eq!(cpu.memory.data[0x0B], 0, "decimal test failed: {:02X?}", &cpu.memory.data[..12]);
+    }
+
+    /// Run until caught in a jump or branch to itself, for up to `cycles`.
+    fn run_to_trap(cpu: &mut CPU, cycles: u32) {
+        while cpu.clock < cycles {
+            cpu.execute(100_000);
+            let at = cpu.pc;
+            cpu.execute(1);
+            if cpu.pc == at {
+                return;
+            }
+        }
+    }
+
+    const CMOS: [Variant; 3] = [Variant::Synertek65C02, Variant::Rockwell65C02, Variant::Wdc65C02];
+
+    #[test]
+    fn dormann_65c02_extended_opcodes_test() {
+        let Ok(image) = std::fs::read(dir().join("65C02_extended_opcodes_test.bin")) else {
+            eprintln!("dormann: no 65C02 extended opcodes test; run tools/fetch-dormann");
+            return;
+        };
+        let listing = std::fs::read_to_string(dir().join("65C02_extended_opcodes_test.lst")).unwrap_or_default();
+        for variant in [Variant::Rockwell65C02, Variant::Wdc65C02] {
+            let mut cpu = CPU::new();
+            cpu.variant = variant;
+            cpu.clock_hz = u32::MAX; // as fast as it goes
+            cpu.memory.data.copy_from_slice(&image);
+            cpu.reset();
+            cpu.pc = 0x0400;
+            run_to_trap(&mut cpu, 200_000_000);
+            assert!(
+                cpu.pc == 0x24F1,
+                "{variant:?}: trapped at ${:04X} (A ${:02X} X ${:02X} Y ${:02X} SP ${:02X} P ${:02X}):\n{}",
+                cpu.pc,
+                cpu.a,
+                cpu.x,
+                cpu.y,
+                cpu.sp,
+                cpu.status.to_byte(),
+                listing_at(&listing, cpu.pc)
+            );
+        }
+    }
+
+    #[test]
+    fn dormann_65c02_decimal_test() {
+        let (Ok(program), Ok(labels)) = (
+            std::fs::read(dir().join("65C02_decimal_test.bin")),
+            std::fs::read_to_string(dir().join("65C02_decimal_test.lbl")),
+        ) else {
+            eprintln!("dormann: no 65C02 decimal test; run tools/fetch-dormann");
+            return;
+        };
+        let done = labels
+            .lines()
+            .find(|line| line.ends_with(" .done"))
+            .map(|line| u16::from_str_radix(&line[3..9], 16).unwrap())
+            .expect("done in the labels");
+        for variant in CMOS {
+            let mut cpu = CPU::new();
+            cpu.variant = variant;
+            cpu.clock_hz = u32::MAX; // as fast as it goes
+            cpu.memory.data[0x0200..0x0200 + program.len()].copy_from_slice(&program);
+            cpu.reset();
+            cpu.pc = 0x0200;
+            run_to_trap(&mut cpu, 100_000_000);
+            assert_eq!(cpu.pc, done, "{variant:?}: stopped short of done");
+            assert_eq!(cpu.memory.data[0x0B], 0, "{variant:?}: decimal test failed: {:02X?}", &cpu.memory.data[..12]);
+        }
     }
 }

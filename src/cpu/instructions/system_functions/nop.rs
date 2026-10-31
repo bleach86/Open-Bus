@@ -33,4 +33,10 @@ impl<B: Bus> CPU<B> {
         let addr = self.fetch_addr_absolute_indexed(self.x);
         self.read_byte(addr);
     }
+
+    /// The 65C02's three-byte NOPs: their operand, then its last byte again.
+    pub fn nop_three_bytes(&mut self) {
+        self.fetch_word();
+        self.read_byte(self.pc.wrapping_sub(1));
+    }
 }

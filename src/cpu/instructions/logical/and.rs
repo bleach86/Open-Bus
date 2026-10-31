@@ -40,11 +40,7 @@ impl<B: Bus> CPU<B> {
     pub fn and_absolute_x(&mut self) {
         let base_addr = self.fetch_word();
         let addr = base_addr.wrapping_add(self.x as u16);
-        // Additional cycle if page crossed: the address is read first with
-        // the high byte not yet carried into
-        if (base_addr & 0xFF00) != (addr & 0xFF00) {
-            self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF));
-        }
+        self.read_if_page_crossed(base_addr, addr);
         let value = self.read_byte(addr);
         self.a &= value;
         self.and_set_flags();
@@ -53,11 +49,7 @@ impl<B: Bus> CPU<B> {
     pub fn and_absolute_y(&mut self) {
         let base_addr = self.fetch_word();
         let addr = base_addr.wrapping_add(self.y as u16);
-        // Additional cycle if page crossed: the address is read first with
-        // the high byte not yet carried into
-        if (base_addr & 0xFF00) != (addr & 0xFF00) {
-            self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF));
-        }
+        self.read_if_page_crossed(base_addr, addr);
         let value = self.read_byte(addr);
         self.a &= value;
         self.and_set_flags();
@@ -73,6 +65,14 @@ impl<B: Bus> CPU<B> {
     pub fn and_indirect_y(&mut self) {
         let addr = self.fetch_addr_indirect_y();
         let value = self.read_byte(addr);
+        self.a &= value;
+        self.and_set_flags();
+    }
+
+    pub fn and_zero_page_indirect(&mut self) {
+        let addr = self.fetch_addr_zero_page_indirect();
+        let value = self.read_byte(addr);
+
         self.a &= value;
         self.and_set_flags();
     }
