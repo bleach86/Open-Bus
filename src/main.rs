@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod clock_test;
 mod cpu;
 #[cfg(test)]
 mod dormann;

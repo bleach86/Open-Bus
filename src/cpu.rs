@@ -67,8 +67,8 @@ impl StatusRegister {
     }
 }
 
-const NS_PER_CYCLE: u64 = 125; // 8 MHz
-const PACE_INTERVAL_CYCLES: u64 = 4_000; // check every 0.5 ms of emulated time
+const DEFAULT_CLOCK_HZ: u32 = 8_000_000; // 8 MHz
+const PACES_PER_SECOND: u64 = 2_000; // check every 0.5 ms of emulated time
 
 #[derive(Default, Clone)]
 pub struct CPU {
@@ -82,16 +82,28 @@ pub struct CPU {
     pub irq: bool,              // IRQ line: held by a device until it's served
     pub nmi: bool,              // NMI: an edge, taken once
     pub clock: u32,             // CPU clock counter
+    pub clock_hz: u32,          // its speed: cycles a second
 }
 
 impl CPU {
     pub fn new() -> Self {
-        CPU::default()
+        CPU {
+            clock_hz: DEFAULT_CLOCK_HZ,
+            ..CPU::default()
+        }
     }
 
+    /// Reset, in the 6502's 7 cycles: as an interrupt, but with its three
+    /// pushes made reads (S goes down 3, from 0 at power-on to $FD), then the
+    /// reset vector.
     pub fn reset(&mut self) {
+        self.read_byte(self.pc);
+        self.read_byte(self.pc);
+        for _ in 0..3 {
+            self.read_byte(self.sp_to_addr());
+            self.sp = self.sp.wrapping_sub(1);
+        }
         self.pc = self.read_word(0xFFFC); // the reset vector
-        self.sp = 0xFF; // typical reset value on 6502
         self.a = 0;
         self.x = 0;
         self.y = 0;
@@ -125,10 +137,9 @@ impl CPU {
     /// one can end past `cycles`.
     fn execute_inner(&mut self, cycles: u32, terminal: &mut Terminal, run_forever: bool) {
         let mut total_cycles: u64 = 0;
-        let mut next_pace: u64 = PACE_INTERVAL_CYCLES;
+        let pace_interval = (self.clock_hz as u64 / PACES_PER_SECOND).max(1);
+        let mut next_pace: u64 = pace_interval;
         let start = Instant::now();
-        // The cycle counter: every cycle counts it on, wrapping round as a
-        // hardware counter does.
 
         while run_forever || total_cycles < cycles as u64 {
             let cycle_start = self.clock;
@@ -165,8 +176,10 @@ impl CPU {
             total_cycles += used;
 
             if total_cycles >= next_pace {
-                next_pace = total_cycles + PACE_INTERVAL_CYCLES;
-                let target = Duration::from_nanos(total_cycles * NS_PER_CYCLE);
+                next_pace = total_cycles + pace_interval;
+                // When these cycles are due at clock_hz; exact, at any speed.
+                let target_ns = total_cycles as u128 * 1_000_000_000 / self.clock_hz as u128;
+                let target = Duration::from_nanos(target_ns as u64);
                 let elapsed = start.elapsed();
                 // Ahead: sleep it off. The target is from the start, so a late
                 // wake is made up by the next chunk.

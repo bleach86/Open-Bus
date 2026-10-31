@@ -43,6 +43,24 @@ mod tests {
     }
 
     #[test]
+    fn reset_is_the_6502s_seven_cycles() {
+        let mut cpu = CPU::new();
+        cpu.memory.data[0xFFFC..0xFFFE].copy_from_slice(&[0x34, 0x12]);
+        cpu.memory.bus_log = Some(Vec::new());
+        cpu.reset();
+
+        assert_eq!(cpu.clock, 7, "cycles");
+        assert_eq!(cpu.pc, 0x1234, "PC from the reset vector");
+        assert_eq!(cpu.sp, 0xFD, "S from power-on's 0, down 3");
+        assert!(cpu.status.interrupt_disable, "I not set");
+        // As an interrupt, its pushes reads: PC twice, the stack three times
+        // going down, then the vector.
+        let reads: Vec<(u16, bool)> = cpu.memory.bus_log.unwrap().iter().map(|&(a, _, w)| (a, w)).collect();
+        let want = [0x0000, 0x0000, 0x0100, 0x01FF, 0x01FE, 0xFFFC, 0xFFFD];
+        assert_eq!(reads, want.map(|a| (a, false)).to_vec(), "bus cycles: address, write");
+    }
+
+    #[test]
     fn irq_waits_while_reset_has_i_set() {
         let Some((mut cpu, labels)) = machine() else { return };
         cpu.pc = label(&labels, "loop");
@@ -58,6 +76,7 @@ mod tests {
         let start = label(&labels, "cli_then");
         cpu.pc = start;
         cpu.irq = true;
+        let sp = cpu.sp;
 
         cpu.execute(1); // CLI
         assert_eq!(cpu.pc, start + 1, "IRQ taken straight after CLI");
@@ -65,7 +84,7 @@ mod tests {
         assert_eq!(cpu.pc, label(&labels, "irq"), "IRQ not taken");
 
         assert!(cpu.status.interrupt_disable, "I not set by the IRQ");
-        assert_eq!(cpu.sp, 0xFC);
+        assert_eq!(cpu.sp, sp.wrapping_sub(3), "pushed: PC and P");
         let (p, back) = pushed(&mut cpu);
         assert_eq!(back, start + 2, "pushed PC");
         assert_eq!(p & 0x30, 0x20, "pushed P: B set, or bit 5 clear");
@@ -78,6 +97,7 @@ mod tests {
         let start = label(&labels, "cli_then");
         cpu.pc = start;
         cpu.irq = true;
+        let sp = cpu.sp;
         cpu.execute(1); // CLI
         cpu.execute(1); // NOP, then the IRQ
         cpu.irq = false;
@@ -86,7 +106,7 @@ mod tests {
         cpu.execute(1); // RTI
         assert_eq!(cpu.pc, start + 2);
         assert!(!cpu.status.interrupt_disable, "I not back as it was");
-        assert_eq!(cpu.sp, 0xFF);
+        assert_eq!(cpu.sp, sp, "S not back as it was");
         assert_eq!(cpu.memory.read(IRQS), 1);
     }
 

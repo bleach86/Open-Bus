@@ -1,5 +1,3 @@
-use std::result;
-
 use crate::cpu::CPU;
 
 impl CPU {
