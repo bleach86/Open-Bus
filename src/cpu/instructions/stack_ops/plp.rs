@@ -1,0 +1,11 @@
+use crate::cpu::bus::Bus;
+use crate::cpu::CPU;
+
+impl<B: Bus> CPU<B> {
+    pub fn plp(&mut self) {
+        self.read_byte(self.pc); // the next byte, read and thrown away
+        self.read_byte(self.sp_to_addr()); // the stack, before S moves on
+        let status = self.pop_byte();
+        self.status.from_byte(status);
+    }
+}

@@ -1,4 +1,4 @@
-; The program for the CPU's interrupt test (src/interrupt_test.rs). The
+; The program for the CPU's interrupt test (src/cpu/tests/interrupts.rs). The
 ; test starts the CPU at one of these labels, raises IRQ or NMI on its pins
 ; and runs it an instruction at a time, to see when the interrupt is taken,
 ; what was pushed and where RTI goes back to.

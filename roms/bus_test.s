@@ -1,4 +1,4 @@
-; The program for the bus test (src/bus_test.rs), on a test machine with a
+; The program for the bus test (src/cpu/tests/bus.rs), on a test machine with a
 ; register at $D000 that counts its reads and writes. Each line's comment
 ; is what the 6502 does to the register.
 

@@ -1,7 +1,7 @@
-; The program for the Apple II test (src/apple2_test.rs): a 12K ROM of the
-; test's own at $D000, in place of the Apple's. It writes HELLO on the text
-; screen's top row, waits for a key and puts it on row 1, marks row 8 and
-; switches to graphics.
+; The program for the Apple II test (src/machines/apple2/tests/machine.rs):
+; a 12K ROM of the test's own at $D000, in place of the Apple's. It writes
+; HELLO on the text screen's top row, waits for a key and puts it on row 1,
+; marks row 8 and switches to graphics.
 
 ROW0    = $0400                 ; the text rows: interleaved, so row 1 is
 ROW1    = $0480                 ; 128 bytes on, and row 8 40 on from row 0

@@ -1,6 +1,18 @@
-use crate::bus::Bus;
-use crate::instructions::op_codes::Opcode;
-use crate::ram::Memory;
+pub mod bus;
+pub mod instructions;
+
+#[cfg(test)]
+mod tests {
+    mod bus;
+    mod clock;
+    mod dormann;
+    mod harte;
+    mod interrupts;
+}
+
+use crate::cpu::bus::Bus;
+use crate::cpu::instructions::op_codes::Opcode;
+use crate::machines::basic::Memory;
 use std::{
     thread::sleep,
     time::{Duration, Instant},
