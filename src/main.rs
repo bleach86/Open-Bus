@@ -1,5 +1,17 @@
 mod cpu;
 
+/// The chips the machines are made of, besides the CPU.
+mod chips {
+    pub mod ay38910;
+    pub mod via6522;
+
+    #[cfg(test)]
+    mod tests {
+        mod ay38910;
+        mod via6522;
+    }
+}
+
 /// The host's side: its window, sound and controls, and its terminal.
 mod host {
     pub mod display;

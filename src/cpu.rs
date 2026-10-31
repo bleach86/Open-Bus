@@ -214,7 +214,7 @@ impl<B: Bus> CPU<B> {
         if self.nmi {
             self.interrupt(0xFFFA);
             self.nmi = false;
-        } else if self.irq && !masked {
+        } else if (self.irq || self.memory.irq()) && !masked {
             self.interrupt(0xFFFE);
         }
     }

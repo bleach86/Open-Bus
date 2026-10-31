@@ -1,8 +1,8 @@
-# The ROMs, and the interrupt, bus and Apple II tests' programs, built with
-# cc65 (from ~/cc65 if it is there).
+# The ROMs, and the interrupt, bus, Apple II and Mockingboard tests'
+# programs, built with cc65 (from ~/cc65 if it is there).
 CC65 ?= $(if $(wildcard $(HOME)/cc65/bin/cl65),$(HOME)/cc65/bin/)
 
-all: monitor.bin interrupt_test.bin bus_test.bin apple2_test.bin
+all: monitor.bin interrupt_test.bin bus_test.bin apple2_test.bin mockingboard_test.bin
 
 monitor.bin: monitor.c crt0.s monitor.cfg
 	$(CC65)cl65 -t none -O -C monitor.cfg -m monitor.map -o $@ crt0.s monitor.c
@@ -20,5 +20,10 @@ apple2_test.bin: apple2_test.s apple2_test.cfg
 	$(CC65)ca65 -g -o apple2_test.o apple2_test.s
 	$(CC65)ld65 -C apple2_test.cfg -Ln apple2_test.lbl -o $@ apple2_test.o
 
+# The same layout as the Apple II test's: a 12K ROM at $D000.
+mockingboard_test.bin: mockingboard_test.s apple2_test.cfg
+	$(CC65)ca65 -g -o mockingboard_test.o mockingboard_test.s
+	$(CC65)ld65 -C apple2_test.cfg -Ln mockingboard_test.lbl -o $@ mockingboard_test.o
+
 clean:
-	rm -f monitor.bin monitor.map interrupt_test.bin interrupt_test.lbl bus_test.bin bus_test.lbl apple2_test.bin apple2_test.lbl *.o
+	rm -f monitor.bin monitor.map interrupt_test.bin interrupt_test.lbl bus_test.bin bus_test.lbl apple2_test.bin apple2_test.lbl mockingboard_test.bin mockingboard_test.lbl *.o

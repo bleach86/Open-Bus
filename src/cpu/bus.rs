@@ -15,4 +15,10 @@ pub trait Bus {
     fn reset_held(&self) -> bool {
         false
     }
+
+    /// The IRQ line, held by the machine's devices until they're served:
+    /// taken between instructions, unless I is set.
+    fn irq(&self) -> bool {
+        false
+    }
 }

@@ -1,6 +1,7 @@
 //! The Apple II (the II+): a 6502 at 1.02 MHz; 48K of RAM; the keyboard,
 //! the speaker, the soft switches and the joystick at $C000; a language
-//! card in slot 0 and a Disk II card in slot 6, if there are; and 12K of
+//! card in slot 0, a Mockingboard in slot 4 and a Disk II card in slot 6,
+//! if there are; and 12K of
 //! ROM at $D000, the monitor and BASIC, from a dump of the machine's own
 //! (not part of this repository). Its picture is drawn a line at a time, as
 //! the video circuit draws it, and shown in a window once a frame; or its
@@ -10,6 +11,7 @@
 
 pub mod disk2;
 pub mod disk_image;
+pub mod mockingboard;
 pub mod language_card;
 pub mod video;
 
@@ -20,6 +22,7 @@ mod tests {
     mod drives;
     mod language_card;
     mod machine;
+    mod mockingboard;
 }
 
 use crate::cpu::CPU;
@@ -42,8 +45,10 @@ pub const CYCLES_PER_FRAME: u32 = 17_030;
 /// monitor's PREAD takes to count one.
 const CYCLES_PER_PADDLE_STEP: u64 = 11;
 
-/// How loud the speaker is, of the host's full volume.
+/// How loud the speaker is, of the host's full volume; and each of the
+/// Mockingboard's voices, at its loudest.
 const VOLUME: f32 = 0.3;
+const VOICE_VOLUME: f32 = 0.15;
 /// How fast the speaker's cone settles back, left still: a sample's share.
 const SETTLE: f32 = 0.995;
 
@@ -62,6 +67,8 @@ pub struct Apple2 {
     pub terminal: Option<Terminal>,
     /// The language card, in slot 0.
     pub language_card: Option<language_card::LanguageCard>,
+    /// The Mockingboard, in slot 4.
+    pub mockingboard: Option<mockingboard::Mockingboard>,
     /// The Disk II card, in slot 6.
     pub disk2: Option<disk2::Disk2>,
     /// The disks to hand, their images: put in the drives in turn, by F9
@@ -86,6 +93,7 @@ pub struct Apple2 {
     /// settling; and the samples made this frame.
     sample_cycles: u32,
     sample_out: u32,
+    sample_voices: f32,
     sample_phase: u32,
     settle: (f32, f32),
     sound: Vec<f32>,
@@ -112,6 +120,7 @@ impl Apple2 {
             keyboard: 0,
             terminal: None,
             language_card: None,
+            mockingboard: None,
             disk2: None,
             disks: Vec::new(),
             in_drive: [None, None],
@@ -125,8 +134,9 @@ impl Apple2 {
             speaker: false,
             sample_cycles: 0,
             sample_out: 0,
+            sample_voices: 0.0,
             sample_phase: 0,
-            settle: (-1.0, 0.0), // the cone in, at rest
+            settle: (-VOLUME, 0.0), // the cone in, at rest
             sound: Vec::new(),
             paddle_until: [0; 4],
             reset_held: false,
@@ -206,16 +216,24 @@ impl Apple2 {
     fn sound_cycle(&mut self) {
         self.sample_cycles += 1;
         self.sample_out += self.speaker as u32;
+        if let Some(card) = &self.mockingboard {
+            self.sample_voices += card.output();
+        }
         self.sample_phase += SAMPLE_RATE;
         if self.sample_phase >= CLOCK_HZ {
             self.sample_phase -= CLOCK_HZ;
-            let place = 2.0 * self.sample_out as f32 / self.sample_cycles as f32 - 1.0;
-            let (last_place, last) = self.settle;
-            let sample = place - last_place + SETTLE * last;
-            self.settle = (place, sample);
-            self.sound.push(sample * VOLUME);
+            let cycles = self.sample_cycles as f32;
+            let place = 2.0 * self.sample_out as f32 / cycles - 1.0;
+            // The Mockingboard's voices with it, its output let settle too,
+            // as an amplifier's.
+            let level = place * VOLUME + self.sample_voices / cycles * VOICE_VOLUME;
+            let (last_level, last) = self.settle;
+            let sample = level - last_level + SETTLE * last;
+            self.settle = (level, sample);
+            self.sound.push(sample);
             self.sample_cycles = 0;
             self.sample_out = 0;
+            self.sample_voices = 0.0;
         }
     }
 
@@ -230,6 +248,9 @@ impl Apple2 {
                 card.reset();
             }
             if let Some(card) = &mut self.disk2 {
+                card.reset();
+            }
+            if let Some(card) = &mut self.mockingboard {
                 card.reset();
             }
         }
@@ -467,9 +488,11 @@ impl Bus for Apple2 {
         match addr {
             0x0000..=0xBFFF => self.ram[addr as usize],
             0xC000..=0xC0FF => self.io(addr, None),
-            // The Disk II's ROM, in slot 6; no other cards.
-            0xC100..=0xCFFF => match &self.disk2 {
-                Some(card) if (0xC600..=0xC6FF).contains(&addr) => card.rom(addr),
+            // The Mockingboard's 6522s, in slot 4; the Disk II's ROM, in
+            // slot 6; no other cards.
+            0xC100..=0xCFFF => match (addr >> 8 & 0x0F, &mut self.mockingboard, &self.disk2) {
+                (4, Some(card), _) => card.read(addr),
+                (6, _, Some(card)) => card.rom(addr),
                 _ => self.floating_bus(),
             },
             // The language card's RAM, if it is read; or the ROM.
@@ -486,6 +509,11 @@ impl Bus for Apple2 {
             0xC000..=0xC0FF => {
                 self.io(addr, Some(value));
             }
+            0xC400..=0xC4FF => {
+                if let Some(card) = &mut self.mockingboard {
+                    card.write(addr, value);
+                }
+            }
             0xD000..=0xFFFF => {
                 if let Some(card) = &mut self.language_card {
                     card.write(addr, value);
@@ -497,6 +525,9 @@ impl Bus for Apple2 {
 
     fn tick(&mut self) {
         if let Some(card) = &mut self.disk2 {
+            card.tick();
+        }
+        if let Some(card) = &mut self.mockingboard {
             card.tick();
         }
         if self.display.is_some() {
@@ -539,9 +570,13 @@ impl Bus for Apple2 {
     fn reset_held(&self) -> bool {
         self.reset_held
     }
+
+    fn irq(&self) -> bool {
+        self.mockingboard.as_ref().is_some_and(mockingboard::Mockingboard::irq)
+    }
 }
 
-/// An Apple II+ run, with a language card: `rom_path` a dump of its ROM (its
+/// An Apple II+ run, with a language card and a Mockingboard: `rom_path` a dump of its ROM (its
 /// last 12K, $D000 up); `disks` .dsk, .do, .po, .nib or .woz images, for a
 /// Disk II, whose ROMs are found beside it, the first in drive 1; in a
 /// window, or `text`, its text screen in the terminal.
@@ -552,6 +587,7 @@ pub fn run(rom_path: &str, disks: &[&str], text: bool) {
     assert!(rom.len() >= 0x3000, "the ROM is 12K, $D000 to $FFFF");
     let mut apple = Apple2::new(rom[rom.len() - 0x3000..].to_vec());
     apple.language_card = Some(language_card::LanguageCard::new());
+    apple.mockingboard = Some(mockingboard::Mockingboard::new());
 
     if text {
         apple.terminal = Some(Terminal::new());
