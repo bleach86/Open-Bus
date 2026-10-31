@@ -1,11 +1,11 @@
 use crate::cpu::CPU;
 
 impl CPU {
-    pub fn inx(&mut self, cycles: &mut u32) {
+    pub fn inx(&mut self) {
         self.x = self.x.wrapping_add(1);
         self.status.zero = self.x == 0;
         self.status.negative = (self.x & 0x80) != 0;
 
-        *cycles = cycles.wrapping_add(1);
+        self.read_byte(self.pc); // the next byte, read and thrown away
     }
 }

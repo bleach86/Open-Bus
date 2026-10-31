@@ -7,22 +7,22 @@ impl CPU {
         self.status.negative = (result & 0x80) != 0;
     }
 
-    pub fn cpx_immediate(&mut self, cycles: &mut u32) {
-        let operand = self.fetch_byte(cycles);
+    pub fn cpx_immediate(&mut self) {
+        let operand = self.fetch_byte();
         let result = self.x.wrapping_sub(operand);
         self.cpx_set_flags(result, operand);
     }
 
-    pub fn cpx_zero_page(&mut self, cycles: &mut u32) {
-        let addr = self.fetch_byte(cycles) as u16;
-        let operand = self.read_byte(addr, cycles);
+    pub fn cpx_zero_page(&mut self) {
+        let addr = self.fetch_byte() as u16;
+        let operand = self.read_byte(addr);
         let result = self.x.wrapping_sub(operand);
         self.cpx_set_flags(result, operand);
     }
 
-    pub fn cpx_absolute(&mut self, cycles: &mut u32) {
-        let addr = self.fetch_word(cycles);
-        let operand = self.read_byte(addr, cycles);
+    pub fn cpx_absolute(&mut self) {
+        let addr = self.fetch_word();
+        let operand = self.read_byte(addr);
         let result = self.x.wrapping_sub(operand);
         self.cpx_set_flags(result, operand);
     }

@@ -7,44 +7,43 @@ impl CPU {
         self.status.negative = (result & 0x80) != 0;
     }
 
-    fn lsr_memory(&mut self, addr: u16, cycles: &mut u32) {
-        let original = self.read_byte(addr, cycles);
+    fn lsr_memory(&mut self, addr: u16) {
+        let original = self.read_byte(addr);
+        self.write_byte(addr, original); // written back first, as it was
         let result = original.wrapping_shr(1);
-        self.write_byte(addr, result, cycles);
+        self.write_byte(addr, result);
         self.lsr_set_flags(original, result);
-        *cycles = cycles.wrapping_add(1);
     }
 
-    pub fn lsr_accumulator(&mut self, cycles: &mut u32) {
+    pub fn lsr_accumulator(&mut self) {
         let original = self.a;
         self.a = original.wrapping_shr(1);
         self.lsr_set_flags(original, self.a);
 
-        *cycles = cycles.wrapping_add(1);
+        self.read_byte(self.pc); // the next byte, read and thrown away
     }
 
-    pub fn lsr_zero_page(&mut self, cycles: &mut u32) {
-        let addr = self.fetch_byte(cycles) as u16;
-        self.lsr_memory(addr, cycles);
+    pub fn lsr_zero_page(&mut self) {
+        let addr = self.fetch_byte() as u16;
+        self.lsr_memory(addr);
     }
 
-    pub fn lsr_zero_page_x(&mut self, cycles: &mut u32) {
-        let base_addr = self.fetch_byte(cycles);
+    pub fn lsr_zero_page_x(&mut self) {
+        let base_addr = self.fetch_byte();
         let addr = base_addr.wrapping_add(self.x) as u16;
-        self.lsr_memory(addr, cycles);
-
-        *cycles = cycles.wrapping_add(1);
+        self.read_byte(base_addr as u16); // the base, read before the index is added
+        self.lsr_memory(addr);
     }
 
-    pub fn lsr_absolute(&mut self, cycles: &mut u32) {
-        let addr = self.fetch_word(cycles);
-        self.lsr_memory(addr, cycles);
+    pub fn lsr_absolute(&mut self) {
+        let addr = self.fetch_word();
+        self.lsr_memory(addr);
     }
 
-    pub fn lsr_absolute_x(&mut self, cycles: &mut u32) {
-        let addr = self.fetch_word(cycles).wrapping_add(self.x as u16);
-        self.lsr_memory(addr, cycles);
-
-        *cycles = cycles.wrapping_add(1);
+    pub fn lsr_absolute_x(&mut self) {
+        let base_addr = self.fetch_word();
+        let addr = base_addr.wrapping_add(self.x as u16);
+        self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF)); // before the carry
+        self.lsr_memory(addr);
     }
 }

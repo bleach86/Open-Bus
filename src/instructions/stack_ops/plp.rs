@@ -1,9 +1,10 @@
 use crate::cpu::CPU;
 
 impl CPU {
-    pub fn plp(&mut self, cycles: &mut u32) {
-        let status = self.pop_byte(cycles);
+    pub fn plp(&mut self) {
+        self.read_byte(self.pc); // the next byte, read and thrown away
+        self.read_byte(self.sp_to_addr()); // the stack, before S moves on
+        let status = self.pop_byte();
         self.status.from_byte(status);
-        *cycles = cycles.wrapping_add(2);
     }
 }

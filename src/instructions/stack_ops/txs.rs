@@ -1,9 +1,9 @@
 use crate::cpu::CPU;
 
 impl CPU {
-    pub fn txs(&mut self, cycles: &mut u32) {
+    pub fn txs(&mut self) {
         self.sp = self.x;
 
-        *cycles = cycles.wrapping_add(1);
+        self.read_byte(self.pc); // the next byte, read and thrown away
     }
 }

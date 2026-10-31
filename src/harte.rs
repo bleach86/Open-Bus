@@ -9,7 +9,9 @@
 //! that execute stops on it, one past it, if any cycles are left over. Run
 //! for its cycles, the instruction must leave none; run for one more, it
 //! must leave that one. Where one is wrong, the cycles it does take are the
-//! most it can be given and still leave none.
+//! most it can be given and still leave none. Then its bus cycles, from the
+//! memory's bus log, are compared with the case's: each read or write, its
+//! address and value, in order.
 //!
 //! `tools/fetch-harte` puts the tests (MIT, not part of the repository) in
 //! target/harte/; without them the test says so and passes.
@@ -34,8 +36,8 @@ mod tests {
     struct Case {
         initial: State,
         last: State,
-        /// The address of each cycle.
-        cycles: Vec<u16>,
+        /// Each cycle's bus access: address, value, whether a write.
+        cycles: Vec<(u16, u8, bool)>,
     }
 
     fn dir() -> PathBuf {
@@ -44,10 +46,12 @@ mod tests {
 
     /// A case's line: see tools/fetch-harte.
     fn parse(line: &str) -> Case {
-        let parts: Vec<Vec<u32>> = line
-            .split('|')
+        let sections: Vec<&str> = line.split('|').collect();
+        let parts: Vec<Vec<u32>> = sections[..4]
+            .iter()
             .map(|part| part.split_whitespace().map(|n| n.parse().unwrap()).collect())
             .collect();
+        let words: Vec<&str> = sections[4].split_whitespace().collect();
         let state = |regs: &[u32], ram: &[u32]| State {
             pc: regs[0] as u16,
             s: regs[1] as u8,
@@ -60,7 +64,10 @@ mod tests {
         Case {
             initial: state(&parts[0], &parts[1]),
             last: state(&parts[2], &parts[3]),
-            cycles: parts[4].iter().map(|&addr| addr as u16).collect(),
+            cycles: words
+                .chunks(3)
+                .map(|cycle| (cycle[0].parse().unwrap(), cycle[1].parse().unwrap(), cycle[2] == "w"))
+                .collect(),
         }
     }
 
@@ -74,11 +81,11 @@ mod tests {
         case.cycles
             .iter()
             .enumerate()
-            .all(|(i, &addr)| addr != case.last.pc || (one_byte && i == 1))
+            .all(|(i, &(addr, _, _))| addr != case.last.pc || (one_byte && i == 1))
     }
 
-    /// The case run for `cycles` cycles; whether the byte after the
-    /// instruction was made a JAM.
+    /// The case run for `cycles` cycles, the bus logged from after reset;
+    /// whether the byte after the instruction was made a JAM.
     fn run(case: &Case, cycles: u32) -> (CPU, bool) {
         let mut cpu = CPU::new();
         for &(addr, value) in &case.initial.ram {
@@ -95,6 +102,7 @@ mod tests {
         cpu.x = case.initial.x;
         cpu.y = case.initial.y;
         cpu.status.from_byte(case.initial.p);
+        cpu.memory.bus_log = Some(Vec::new());
         cpu.execute(cycles);
         (cpu, jam)
     }
@@ -152,6 +160,24 @@ mod tests {
 
         if jam && run(case, cycles + 1).0.pc == last.pc {
             return Some(wrong_cycles());
+        }
+
+        // The instruction's own cycles come first in the log: the terminal
+        // looks at its key after it.
+        let log = cpu.memory.bus_log.as_ref().unwrap();
+        let access = |(addr, value, write): (u16, u8, bool)| {
+            format!("{} ${addr:04X} {value:02X}", if write { "write" } else { "read" })
+        };
+        for (i, &(addr, value, write)) in case.cycles.iter().enumerate() {
+            // A JAM put in the byte after reads as one.
+            let value = if jam && addr == last.pc && !write { JAM } else { value };
+            match log.get(i) {
+                Some(&got) if got == (addr, value, write) => {}
+                got => {
+                    let got = got.map_or("nothing".into(), |&got| access(got));
+                    return Some(format!("cycle {}: {got}, want {}", i + 1, access((addr, value, write))));
+                }
+            }
         }
         None
     }

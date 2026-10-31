@@ -1,8 +1,8 @@
 use crate::cpu::{CPU, StatusFlag};
 
 impl CPU {
-    pub fn mod_flag(&mut self, flag: StatusFlag, value: bool, cycles: &mut u32) {
-        *cycles = cycles.wrapping_add(1);
+    pub fn mod_flag(&mut self, flag: StatusFlag, value: bool) {
+        self.read_byte(self.pc); // the next byte, read and thrown away
 
         match flag {
             StatusFlag::Carry => self.status.carry = value,

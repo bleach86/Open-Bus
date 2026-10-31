@@ -1,0 +1,34 @@
+#!/bin/sh
+# Fetch mist64's msbasic (Microsoft BASIC for 6502, 2-clause BSD, not part of
+# this repository) into target/msbasic/, add this machine to it as a target
+# (roms/basic/: its I/O, memory and Ctrl-C; and a line in each of msbasic's
+# lists of targets), and build roms/basic.bin, the machine's ROM.
+set -e
+cd "$(dirname "$0")/.."
+commit=2a0bc2fe0db13f8cf1b5c40b1d5617263cdb9cb4
+if [ ! -d target/msbasic ]; then
+    git init -q target/msbasic
+    git -C target/msbasic fetch -q --depth 1 https://github.com/mist64/msbasic.git $commit
+fi
+git -C target/msbasic checkout -q -f $commit
+cp roms/basic/* target/msbasic/
+cd target/msbasic
+
+# The target in msbasic's lists, as its own are.
+python3 -I - <<'PY'
+def add(path, before, lines):
+    text = open(path).read()
+    assert text.count(before) == 1, (path, before)
+    open(path, 'w').write(text.replace(before, lines + before))
+add('defines.s', '.endif\n\n.ifdef CONFIG_2C',
+    '.elseif .def(cpuemu)\nCPUEMU := 1\n.include "defines_cpuemu.s"\n')
+add('iscntc.s', ';!!! runs into "STOP"',
+    '.ifdef CPUEMU\n.include "cpuemu_iscntc.s"\n.endif\n')
+PY
+
+CC65_HOME=${CC65_HOME:-$(for d in "$HOME/cc65" /usr/share/cc65; do [ -d "$d" ] && echo "$d" && break; done)}
+BIN=$( [ -x "$CC65_HOME/bin/ca65" ] && echo "$CC65_HOME/bin/" )
+mkdir -p tmp
+${BIN}ca65 -D cpuemu msbasic.s -o tmp/cpuemu.o
+${BIN}ld65 -C cpuemu.cfg tmp/cpuemu.o -o ../../roms/basic.bin -Ln ../../roms/basic.lbl
+echo "roms/basic.bin: built"
