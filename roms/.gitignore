@@ -12,3 +12,5 @@
 *.nib
 *.woz
 *.d13
+# The disks folder: images, and what comes with them
+apple2/disks/

@@ -19,7 +19,7 @@
 //! sectors, read back off its tracks, every one of which must read; a .nib
 //! by its tracks' bytes; a .woz by its bits, as a WOZ2.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const TRACKS: usize = 35;
 const NIB_TRACK: usize = 6656;
@@ -44,8 +44,10 @@ pub struct Disk {
     pub write_protected: bool,
     /// Written since it was read from its image, or last saved to it.
     pub written: bool,
-    /// What it was read from, to be saved as.
+    /// What it was read from, to be saved as; and the image file, to be
+    /// saved to, if it was opened from one.
     format: Format,
+    pub path: Option<PathBuf>,
 }
 
 /// The kind of image a disk was read from, and what saving it needs that
@@ -94,6 +96,7 @@ impl Disk {
         }?;
         let read_only = std::fs::metadata(path).map_err(|e| e.to_string())?.permissions().readonly();
         disk.write_protected |= read_only;
+        disk.path = Some(path.to_path_buf());
         Ok(disk)
     }
 
@@ -182,7 +185,7 @@ impl Disk {
     /// A disk with `tracks` under the head at whole tracks, none between.
     fn whole_tracks(tracks: Vec<Vec<u8>>, format: Format) -> Disk {
         let half_tracks = (0..2 * tracks.len()).map(|half| (half % 2 == 0).then_some(half / 2)).collect();
-        Disk { tracks, half_tracks, write_protected: false, written: false, format }
+        Disk { tracks, half_tracks, write_protected: false, written: false, format, path: None }
     }
 
     /// The disk as an image of the kind it was read from.
@@ -329,7 +332,7 @@ impl Disk {
             })
             .collect::<Result<_, _>>()?;
         let format = Format::Woz { quarters: tmap[..160].to_vec(), info: info.to_vec(), meta };
-        Ok(Disk { tracks, half_tracks, write_protected: info[2] != 0, written: false, format })
+        Ok(Disk { tracks, half_tracks, write_protected: info[2] != 0, written: false, format, path: None })
     }
 }
 

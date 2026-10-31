@@ -17,6 +17,7 @@ pub mod video;
 mod tests {
     mod disk2;
     mod disk_writing;
+    mod drives;
     mod language_card;
     mod machine;
 }
@@ -26,6 +27,7 @@ use crate::cpu::bus::Bus;
 use crate::host::display::{Display, Joystick, Key, SAMPLE_RATE};
 use crate::host::terminal::Terminal;
 use crate::host::window::Window;
+use disk_image::Disk;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -60,9 +62,14 @@ pub struct Apple2 {
     pub terminal: Option<Terminal>,
     /// The language card, in slot 0.
     pub language_card: Option<language_card::LanguageCard>,
-    /// The Disk II card, in slot 6; and the image its disk is saved to.
+    /// The Disk II card, in slot 6.
     pub disk2: Option<disk2::Disk2>,
-    pub disk_file: Option<PathBuf>,
+    /// The disks to hand, their images: put in the drives in turn, by F9
+    /// and F10; and which is in each drive.
+    pub disks: Vec<PathBuf>,
+    pub in_drive: [Option<usize>; 2],
+    /// What's in the drives, said under the terminal's screen.
+    status: String,
     /// The window the picture is shown in, and the keys come from.
     pub display: Option<Box<dyn Display>>,
     /// The picture, as far as this frame has drawn it.
@@ -106,7 +113,9 @@ impl Apple2 {
             terminal: None,
             language_card: None,
             disk2: None,
-            disk_file: None,
+            disks: Vec::new(),
+            in_drive: [None, None],
+            status: String::new(),
             display: None,
             picture: vec![0; video::WIDTH * video::HEIGHT],
             graphics: false,
@@ -214,9 +223,6 @@ impl Apple2 {
     /// terminal, held RESET_FRAMES. While it is, the cards are held reset,
     /// and the CPU.
     fn reset_key(&mut self) {
-        if self.terminal.as_ref().is_some_and(Terminal::reset_pressed) {
-            self.reset_frames = RESET_FRAMES;
-        }
         self.reset_held = self.display.as_ref().is_some_and(|display| display.reset_held()) || self.reset_frames > 0;
         self.reset_frames = self.reset_frames.saturating_sub(1);
         if self.reset_held {
@@ -229,21 +235,87 @@ impl Apple2 {
         }
     }
 
-    /// The disk saved to its image, if it has been written: once it has
-    /// stopped turning, so once what was writing it has finished, as DOS or
-    /// a game lets the motor go when it has; or, `now`, the machine going
-    /// off. Saved to a file beside it, then put in its place, so the image
-    /// is never half saved.
-    fn save_disk(&mut self, now: bool) {
-        let (Some(card), Some(path)) = (&mut self.disk2, &self.disk_file) else { return };
-        if card.spinning() && !now {
+    /// The function keys pressed, as a frame ends, in the window or the
+    /// terminal: F9, the next disk in drive 1; F10, the next in drive 2, or
+    /// none; F12, in the terminal, the Reset key.
+    fn function_keys(&mut self) {
+        let mut keys = Vec::new();
+        if let Some(terminal) = &self.terminal {
+            keys.extend(std::iter::from_fn(|| terminal.function_key()));
+        }
+        if let Some(display) = &mut self.display {
+            keys.extend(std::iter::from_fn(|| display.function_key()));
+        }
+        for key in keys {
+            match key {
+                9 => self.change_disk(0),
+                10 => self.change_disk(1),
+                12 => self.reset_frames = RESET_FRAMES,
+                _ => {}
+            }
+        }
+    }
+
+    /// The disk in drive `drive` (0 or 1) taken out, saved if it has been
+    /// written, and the next of the disks put in, read from its image: of
+    /// those not in the other drive, in turn, and for drive 2, none after
+    /// the last.
+    fn change_disk(&mut self, drive: usize) {
+        if self.disk2.is_none() {
             return;
         }
-        let Some(disk) = card.disk.as_mut().filter(|disk| disk.written) else { return };
+        self.save_disk(drive, true);
+        let other = self.in_drive[1 - drive];
+        let mut choices: Vec<Option<usize>> = (0..self.disks.len()).filter(|&n| Some(n) != other).map(Some).collect();
+        if drive == 1 {
+            choices.push(None);
+        }
+        if choices.is_empty() {
+            return;
+        }
+        // The one after the one in; the first, if it's none of them.
+        let at = match choices.iter().position(|&choice| choice == self.in_drive[drive]) {
+            Some(at) => (at + 1) % choices.len(),
+            None => 0,
+        };
+        let disk = choices[at].and_then(|n| {
+            Disk::open(&self.disks[n]).map_err(|e| eprintln!("{}: {e}", self.disks[n].display())).ok()
+        });
+        self.in_drive[drive] = choices[at].filter(|_| disk.is_some());
+        self.disk2.as_mut().unwrap().drives[drive].disk = disk;
+        self.show_disks();
+    }
+
+    /// What's in the drives, by their images' names: in the window's
+    /// title, or under the terminal's screen.
+    fn show_disks(&mut self) {
+        let name = |drive: usize| match self.in_drive[drive] {
+            Some(n) => self.disks[n].file_stem().map_or(String::new(), |name| name.to_string_lossy().into_owned()),
+            None => "empty".to_string(),
+        };
+        self.status = format!("Drive 1: {}   Drive 2: {}", name(0), name(1));
+        if let Some(display) = &mut self.display {
+            display.title(&format!("Apple ][   {}", self.status));
+        }
+        self.shown.clear(); // the terminal's drawn again
+    }
+
+    /// Drive `drive`'s disk saved to its image, if it has been written:
+    /// once it has stopped turning, so once what was writing it has
+    /// finished, as DOS or a game lets the motor go when it has; or, `now`,
+    /// taken out or the machine going off. Saved to a file beside it, then
+    /// put in its place, so the image is never half saved.
+    fn save_disk(&mut self, drive: usize, now: bool) {
+        let Some(card) = &mut self.disk2 else { return };
+        if card.turning(drive) && !now {
+            return;
+        }
+        let Some(disk) = card.drives[drive].disk.as_mut().filter(|disk| disk.written) else { return };
+        let Some(path) = disk.path.clone() else { return };
         disk.written = false;
         let saving = path.with_extension("saving");
         let saved = disk.to_image().and_then(|image| {
-            std::fs::write(&saving, image).and_then(|_| std::fs::rename(&saving, path)).map_err(|e| e.to_string())
+            std::fs::write(&saving, image).and_then(|_| std::fs::rename(&saving, &path)).map_err(|e| e.to_string())
         });
         if let Err(e) = saved {
             eprintln!("{}: not saved: {e}", path.display());
@@ -372,6 +444,9 @@ impl Apple2 {
                 screen.push('\n');
             }
         }
+        if !self.status.is_empty() {
+            screen.push_str(&format!("\n\x1B[0m\x1B[K{}", self.status));
+        }
         if screen != self.shown {
             print!("{screen}");
             let _ = std::io::stdout().flush();
@@ -448,11 +523,14 @@ impl Bus for Apple2 {
             if self.terminal.is_some() {
                 self.draw();
             }
+            self.function_keys();
             self.reset_key();
-            self.save_disk(false);
-            // The window closed: the disk saved, and off.
+            self.save_disk(0, false);
+            self.save_disk(1, false);
+            // The window closed: the disks saved, and off.
             if self.display.as_ref().is_some_and(|display| display.closed()) {
-                self.save_disk(true);
+                self.save_disk(0, true);
+                self.save_disk(1, true);
                 std::process::exit(0);
             }
         }
@@ -464,10 +542,10 @@ impl Bus for Apple2 {
 }
 
 /// An Apple II+ run, with a language card: `rom_path` a dump of its ROM (its
-/// last 12K, $D000 up); `disk` a .dsk, .do, .po, .nib or .woz in a Disk II,
-/// whose ROMs are found beside it; in a window, or `text`, its text screen in the
-/// terminal.
-pub fn run(rom_path: &str, disk: Option<&str>, text: bool) {
+/// last 12K, $D000 up); `disks` .dsk, .do, .po, .nib or .woz images, for a
+/// Disk II, whose ROMs are found beside it, the first in drive 1; in a
+/// window, or `text`, its text screen in the terminal.
+pub fn run(rom_path: &str, disks: &[&str], text: bool) {
     let read = |path: &Path| std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let rom_path = Path::new(rom_path);
     let rom = read(rom_path);
@@ -475,19 +553,23 @@ pub fn run(rom_path: &str, disk: Option<&str>, text: bool) {
     let mut apple = Apple2::new(rom[rom.len() - 0x3000..].to_vec());
     apple.language_card = Some(language_card::LanguageCard::new());
 
-    if let Some(disk) = disk {
-        let beside = |name: &str| read(&rom_path.with_file_name(name));
-        let mut card = disk2::Disk2::new(beside("disk2-p5-341-0027.bin"), &beside("disk2-p6-341-0028.bin"))
-            .unwrap_or_else(|e| panic!("the Disk II's ROMs: {e}"));
-        card.disk = Some(disk_image::Disk::open(Path::new(disk)).unwrap_or_else(|e| panic!("{disk}: {e}")));
-        apple.disk2 = Some(card);
-        apple.disk_file = Some(PathBuf::from(disk));
-    }
     if text {
         apple.terminal = Some(Terminal::new());
         print!("\x1B[2J"); // the screen cleared, for the Apple's
     } else {
         apple.display = Some(Box::new(Window::new("Apple ][", video::WIDTH, video::HEIGHT, 3)));
+    }
+    if !disks.is_empty() {
+        let beside = |name: &str| read(&rom_path.with_file_name(name));
+        let card = disk2::Disk2::new(beside("disk2-p5-341-0027.bin"), &beside("disk2-p6-341-0028.bin"))
+            .unwrap_or_else(|e| panic!("the Disk II's ROMs: {e}"));
+        apple.disk2 = Some(card);
+        // Each image opened, to know it can be; the first put in drive 1.
+        for disk in disks {
+            Disk::open(Path::new(disk)).unwrap_or_else(|e| panic!("{disk}: {e}"));
+        }
+        apple.disks = disks.iter().map(PathBuf::from).collect();
+        apple.change_disk(0);
     }
 
     let mut cpu = CPU::with_bus(apple);

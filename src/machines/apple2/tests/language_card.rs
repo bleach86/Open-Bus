@@ -198,7 +198,7 @@ mod tests {
             return;
         };
         let mut card = Disk2::new(p5, &p6).unwrap();
-        card.disk = Some(Disk::from_dsk(&disk).unwrap());
+        card.drives[0].disk = Some(Disk::from_dsk(&disk).unwrap());
         let mut apple = Apple2::new(rom);
         apple.language_card = Some(LanguageCard::new());
         apple.disk2 = Some(card);

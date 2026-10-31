@@ -1,9 +1,10 @@
 //! The host's window, by SDL2: a machine's frames, scaled up; the keys
 //! typed in it; and a joystick, a gamepad's (its left stick or D-pad, A and
 //! B its buttons) or the numeric keypad's (8, 2, 4 and 6 and the corners;
-//! 0 and . its buttons), the Alt keys buttons too; F12, the machine's
-//! Reset key; and the machine's sound, through an audio queue. Closed, it
-//! tells the machine, to turn itself off.
+//! 0 and . its buttons), the Alt keys buttons too; F1 to F11, for the
+//! machine's own uses, and F12, its Reset key; and the machine's sound,
+//! through an audio queue. Closed, it tells the machine, to turn itself
+//! off.
 
 use crate::host::display::{Display, Joystick, Key, SAMPLE_RATE};
 use sdl2::EventPump;
@@ -21,6 +22,8 @@ pub struct Window {
     texture: Texture,
     events: EventPump,
     keys: VecDeque<Key>,
+    /// F1 to F11 pressed, by number, not yet taken.
+    function_keys: VecDeque<u8>,
     audio: Option<AudioQueue<f32>>,
     controllers: GameControllerSubsystem,
     gamepad: Option<GameController>,
@@ -83,6 +86,7 @@ impl Window {
             texture,
             events,
             keys: VecDeque::new(),
+            function_keys: VecDeque::new(),
             audio,
             controllers,
             gamepad,
@@ -120,6 +124,10 @@ impl Window {
                         Keycode::RAlt => self.alt_held[1] = true,
                         Keycode::F12 => self.reset_held = true,
                         _ => {}
+                    }
+                    if let Some(n) = function_key(keycode) {
+                        self.function_keys.push_back(n);
+                        continue;
                     }
                     let ctrl = keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
                     let key = match keycode {
@@ -182,6 +190,15 @@ impl Window {
             }
         }
     }
+}
+
+/// F1 to F11's numbers.
+fn function_key(keycode: Keycode) -> Option<u8> {
+    let keys = [
+        Keycode::F1, Keycode::F2, Keycode::F3, Keycode::F4, Keycode::F5, Keycode::F6,
+        Keycode::F7, Keycode::F8, Keycode::F9, Keycode::F10, Keycode::F11,
+    ];
+    keys.iter().position(|&key| key == keycode).map(|n| n as u8 + 1)
 }
 
 /// A numeric keypad key the joystick takes, and the text it would type.
@@ -263,5 +280,13 @@ impl Display for Window {
 
     fn closed(&self) -> bool {
         self.closed
+    }
+
+    fn function_key(&mut self) -> Option<u8> {
+        self.function_keys.pop_front()
+    }
+
+    fn title(&mut self, title: &str) {
+        let _ = self.canvas.window_mut().set_title(title);
     }
 }

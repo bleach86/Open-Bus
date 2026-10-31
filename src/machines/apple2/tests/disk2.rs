@@ -237,17 +237,17 @@ mod tests {
         for addr in [0xC0E3, 0xC0E0, 0xC0E5, 0xC0E2] {
             card.io(addr, None);
         }
-        assert_eq!(card.half_track, 2, "a track in");
+        assert_eq!(card.drives[0].half_track, 2, "a track in");
         // Out again: magnet 1 on, 2 off, 0 on, 1 off.
         for addr in [0xC0E3, 0xC0E4, 0xC0E1, 0xC0E2] {
             card.io(addr, None);
         }
-        assert_eq!(card.half_track, 0, "back to track 0");
+        assert_eq!(card.drives[0].half_track, 0, "back to track 0");
         // Outward from track 0: against the stop, no farther.
         for addr in [0xC0E7, 0xC0E0] {
             card.io(addr, None);
         }
-        assert_eq!(card.half_track, 0, "past track 0");
+        assert_eq!(card.drives[0].half_track, 0, "past track 0");
     }
 
     #[test]
@@ -277,7 +277,7 @@ mod tests {
         let p6 = std::fs::read(dir().join("disk2-p6-341-0028.bin")).ok()?;
         let bytes = std::fs::read(dir().join(format!("{DISK}.{image}"))).ok()?;
         let mut card = Disk2::new(p5, &p6).unwrap();
-        card.disk = Some(if image == "nib" { Disk::from_nib(&bytes) } else { Disk::from_dsk(&bytes) }.unwrap());
+        card.drives[0].disk = Some(if image == "nib" { Disk::from_nib(&bytes) } else { Disk::from_dsk(&bytes) }.unwrap());
         Some(card)
     }
 
@@ -315,12 +315,12 @@ mod tests {
             return;
         };
         let mut card = Disk2::new(p5, &p6).unwrap();
-        card.disk = Some(Disk::from_dsk(&vec![0; 143_360]).unwrap());
+        card.drives[0].disk = Some(Disk::from_dsk(&vec![0; 143_360]).unwrap());
         // Half-track 1, between tracks 0 and 1: no flux changes, so the
         // amplifier's noise, and bytes of it.
         card.io(0xC0E3, None);
         card.io(0xC0E9, None);
-        assert_eq!(card.half_track, 1);
+        assert_eq!(card.drives[0].half_track, 1);
         let (mut bytes, mut last) = (Vec::new(), 0u8);
         for _ in 0..50_000 * 4 {
             card.tick();
@@ -412,7 +412,7 @@ mod tests {
             return;
         };
         let mut card = Disk2::new(p5, &p6).unwrap();
-        card.disk = Some(Disk::from_woz(&woz).unwrap());
+        card.drives[0].disk = Some(Disk::from_woz(&woz).unwrap());
         let mut apple = Apple2::new(rom);
         apple.disk2 = Some(card);
         let mut cpu = CPU::with_bus(apple);

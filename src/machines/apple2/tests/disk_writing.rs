@@ -23,7 +23,7 @@ mod tests {
         let p5 = std::fs::read(dir().join("disk2-p5-341-0027.bin")).ok()?;
         let p6 = std::fs::read(dir().join("disk2-p6-341-0028.bin")).ok()?;
         let mut card = Disk2::new(p5, &p6).unwrap();
-        card.disk = Some(disk);
+        card.drives[0].disk = Some(disk);
         Some(card)
     }
 
@@ -74,7 +74,7 @@ mod tests {
         let mut bytes = vec![0xFF; 20]; // syncs ahead, to read in step
         bytes.extend(field);
         write_bytes(&mut card, &bytes);
-        assert!(card.disk.as_ref().unwrap().written, "the disk not marked written");
+        assert!(card.drives[0].disk.as_ref().unwrap().written, "the disk not marked written");
         let read = read_bytes(&mut card);
         assert!(read.windows(field.len()).any(|bytes| bytes == field), "{field:02X?} not read back");
     }
@@ -97,11 +97,11 @@ mod tests {
         card.io(0xC0E9, None);
         assert!(!sense(&mut card), "write protect sensed, the disk not protected");
 
-        card.disk.as_mut().unwrap().write_protected = true;
+        card.drives[0].disk.as_mut().unwrap().write_protected = true;
         assert!(sense(&mut card), "write protect not sensed");
-        let before = card.disk.as_ref().unwrap().tracks.clone();
+        let before = card.drives[0].disk.as_ref().unwrap().tracks.clone();
         write_bytes(&mut card, &[0x96; 100]);
-        let disk = card.disk.as_ref().unwrap();
+        let disk = card.drives[0].disk.as_ref().unwrap();
         assert!(!disk.written && disk.tracks == before, "a write protected disk written");
     }
 
@@ -164,7 +164,7 @@ mod tests {
             return;
         };
         let file = std::env::temp_dir().join(format!("cpu_emu_saved_{}.dsk", std::process::id()));
-        cpu.memory.disk_file = Some(file.clone());
+        cpu.memory.disk2.as_mut().unwrap().drives[0].disk.as_mut().unwrap().path = Some(file.clone());
         type_in(&mut cpu, b"NEW\r10 PRINT \"SAVED ON DISK\"\rSAVE TEST\rCATALOG\r");
         assert!(run_until(&mut cpu, " TEST", 10), "TEST not in the catalog: {:#?}", cpu.memory.text());
         assert!(!file.exists(), "saved while the disk was still turning");
@@ -192,7 +192,7 @@ mod tests {
         // A disk never formatted: no flux changes, anywhere.
         let mut blank = Disk::from_dsk(&vec![0; 143_360]).unwrap();
         blank.tracks.iter_mut().for_each(|track| track.fill(0));
-        cpu.memory.disk2.as_mut().unwrap().disk = Some(blank);
+        cpu.memory.disk2.as_mut().unwrap().drives[0].disk = Some(blank);
         type_in(&mut cpu, b"INIT HELLO\r");
         cpu.execute(CLOCK_HZ);
         assert!(run_to_prompt(&mut cpu, 60), "INIT didn't finish: {:#?}", cpu.memory.text());
@@ -200,7 +200,7 @@ mod tests {
             cpu.execute(100_000);
         }
 
-        let image = cpu.memory.disk2.as_ref().unwrap().disk.as_ref().unwrap().to_image();
+        let image = cpu.memory.disk2.as_ref().unwrap().drives[0].disk.as_ref().unwrap().to_image();
         let image = image.unwrap_or_else(|e| panic!("the formatted disk doesn't read as a .dsk: {e}"));
         let mut cpu = apple(Disk::from_dsk(&image).unwrap()).unwrap();
         assert!(run_until(&mut cpu, "FORMATTED BY INIT", 10), "it didn't boot: {:#?}", cpu.memory.text());
@@ -212,9 +212,9 @@ mod tests {
             eprintln!("disk writing test: no ROMs or System Master in roms/apple2/");
             return;
         };
-        cpu.memory.disk2.as_mut().unwrap().disk.as_mut().unwrap().write_protected = true;
+        cpu.memory.disk2.as_mut().unwrap().drives[0].disk.as_mut().unwrap().write_protected = true;
         type_in(&mut cpu, b"NEW\r10 END\rSAVE TEST\r");
         assert!(run_until(&mut cpu, "WRITE PROTECTED", 10), "no WRITE PROTECTED: {:#?}", cpu.memory.text());
-        assert!(!cpu.memory.disk2.as_ref().unwrap().disk.as_ref().unwrap().written, "written");
+        assert!(!cpu.memory.disk2.as_ref().unwrap().drives[0].disk.as_ref().unwrap().written, "written");
     }
 }

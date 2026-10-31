@@ -30,6 +30,15 @@ pub trait Display {
         false
     }
 
+    /// The next function key pressed, by its number, F1 to F11, for the
+    /// machine's own uses (F12 is its Reset key, held).
+    fn function_key(&mut self) -> Option<u8> {
+        None
+    }
+
+    /// The window's title: the machine's say, what disks are in it.
+    fn title(&mut self, _title: &str) {}
+
     /// Sound to play: samples at SAMPLE_RATE, -1 to 1, following on from
     /// the last.
     fn play(&mut self, _samples: &[f32]) {}

@@ -1,18 +1,20 @@
 //! The host's terminal, for the machine's terminal ports: the keys typed,
-//! a key at a time, for the machine to take; and F12, the machine's Reset
-//! key, pressed.
+//! a key at a time, for the machine to take; and the function keys
+//! pressed, apart, for the machine's own uses.
 
 use std::collections::VecDeque;
 use std::io::{IsTerminal, Read, stdin};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
-/// F12, as the terminal sends it.
-const F12: &[u8] = b"\x1B[24~";
+/// F1 to F12, as the terminal sends them.
+const FUNCTION_KEYS: [&[u8]; 12] = [
+    b"\x1BOP", b"\x1BOQ", b"\x1BOR", b"\x1BOS", b"\x1B[15~", b"\x1B[17~",
+    b"\x1B[18~", b"\x1B[19~", b"\x1B[20~", b"\x1B[21~", b"\x1B[23~", b"\x1B[24~",
+];
 
-/// F12 pressed, and not yet taken.
-static RESET_PRESSED: AtomicBool = AtomicBool::new(false);
+/// The function keys pressed, by number, not yet taken.
+static FUNCTION_KEYS_PRESSED: Mutex<VecDeque<u8>> = Mutex::new(VecDeque::new());
 
 #[derive(Default, Clone, Debug)]
 pub struct Terminal {
@@ -52,11 +54,13 @@ impl Terminal {
                             }
                             let mut rx = rx_clone.lock().unwrap();
                             rx.push_back(b);
-                            // F12: the Reset key, not keys typed.
-                            if rx.len() >= F12.len() && rx.iter().rev().take(F12.len()).eq(F12.iter().rev()) {
-                                let typed = rx.len() - F12.len();
-                                rx.truncate(typed);
-                                RESET_PRESSED.store(true, Ordering::Relaxed);
+                            // A function key: not keys typed.
+                            for (n, sequence) in FUNCTION_KEYS.iter().enumerate() {
+                                if rx.len() >= sequence.len() && rx.iter().rev().take(sequence.len()).eq(sequence.iter().rev()) {
+                                    let typed = rx.len() - sequence.len();
+                                    rx.truncate(typed);
+                                    FUNCTION_KEYS_PRESSED.lock().unwrap().push_back(n as u8 + 1);
+                                }
                             }
                         }
                     }
@@ -74,9 +78,9 @@ impl Terminal {
         self.rx_buffer.lock().unwrap().pop_front()
     }
 
-    /// Whether the Reset key has been pressed since this was last asked.
-    pub fn reset_pressed(&self) -> bool {
-        RESET_PRESSED.swap(false, Ordering::Relaxed)
+    /// The next function key pressed, by its number, 1 to 12.
+    pub fn function_key(&self) -> Option<u8> {
+        FUNCTION_KEYS_PRESSED.lock().unwrap().pop_front()
     }
 }
 

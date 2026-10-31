@@ -1,4 +1,4 @@
-//! The Disk II: its controller card, in slot 6, and a drive.
+//! The Disk II: its controller card, in slot 6, and its two drives.
 //!
 //! The card's boot ROM (P5, 341-0027) is at $C600; its 16 switches, at
 //! $C0E0 to $C0EF, work the stepper's four magnets, the motor, which drive,
@@ -10,13 +10,15 @@
 //! write protect, load it, or nothing. That is how the bits on the disk
 //! become the bytes the CPU reads.
 //!
-//! The drive turns the disk a bit every 8 sequencer steps, 4 microseconds,
+//! A drive, the one switched to, turns the disk a bit every 8 sequencer
+//! steps, 4 microseconds,
 //! a 1 (a flux change) a read pulse in its first. Its read amplifier, an
 //! MC3470, passes them on a bit late; but more than three bits without
 //! one, it has turned its gain up so far that it reads noise, pulses at
 //! random, 3 bits in 10: copy protection counts on it, and so does a
 //! half-track with no track. The stepper moves the head a half-track
-//! at a time toward a magnet next to it. Switched off, the motor runs on
+//! at a time toward a magnet next to it. The other drive is still, its
+//! head where it was left. Switched off, the motor runs on
 //! for a second, held by a timer on the card: DOS counts on it, to find
 //! the disk still turning when it next reads. RESET clears the switches'
 //! latch: the magnets off, the motor switched off (it runs on), drive 1,
@@ -48,19 +50,26 @@ pub struct Disk2 {
     // The sequencer.
     state: u8,
     pub data: u8,
-    // The drive: the disk in it, the head over half-track `half_track`, at
-    // bit `bit`, `step` sequencer steps into it.
-    pub disk: Option<Disk>,
-    pub half_track: usize,
-    bit: usize,
-    step: u8,
-    /// The amplifier's last 4 bits, the latest lowest; and its noise.
-    window: u8,
+    /// Drives 1 and 2.
+    pub drives: [Drive; 2],
+    /// The read amplifiers' noise.
     noise: u32,
     /// The write signal, as last stepped; and whether it has changed in
     /// the bit under the head.
     write_signal: bool,
     flux_change: bool,
+}
+
+/// A drive: the disk in it; its head over half-track `half_track`, at bit
+/// `bit` of the track, `step` sequencer steps into the bit; and its read
+/// amplifier's last 4 bits, the latest lowest.
+#[derive(Default)]
+pub struct Drive {
+    pub disk: Option<Disk>,
+    pub half_track: usize,
+    bit: usize,
+    step: u8,
+    window: u8,
 }
 
 /// How long the motor runs on, switched off: a second.
@@ -87,11 +96,7 @@ impl Disk2 {
             bus: 0,
             state: 0,
             data: 0,
-            disk: None,
-            half_track: 0,
-            bit: 0,
-            step: 0,
-            window: 0,
+            drives: [Drive::default(), Drive::default()],
             noise: 0x2545_F491,
             write_signal: false,
             flux_change: false,
@@ -148,39 +153,57 @@ impl Disk2 {
         }
     }
 
-    /// The head toward a magnet on next to it, a half-track: the magnet
-    /// under it is its half-track's, of the four in turn.
+    /// The drive switched to, 1 or 2: the one turning, stepping, read and
+    /// written; as an index, 0 or 1.
+    pub fn selected(&self) -> usize {
+        self.drive2 as usize
+    }
+
+    fn drive(&self) -> &Drive {
+        &self.drives[self.selected()]
+    }
+
+    fn drive_mut(&mut self) -> &mut Drive {
+        &mut self.drives[self.selected()]
+    }
+
+    /// The switched to drive's head toward a magnet on next to it, a
+    /// half-track: the magnet under it is its half-track's, of the four in
+    /// turn.
     fn move_head(&mut self) {
-        let under = self.half_track % 4;
+        let half_track = self.drive().half_track;
+        let under = half_track % 4;
         let on = |magnet: usize| self.phases & (1 << magnet) != 0;
         let (inward, outward) = (on((under + 1) % 4), on((under + 3) % 4));
-        let to = if inward && !outward && self.half_track < LAST_HALF_TRACK {
-            self.half_track + 1
-        } else if outward && !inward && self.half_track > 0 {
-            self.half_track - 1
+        let to = if inward && !outward && half_track < LAST_HALF_TRACK {
+            half_track + 1
+        } else if outward && !inward && half_track > 0 {
+            half_track - 1
         } else {
             return;
         };
         // The same place round the disk, on the next track.
-        let (from_len, to_len) = (self.track_len(self.half_track), self.track_len(to));
-        self.bit = self.bit * to_len / from_len;
-        self.half_track = to;
+        let (from_len, to_len) = (self.track_len(half_track), self.track_len(to));
+        let drive = self.drive_mut();
+        drive.bit = drive.bit * to_len / from_len;
+        drive.half_track = to;
     }
 
-    /// The disk in the drive switched to: drive 1's; drive 2 has none.
+    /// The disk in the drive switched to, if there is one.
     fn disk(&self) -> Option<&Disk> {
-        self.disk.as_ref().filter(|_| !self.drive2)
+        self.drive().disk.as_ref()
     }
 
-    /// The bits under the head: the track's at its half-track, if there is
-    /// one there.
+    /// The bits under its head: the track's at its half-track, if there
+    /// is one there.
     fn track(&self) -> Option<&Vec<u8>> {
-        self.disk()?.track(self.half_track)
+        self.disk()?.track(self.drive().half_track)
     }
 
-    /// The bits in a turn at `half_track`: its track's, or a turn's of none.
+    /// The bits in a turn at `half_track` of its disk: its track's, or a
+    /// turn's of none.
     fn track_len(&self, half_track: usize) -> usize {
-        self.disk.as_ref().and_then(|disk| disk.track(half_track)).map_or(REVOLUTION_BITS, Vec::len)
+        self.disk().and_then(|disk| disk.track(half_track)).map_or(REVOLUTION_BITS, Vec::len)
     }
 
     /// Whether the drive senses write protect: the disk's notch covered;
@@ -189,9 +212,16 @@ impl Disk2 {
         self.disk().is_none_or(|disk| disk.write_protected)
     }
 
-    /// Whether the disk is turning: the motor on, or running on.
+    /// Whether the disk switched to is turning: the motor on, or running
+    /// on.
     pub fn spinning(&self) -> bool {
         self.motor || self.motor_off_in > 0
+    }
+
+    /// Whether drive `drive` (0 or 1)'s disk is turning: it's switched to,
+    /// and the motor's on or running on.
+    pub fn turning(&self, drive: usize) -> bool {
+        self.spinning() && drive == self.selected()
     }
 
     /// A CPU cycle: two sequencer steps.
@@ -209,19 +239,22 @@ impl Disk2 {
         let mut pulse = false;
         let writing = self.q7 && !self.write_protected();
         if self.spinning() && self.disk().is_some() {
-            if self.step == 0 && !writing {
-                let bit = self.track().map_or(0, |track| track[self.bit % track.len()]);
+            let (half_track, at) = (self.drive().half_track, self.drive().bit);
+            if self.drive().step == 0 && !writing {
+                let bit = self.track().map_or(0, |track| track[at % track.len()]);
                 pulse = self.amplify(bit);
             }
-            self.step += 1;
-            if self.step == 8 {
-                self.step = 0;
+            let change = self.flux_change as u8;
+            let drive = self.drive_mut();
+            drive.step += 1;
+            if drive.step == 8 {
+                drive.step = 0;
                 if writing {
-                    let (half_track, bit, change) = (self.half_track, self.bit, self.flux_change as u8);
-                    self.disk.as_mut().unwrap().write_bit(half_track, bit, change);
+                    drive.disk.as_mut().unwrap().write_bit(half_track, at, change);
                 }
                 self.flux_change = false;
-                self.bit = (self.bit + 1) % self.track_len(self.half_track);
+                let len = self.track_len(half_track);
+                self.drive_mut().bit = (at + 1) % len;
             }
         }
 
@@ -253,8 +286,10 @@ impl Disk2 {
     /// The read amplifier given a bit from the head: the bit before it,
     /// while there has been a 1 in the last 4; then noise.
     fn amplify(&mut self, bit: u8) -> bool {
-        self.window = (self.window << 1 | bit) & 0x0F;
-        if self.window != 0 { self.window & 0x02 != 0 } else { self.noise() }
+        let drive = self.drive_mut();
+        drive.window = (drive.window << 1 | bit) & 0x0F;
+        let window = drive.window;
+        if window != 0 { window & 0x02 != 0 } else { self.noise() }
     }
 
     /// The amplifier's noise: a 1, 3 times in 10; by xorshift.
