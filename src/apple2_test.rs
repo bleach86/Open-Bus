@@ -295,4 +295,69 @@ mod tests {
         assert_eq!(apple.read(0xC062) & 0x80, 0, "button 1");
         assert_eq!(apple.read(0xC063) & 0x80, 0x80, "button 2");
     }
+
+    /// A window of the test's: the sound it's given, kept.
+    struct Heard(Rc<RefCell<Vec<f32>>>);
+
+    impl Display for Heard {
+        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
+
+        fn key(&mut self) -> Option<Key> {
+            None
+        }
+
+        fn play(&mut self, samples: &[f32]) {
+            self.0.borrow_mut().extend_from_slice(samples);
+        }
+    }
+
+    /// 60 frames of the machine, $C030 read every `flip` cycles (0, never):
+    /// the sound it played.
+    fn sound(flip: u32) -> Vec<f32> {
+        let mut apple = machine();
+        let heard = Rc::new(RefCell::new(Vec::new()));
+        apple.display = Some(Box::new(Heard(heard.clone())));
+        for cycle in 1..=60 * CYCLES_PER_FRAME {
+            apple.tick();
+            if flip != 0 && cycle % flip == 0 {
+                apple.read(0xC030);
+            }
+        }
+        heard.take()
+    }
+
+    #[test]
+    fn the_sound_is_48000_samples_a_second_given_a_frame_at_a_time() {
+        let samples = sound(0).len() as u64;
+        let due = 60 * CYCLES_PER_FRAME as u64 * 48_000 / CLOCK_HZ as u64;
+        assert_eq!(samples, due, "samples for 60 frames");
+    }
+
+    #[test]
+    fn the_speaker_flips_at_c030() {
+        // Every 1,023 cycles: a square wave of 500 Hz, its level crossing
+        // the middle a thousand times a second.
+        let samples = sound(1023);
+        let crossings = samples.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count();
+        let seconds = 60.0 * CYCLES_PER_FRAME as f32 / CLOCK_HZ as f32;
+        let per_second = crossings as f32 / seconds;
+        assert!((990.0..=1010.0).contains(&per_second), "{per_second} crossings a second");
+        assert!(samples.iter().any(|&s| s > 0.2) && samples.iter().any(|&s| s < -0.2), "too quiet");
+    }
+
+    #[test]
+    fn the_speaker_left_still_settles_to_silence() {
+        assert!(sound(0).iter().all(|&s| s == 0.0), "a sound without a flip");
+        // Flipped once, at the start: a click, then nothing.
+        let mut apple = machine();
+        let heard = Rc::new(RefCell::new(Vec::new()));
+        apple.display = Some(Box::new(Heard(heard.clone())));
+        apple.read(0xC030);
+        for _ in 0..10 * CYCLES_PER_FRAME {
+            apple.tick();
+        }
+        let samples = heard.take();
+        assert!(samples[0].abs() > 0.2, "no click");
+        assert!(samples[samples.len() - 100..].iter().all(|s| s.abs() < 0.001), "still sounding");
+    }
 }

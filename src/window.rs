@@ -1,11 +1,12 @@
 //! The host's window, by SDL2: a machine's frames, scaled up; the keys
 //! typed in it; and a joystick, a gamepad's (its left stick or D-pad, A and
 //! B its buttons) or the numeric keypad's (8, 2, 4 and 6 and the corners;
-//! 0 and . its buttons), the Alt keys buttons too. Closing it turns the
-//! machine off.
+//! 0 and . its buttons), the Alt keys buttons too; and the machine's
+//! sound, through an audio queue. Closing it turns the machine off.
 
-use crate::display::{Display, Joystick, Key};
+use crate::display::{Display, Joystick, Key, SAMPLE_RATE};
 use sdl2::EventPump;
+use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::controller::{Axis, Button, GameController};
 use sdl2::event::Event;
 use sdl2::keyboard::{Keycode, Mod};
@@ -19,6 +20,7 @@ pub struct Window {
     texture: Texture,
     events: EventPump,
     keys: VecDeque<Key>,
+    audio: Option<AudioQueue<f32>>,
     controllers: GameControllerSubsystem,
     gamepad: Option<GameController>,
     /// The gamepad's left stick, -1 to 1 each way.
@@ -33,6 +35,12 @@ pub struct Window {
 
 /// A stick's travel taken as centred: a resting gamepad's isn't quite 0.
 const DEAD_ZONE: f32 = 0.15;
+
+/// The sound queued ahead, to start with, so that a frame late doesn't run
+/// it dry; and the most, beyond which a frame's is dropped, so that the
+/// sound can't fall behind the picture.
+const AUDIO_CUSHION: f32 = 0.05;
+const AUDIO_MOST: f32 = 0.1;
 
 impl Window {
     /// A window `title`d, for frames `width` by `height` pixels, shown
@@ -51,6 +59,15 @@ impl Window {
             .create_texture_streaming(PixelFormatEnum::RGB888, width as u32, height as u32)
             .expect("a texture");
         video.text_input().start();
+        // The sound, if the host has any: a queue of samples, a cushion of
+        // silence in it to start.
+        let audio = sdl.audio().ok().and_then(|audio| {
+            let spec = AudioSpecDesired { freq: Some(SAMPLE_RATE as i32), channels: Some(1), samples: Some(512) };
+            let queue = audio.open_queue::<f32, _>(None, &spec).ok()?;
+            queue.queue_audio(&vec![0.0; (SAMPLE_RATE as f32 * AUDIO_CUSHION) as usize]).ok()?;
+            queue.resume();
+            Some(queue)
+        });
         let controllers = sdl.game_controller().expect("SDL's game controllers");
         let gamepad = (0..controllers.num_joysticks().unwrap_or(0))
             .filter(|&n| controllers.is_game_controller(n))
@@ -61,6 +78,7 @@ impl Window {
             texture,
             events,
             keys: VecDeque::new(),
+            audio,
             controllers,
             gamepad,
             stick: (0.0, 0.0),
@@ -194,6 +212,15 @@ impl Display for Window {
 
     fn key(&mut self) -> Option<Key> {
         self.keys.pop_front()
+    }
+
+    fn play(&mut self, samples: &[f32]) {
+        if let Some(queue) = &self.audio {
+            let queued = queue.size() as f32 / (4.0 * SAMPLE_RATE as f32);
+            if queued < AUDIO_MOST {
+                let _ = queue.queue_audio(samples);
+            }
+        }
     }
 
     /// The gamepad's stick, unless the D-pad or the keypad pushes it all the

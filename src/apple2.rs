@@ -10,7 +10,7 @@ pub mod disk_image;
 pub mod video;
 
 use crate::bus::Bus;
-use crate::display::{Display, Joystick, Key};
+use crate::display::{Display, Joystick, Key, SAMPLE_RATE};
 use crate::terminal::Terminal;
 use std::io::Write;
 
@@ -22,6 +22,11 @@ pub const CYCLES_PER_FRAME: u32 = 17_030;
 /// A paddle's timer runs 11 cycles a step of its 0 to 255: as long as the
 /// monitor's PREAD takes to count one.
 const CYCLES_PER_PADDLE_STEP: u64 = 11;
+
+/// How loud the speaker is, of the host's full volume.
+const VOLUME: f32 = 0.3;
+/// How fast the speaker's cone settles back, left still: a sample's share.
+const SETTLE: f32 = 0.995;
 
 /// The flashing characters' half period.
 const FLASH_FRAMES: u32 = 16;
@@ -43,6 +48,16 @@ pub struct Apple2 {
     pub mixed: bool,
     pub page2: bool,
     pub hires: bool,
+    /// The speaker's cone: out, or in. $C030 flips it.
+    speaker: bool,
+    /// The cycles of the sample being made, and how many the cone was out;
+    /// how far into a sample it is, in parts of CLOCK_HZ; the speaker's
+    /// settling; and the samples made this frame.
+    sample_cycles: u32,
+    sample_out: u32,
+    sample_phase: u32,
+    settle: (f32, f32),
+    sound: Vec<f32>,
     /// When each paddle's timer runs out, started by $C070.
     paddle_until: [u64; 4],
     /// Cycles since power-on; cycles into the frame, and frames.
@@ -69,6 +84,12 @@ impl Apple2 {
             mixed: false,
             page2: false,
             hires: false,
+            speaker: false,
+            sample_cycles: 0,
+            sample_out: 0,
+            sample_phase: 0,
+            settle: (-1.0, 0.0), // the cone in, at rest
+            sound: Vec::new(),
             paddle_until: [0; 4],
             now: 0,
             cycle: 0,
@@ -138,6 +159,26 @@ impl Apple2 {
         }
     }
 
+    /// A cycle of sound: where the cone is; a sample made when one is due,
+    /// the cone's place averaged over its cycles, from -1 to 1, then let
+    /// settle back to the middle, as the speaker's cone does when it's left
+    /// still.
+    fn sound_cycle(&mut self) {
+        self.sample_cycles += 1;
+        self.sample_out += self.speaker as u32;
+        self.sample_phase += SAMPLE_RATE;
+        if self.sample_phase >= CLOCK_HZ {
+            self.sample_phase -= CLOCK_HZ;
+            let place = 2.0 * self.sample_out as f32 / self.sample_cycles as f32 - 1.0;
+            let (last_place, last) = self.settle;
+            let sample = place - last_place + SETTLE * last;
+            self.settle = (place, sample);
+            self.sound.push(sample * VOLUME);
+            self.sample_cycles = 0;
+            self.sample_out = 0;
+        }
+    }
+
     /// The soft switches, for the video circuit.
     fn switches(&self) -> video::Switches {
         video::Switches { graphics: self.graphics, mixed: self.mixed, page2: self.page2, hires: self.hires }
@@ -177,6 +218,10 @@ impl Apple2 {
             0xC010 => {
                 self.keyboard &= 0x7F;
                 self.keyboard
+            }
+            0xC030 => {
+                self.speaker = !self.speaker;
+                0
             }
             0xC050 if addr <= 0xC057 => {
                 self.switch(addr);
@@ -272,6 +317,9 @@ impl Bus for Apple2 {
         if let Some(card) = &mut self.disk2 {
             card.tick();
         }
+        if self.display.is_some() {
+            self.sound_cycle();
+        }
         self.now += 1;
         self.cycle += 1;
         // A line ended: drawn, if it is one of those seen.
@@ -287,6 +335,8 @@ impl Bus for Apple2 {
             self.frames += 1;
             if let Some(display) = &mut self.display {
                 display.show(&self.picture, video::WIDTH, video::HEIGHT);
+                display.play(&self.sound);
+                self.sound.clear();
             }
             if self.terminal.is_some() {
                 self.draw();
