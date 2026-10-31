@@ -1,16 +1,21 @@
 //! The Apple II (the II+): a 6502 at 1.023 MHz; 48K of RAM; the keyboard,
 //! the speaker and the soft switches at $C000; no cards; and 12K of ROM at
 //! $D000, the monitor and BASIC, from a dump of the machine's own (not
-//! part of this repository). Its text screen, 40 by 24 in RAM at $0400, is
-//! drawn in the host's terminal once a video frame.
+//! part of this repository). Its picture is drawn a line at a time, as the
+//! video circuit draws it, and shown in a window once a frame; or its text
+//! screen alone in the host's terminal.
+
+pub mod video;
 
 use crate::bus::Bus;
+use crate::display::{Display, Key};
 use crate::terminal::Terminal;
 use std::io::Write;
 
 /// 14.31818 MHz, a fourteenth.
 pub const CLOCK_HZ: u32 = 1_022_727;
-/// 65 cycles a line, 262 lines.
+/// 65 cycles a line, 262 lines: 192 seen, the rest the beam's way back.
+pub const CYCLES_PER_LINE: u32 = 65;
 pub const CYCLES_PER_FRAME: u32 = 17_030;
 /// The flashing characters' half period.
 const FLASH_FRAMES: u32 = 16;
@@ -21,6 +26,10 @@ pub struct Apple2 {
     /// The keyboard: the last key, bit 7 set until $C010 clears it.
     pub keyboard: u8,
     pub terminal: Option<Terminal>,
+    /// The window the picture is shown in, and the keys come from.
+    pub display: Option<Box<dyn Display>>,
+    /// The picture, as far as this frame has drawn it.
+    pub picture: Vec<u32>,
     // The soft switches.
     pub graphics: bool,
     pub mixed: bool,
@@ -42,6 +51,8 @@ impl Apple2 {
             rom,
             keyboard: 0,
             terminal: None,
+            display: None,
+            picture: vec![0; video::WIDTH * video::HEIGHT],
             graphics: false,
             mixed: false,
             page2: false,
@@ -81,6 +92,34 @@ impl Apple2 {
         })
     }
 
+    /// The next key from the window, as the Apple's keyboard has it: ← for
+    /// Backspace and the left arrow, → for the right, upper case letters;
+    /// up and down, which it hasn't, nothing.
+    fn display_key(&mut self) -> Option<u8> {
+        Some(match self.display.as_mut()?.key()? {
+            Key::Char(b'\n') => 0x0D,
+            Key::Char(0x7F) => 0x08,
+            Key::Char(c @ b'a'..=b'z') => c - 0x20,
+            Key::Char(c) if c < 0x80 => c,
+            Key::Left => 0x08,
+            Key::Right => 0x15,
+            _ => return None,
+        })
+    }
+
+    /// The soft switches, for the video circuit.
+    fn switches(&self) -> video::Switches {
+        video::Switches { graphics: self.graphics, mixed: self.mixed, page2: self.page2, hires: self.hires }
+    }
+
+    /// Picture line `y`, drawn from RAM by the switches as they are now.
+    fn draw_line(&mut self, y: usize) {
+        let flash_on = (self.frames / FLASH_FRAMES) % 2 == 0;
+        let switches = self.switches();
+        let out = &mut self.picture[y * video::WIDTH..(y + 1) * video::WIDTH];
+        video::line(&self.ram, switches, flash_on, y, out);
+    }
+
     /// The soft switches at $C050 to $C057, read or written alike.
     fn switch(&mut self, addr: u16) {
         let on = addr & 1 != 0;
@@ -97,7 +136,7 @@ impl Apple2 {
         match addr & 0xFFF0 {
             0xC000 => {
                 if self.keyboard & 0x80 == 0 {
-                    if let Some(key) = self.terminal_key() {
+                    if let Some(key) = self.terminal_key().or_else(|| self.display_key()) {
                         self.press(key);
                     }
                 }
@@ -115,11 +154,9 @@ impl Apple2 {
         }
     }
 
-    /// A text row's 40 screen bytes, on the page shown. The rows are
-    /// interleaved: three of every eight to a 128-byte block.
+    /// A text row's 40 screen bytes, on the page shown.
     fn row(&self, row: usize) -> &[u8] {
-        let base = if self.page2 { 0x0800 } else { 0x0400 };
-        let start = base + (row % 8) * 0x80 + (row / 8) * 0x28;
+        let start = video::text_address(self.page2, row);
         &self.ram[start..start + 40]
     }
 
@@ -188,9 +225,20 @@ impl Bus for Apple2 {
 
     fn tick(&mut self) {
         self.cycle += 1;
+        // A line ended: drawn, if it is one of those seen.
+        if self.cycle % CYCLES_PER_LINE == 0 {
+            let y = (self.cycle / CYCLES_PER_LINE - 1) as usize;
+            if y < video::HEIGHT {
+                self.draw_line(y);
+            }
+        }
+        // The frame ended: shown.
         if self.cycle == CYCLES_PER_FRAME {
             self.cycle = 0;
             self.frames += 1;
+            if let Some(display) = &mut self.display {
+                display.show(&self.picture, video::WIDTH, video::HEIGHT);
+            }
             if self.terminal.is_some() {
                 self.draw();
             }

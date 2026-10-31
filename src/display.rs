@@ -1,0 +1,23 @@
+/// Where a machine's picture goes, and its keys come from: the host's
+/// window. A machine without one (its tests) shows nothing.
+pub trait Display {
+    /// A finished frame: `width` by `height` pixels, 0xRRGGBB each, a line
+    /// at a time from the top.
+    fn show(&mut self, pixels: &[u32], width: usize, height: usize);
+
+    /// The next key pressed, if there is one; the machine makes of it what
+    /// its own keyboard would.
+    fn key(&mut self) -> Option<Key>;
+}
+
+/// A key as the host has it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Key {
+    /// A character typed, as ASCII, shift applied; control keys too: Return
+    /// 13, Backspace 8, Escape 27, Ctrl and a letter 1 to 26.
+    Char(u8),
+    Left,
+    Right,
+    Up,
+    Down,
+}
