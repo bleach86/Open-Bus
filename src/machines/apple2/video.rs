@@ -2,17 +2,38 @@
 //! 280 by 192, from RAM, by the soft switches when the line is drawn. Text
 //! is 40 by 24 characters of 7 by 8 dots; low-res, 40 by 48 blocks of 16
 //! colours; high-res, 280 by 192 dots, coloured as an NTSC set shows them.
+//!
+//! The IIe's has 560 dots a line, for its 80 columns, double low-res and
+//! double high-res, each a byte of its auxiliary 64K's then a byte of its
+//! main's, in turn; its 40 column modes' dots are each two of them. Its
+//! characters are its video ROM's, with ALTCHARSET its alternate set:
+//! lower case and MouseText, not flashing.
 
 pub const WIDTH: usize = 280;
 pub const HEIGHT: usize = 192;
+/// The picture as it's shown: the IIe's 560 dots a line, a 40 column
+/// mode's each two.
+pub const PICTURE_WIDTH: usize = 560;
 
-/// The soft switches the picture is drawn by.
+/// The soft switches the picture is drawn by: the II+'s, and the IIe's.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Switches {
     pub graphics: bool,
     pub mixed: bool,
     pub page2: bool,
     pub hires: bool,
+    pub iie: bool,
+    pub col80: bool,
+    pub altcharset: bool,
+    pub dhires: bool,
+}
+
+/// What a line is drawn from: main RAM; and a IIe's auxiliary RAM and its
+/// video ROM's characters (the II+'s, none: its own are built in).
+pub struct Source<'a> {
+    pub main: &'a [u8],
+    pub aux: &'a [u8],
+    pub characters: Option<&'a [u8]>,
 }
 
 const BLACK: u32 = 0x000000;
@@ -81,39 +102,135 @@ pub fn scanner_address(switches: Switches, line: usize, cycle: usize) -> usize {
         address |= (v & 7) << 10 | page << 13;
     } else {
         address |= page << 10;
-        if h5 == 0 && (h4 == 0 || h3 == 0) {
+        if !switches.iie && h5 == 0 && (h4 == 0 || h3 == 0) {
             address |= 0x1000; // blanked, on the II+
         }
     }
     address
 }
 
-/// Line `y` of the picture into `out`, 280 pixels: from `ram` by
-/// `switches`, the flashing characters inverse while `flash_on`. In mixed
-/// mode the last 32 lines are text.
-pub fn line(ram: &[u8], switches: Switches, flash_on: bool, y: usize, out: &mut [u32]) {
+/// Line `y` of the picture as it's shown, 560 dots, into `out`: from
+/// `source` by `switches`, the flashing characters inverse while
+/// `flash_on`. With 80COL, text is 80 columns, and with double high-res
+/// on, graphics double; the 40 column modes as on the II+, each dot twice.
+pub fn picture_line(source: &Source, switches: Switches, flash_on: bool, y: usize, out: &mut [u32]) {
     let text = !switches.graphics || (switches.mixed && y >= 160);
-    if text {
-        text_line(ram, switches.page2, flash_on, y, out);
-    } else if switches.hires {
-        hires_line(ram, switches.page2, y, out);
+    let double = switches.col80 && (text || switches.dhires);
+    if double && text {
+        text80_line(source, switches, flash_on, y, out);
+    } else if double && switches.hires {
+        dhires_line(source, switches.page2, y, out);
+    } else if double {
+        dlores_line(source, switches.page2, y, out);
     } else {
-        lores_line(ram, switches.page2, y, out);
+        let mut dots = [0; WIDTH];
+        line(source, switches, flash_on, y, &mut dots);
+        for (x, &colour) in dots.iter().enumerate() {
+            out[2 * x] = colour;
+            out[2 * x + 1] = colour;
+        }
     }
 }
 
-/// A line of text: 40 characters' dots, 7 a character, white on black;
-/// inverse below $40, and flashing (below $80) inverse while the flash is
-/// on.
-fn text_line(ram: &[u8], page2: bool, flash_on: bool, y: usize, out: &mut [u32]) {
-    let start = text_address(page2, y / 8);
-    for (column, &byte) in ram[start..start + 40].iter().enumerate() {
-        let dots = glyph_dots(byte & 0x3F, y % 8);
-        let inverse = byte < 0x40 || (byte < 0x80 && flash_on);
-        for dot in 0..7 {
-            let on = (dots >> dot) & 1 != 0;
-            out[column * 7 + dot] = if on != inverse { WHITE } else { BLACK };
+/// A character's row `row` of dots, the lowest bit leftmost, 1 a dot shown:
+/// the II+'s own, inverse below $40, and flashing (below $80) inverse
+/// while the flash is on; or from a IIe's video ROM, the alternate set by
+/// the byte, the primary's $40 to $7F flashing, its inverse character or
+/// its normal by turns.
+fn character_row(characters: Option<&[u8]>, altcharset: bool, flash_on: bool, byte: u8, row: usize) -> u8 {
+    match characters {
+        None => {
+            let dots = glyph_dots(byte & 0x3F, row);
+            let inverse = byte < 0x40 || (byte < 0x80 && flash_on);
+            if inverse { !dots & 0x7F } else { dots }
         }
+        Some(rom) => {
+            let flashing = !altcharset && (0x40..0x80).contains(&byte);
+            let code = if flashing { byte & 0x3F | if flash_on { 0x00 } else { 0x80 } } else { byte };
+            !rom[code as usize * 8 + row] & 0x7F
+        }
+    }
+}
+
+/// 40 columns of text, as the II+'s, its characters the IIe's if it is one.
+fn text40_line(source: &Source, switches: Switches, flash_on: bool, y: usize, out: &mut [u32]) {
+    let start = text_address(switches.page2, y / 8);
+    for (column, &byte) in source.main[start..start + 40].iter().enumerate() {
+        let dots = character_row(source.characters, switches.altcharset, flash_on, byte, y % 8);
+        for dot in 0..7 {
+            out[column * 7 + dot] = if (dots >> dot) & 1 != 0 { WHITE } else { BLACK };
+        }
+    }
+}
+
+/// 80 columns: of each of the 40 places, its auxiliary byte's character,
+/// then its main's.
+fn text80_line(source: &Source, switches: Switches, flash_on: bool, y: usize, out: &mut [u32]) {
+    let start = text_address(switches.page2, y / 8);
+    for place in 0..40 {
+        for (half, memory) in [source.aux, source.main].into_iter().enumerate() {
+            let dots = character_row(source.characters, switches.altcharset, flash_on, memory[start + place], y % 8);
+            let x = (2 * place + half) * 7;
+            for dot in 0..7 {
+                out[x + dot] = if (dots >> dot) & 1 != 0 { WHITE } else { BLACK };
+            }
+        }
+    }
+}
+
+/// Double low-res: 80 blocks, 7 dots wide, an auxiliary byte's then a
+/// main's; the auxiliary's colour its nibble rotated left a bit, falling a
+/// dot earlier in the colour signal's 4.
+fn dlores_line(source: &Source, page2: bool, y: usize, out: &mut [u32]) {
+    let start = text_address(page2, y / 8);
+    for place in 0..40 {
+        for (half, memory) in [source.aux, source.main].into_iter().enumerate() {
+            let byte = memory[start + place];
+            let mut nibble = if y % 8 < 4 { byte & 0x0F } else { byte >> 4 };
+            if half == 0 {
+                nibble = ((nibble << 1) | (nibble >> 3)) & 0x0F;
+            }
+            let x = (2 * place + half) * 7;
+            out[x..x + 7].fill(LORES[nibble as usize]);
+        }
+    }
+}
+
+/// Double high-res: 560 dots, 7 of each byte, an auxiliary byte's then a
+/// main's, the lowest bit first. Four dots are a cycle of the colour
+/// signal, and a composite monitor sees the colour of the 4 around each
+/// dot, the one before it, itself and the two after: the colour of
+/// low-res's their bits make, each its place in the cycle's bit (dot 4n
+/// bit 0). Solid colour as low-res's, edges fringed as on the screen.
+fn dhires_line(source: &Source, page2: bool, y: usize, out: &mut [u32]) {
+    let start = hires_address(page2, y);
+    let mut dots = [0u8; PICTURE_WIDTH];
+    for place in 0..40 {
+        for (half, memory) in [source.aux, source.main].into_iter().enumerate() {
+            let byte = memory[start + place];
+            for bit in 0..7 {
+                dots[(2 * place + half) * 7 + bit] = (byte >> bit) & 1;
+            }
+        }
+    }
+    for (x, colour_out) in out.iter_mut().enumerate().take(PICTURE_WIDTH) {
+        let around = (x.saturating_sub(1)..(x + 3).min(PICTURE_WIDTH)).filter(|&at| dots[at] != 0);
+        let colour = around.fold(0, |colour, at| colour | 1 << (at % 4));
+        *colour_out = LORES[colour];
+    }
+}
+
+/// Line `y` of the picture into `out`, 280 pixels: from `source` by
+/// `switches`, the flashing characters inverse while `flash_on`. In mixed
+/// mode the last 32 lines are text.
+pub fn line(source: &Source, switches: Switches, flash_on: bool, y: usize, out: &mut [u32]) {
+    let text = !switches.graphics || (switches.mixed && y >= 160);
+    if text {
+        text40_line(source, switches, flash_on, y, out);
+    } else if switches.hires {
+        hires_line(source.main, switches.page2, y, out);
+    } else {
+        lores_line(source.main, switches.page2, y, out);
     }
 }
 

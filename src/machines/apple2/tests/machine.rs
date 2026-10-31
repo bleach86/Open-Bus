@@ -8,7 +8,7 @@
 mod tests {
     use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::language_card::LanguageCard;
-    use crate::machines::apple2::video::{self, LORES, Switches, HEIGHT, WIDTH};
+    use crate::machines::apple2::video::{self, Source, LORES, Switches, HEIGHT, PICTURE_WIDTH, WIDTH};
     use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME, CYCLES_PER_LINE};
     use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
@@ -233,7 +233,7 @@ mod tests {
     /// Line `y` of the picture, drawn from `ram` by `switches`.
     fn picture_line(ram: &[u8], switches: Switches, y: usize) -> Vec<u32> {
         let mut out = vec![0x123456; WIDTH];
-        video::line(ram, switches, false, y, &mut out);
+        video::line(&Source { main: ram, aux: &[], characters: None }, switches, false, y, &mut out);
         out
     }
 
@@ -312,7 +312,7 @@ mod tests {
 
     impl Display for Shown {
         fn show(&mut self, pixels: &[u32], width: usize, height: usize) {
-            assert_eq!((width, height), (WIDTH, HEIGHT));
+            assert_eq!((width, height), (PICTURE_WIDTH, HEIGHT));
             self.0.borrow_mut().push(pixels.to_vec());
         }
 
@@ -346,7 +346,9 @@ mod tests {
 
         let frames = frames.borrow();
         assert_eq!(frames.len(), 1, "a frame shown");
-        let at = |x: usize, y: usize| frames[0][y * WIDTH + x];
+        // Each of a 40 column mode's dots two of the picture's.
+        assert!(frames[0].chunks(2).all(|pair| pair[0] == pair[1]), "a dot not shown twice");
+        let at = |x: usize, y: usize| frames[0][y * PICTURE_WIDTH + 2 * x];
         assert_eq!(at(0, 0), WHITE, "line 0: text, the inverse space");
         assert_eq!(at(0, 99), BLACK, "line 99: text, a space");
         assert_eq!(at(0, 128), LORES[0x0], "line 128: low-res, row 16's top: black");

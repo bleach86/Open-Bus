@@ -16,10 +16,15 @@
 //! the two reads, not to the switches, don't count.
 //!
 //! At power-on, and on RESET, the card reads the ROM, writes bank 2.
+//!
+//! The IIe has one built in, and with the auxiliary 64K a second 16K: the
+//! MMU's ALTZP picks which, the switches the same for both.
 
 pub struct LanguageCard {
-    /// Bank 1, bank 2 ($D000 to $DFFF, each), then $E000 to $FFFF.
+    /// Bank 1, bank 2 ($D000 to $DFFF, each), then $E000 to $FFFF; and the
+    /// IIe's auxiliary 16K, laid out the same (none on a II+'s card).
     ram: Vec<u8>,
+    aux: Vec<u8>,
     /// Reads from the RAM, not the ROM.
     pub read_ram: bool,
     pub write_enabled: bool,
@@ -29,9 +34,21 @@ pub struct LanguageCard {
 
 impl LanguageCard {
     pub fn new() -> Self {
-        let mut card = LanguageCard { ram: vec![0; 0x4000], read_ram: false, write_enabled: false, pre_write: false, bank2: false };
+        let mut card = LanguageCard {
+            ram: vec![0; 0x4000],
+            aux: Vec::new(),
+            read_ram: false,
+            write_enabled: false,
+            pre_write: false,
+            bank2: false,
+        };
         card.reset();
         card
+    }
+
+    /// The IIe's: with the auxiliary 16K.
+    pub fn with_aux() -> Self {
+        LanguageCard { aux: vec![0; 0x4000], ..LanguageCard::new() }
     }
 
     /// RESET: the ROM read, and bank 2 written; the RAM as it was.
@@ -66,16 +83,20 @@ impl LanguageCard {
         }
     }
 
-    /// A read of $D000 to $FFFF: the RAM's byte, if it is read and not the ROM.
-    pub fn read(&self, addr: u16) -> Option<u8> {
-        self.read_ram.then(|| self.ram[self.offset(addr)])
+    /// A read of $D000 to $FFFF: the RAM's byte, if it is read and not the
+    /// ROM; the auxiliary 16K's if `aux`.
+    pub fn read(&self, addr: u16, aux: bool) -> Option<u8> {
+        let ram = if aux { &self.aux } else { &self.ram };
+        self.read_ram.then(|| ram[self.offset(addr)])
     }
 
-    /// A write to $D000 to $FFFF: to the RAM, if it is write enabled.
-    pub fn write(&mut self, addr: u16, value: u8) {
+    /// A write to $D000 to $FFFF: to the RAM, if it is write enabled; the
+    /// auxiliary 16K if `aux`.
+    pub fn write(&mut self, addr: u16, value: u8, aux: bool) {
         if self.write_enabled {
             let at = self.offset(addr);
-            self.ram[at] = value;
+            let ram = if aux { &mut self.aux } else { &mut self.ram };
+            ram[at] = value;
         }
     }
 }

@@ -1,4 +1,4 @@
-//! The Apple II (the II+): a 6502 at 1.02 MHz; 48K of RAM; the keyboard,
+//! The Apple II (the II+, or the IIe): a 6502 at 1.02 MHz; 48K of RAM; the keyboard,
 //! the speaker, the soft switches and the joystick at $C000; a language
 //! card in slot 0, Mockingboards in slots 4 and 5 and a Disk II card in
 //! slot 6, if there are; and 12K of
@@ -8,9 +8,16 @@
 //! text screen alone in the host's terminal. Its Reset key holds the RESET
 //! line, the CPU's and the cards'. A read of an address nothing answers
 //! gets the floating bus: the byte the video circuit last read from RAM.
+//!
+//! The IIe is the II+ with what `iie` adds: its 128K, the MMU's and IOU's
+//! switches, its ROM's own firmware in the slots' places, its characters,
+//! 80 columns and double graphics; its language card built in, its keyboard
+//! with lower case and four arrows, its Open-Apple and Solid-Apple keys
+//! the joystick's buttons.
 
 pub mod disk2;
 pub mod disk_image;
+pub mod iie;
 pub mod mockingboard;
 pub mod language_card;
 pub mod video;
@@ -20,6 +27,7 @@ mod tests {
     mod disk2;
     mod disk_writing;
     mod drives;
+    mod iie;
     mod language_card;
     mod machine;
     mod mockingboard;
@@ -65,7 +73,9 @@ pub struct Apple2 {
     /// The keyboard: the last key, bit 7 set until $C010 clears it.
     pub keyboard: u8,
     pub terminal: Option<Terminal>,
-    /// The language card, in slot 0.
+    /// The IIe's own, on a IIe.
+    pub iie: Option<iie::Iie>,
+    /// The language card, in slot 0; the IIe's built in.
     pub language_card: Option<language_card::LanguageCard>,
     /// The Mockingboards, in slots 4 and 5.
     pub mockingboards: [Option<mockingboard::Mockingboard>; 2],
@@ -119,6 +129,7 @@ impl Apple2 {
             rom,
             keyboard: 0,
             terminal: None,
+            iie: None,
             language_card: None,
             mockingboards: [None, None],
             disk2: None,
@@ -126,7 +137,7 @@ impl Apple2 {
             in_drive: [None, None],
             status: String::new(),
             display: None,
-            picture: vec![0; video::WIDTH * video::HEIGHT],
+            picture: vec![0; video::PICTURE_WIDTH * video::HEIGHT],
             graphics: false,
             mixed: false,
             page2: false,
@@ -148,6 +159,17 @@ impl Apple2 {
         }
     }
 
+    /// A IIe, enhanced or not, as its ROMs are: its CD ROM's 8K, $C000 to
+    /// $DFFF, and its EF ROM's, $E000 to $FFFF; its video ROM's 4K; its
+    /// language card built in.
+    pub fn new_iie(cd: &[u8], ef: &[u8], characters: Vec<u8>) -> Self {
+        assert_eq!((cd.len(), ef.len()), (0x2000, 0x2000), "the CD and EF ROMs are 8K each");
+        let mut apple = Apple2::new([&cd[0x1000..], ef].concat());
+        apple.iie = Some(iie::Iie::new(cd[..0x1000].to_vec(), characters));
+        apple.language_card = Some(language_card::LanguageCard::with_aux());
+        apple
+    }
+
     /// A key pressed: the keyboard's latch, as the key's ASCII with bit 7
     /// set, the last key over any not yet taken.
     pub fn press(&mut self, key: u8) {
@@ -156,18 +178,23 @@ impl Apple2 {
 
     /// The next key from the terminal, as the Apple's keyboard has it:
     /// Return for Enter, ← for Backspace and the left arrow, → for the
-    /// right, upper case letters; another escape sequence, nothing.
+    /// right, upper case letters; another escape sequence, nothing. A IIe's
+    /// has lower case, Delete for Backspace, and up and down too.
     fn terminal_key(&mut self) -> Option<u8> {
+        let iie = self.iie.is_some();
         let terminal = self.terminal.as_ref()?;
         let key = terminal.key()?;
         Some(match key {
             b'\n' | b'\r' => 0x0D,
+            0x7F if iie => 0x7F,
             0x7F => 0x08,
-            b'a'..=b'z' => key - 0x20,
+            b'a'..=b'z' if !iie => key - 0x20,
             0x1B => match terminal.key() {
                 Some(b'[') | Some(b'O') => match terminal.key()? {
                     b'D' => 0x08,
                     b'C' => 0x15,
+                    b'A' if iie => 0x0B,
+                    b'B' if iie => 0x0A,
                     _ => return None,
                 },
                 Some(_) => return None,
@@ -179,17 +206,27 @@ impl Apple2 {
 
     /// The next key from the window, as the Apple's keyboard has it: ← for
     /// Backspace and the left arrow, → for the right, upper case letters;
-    /// up and down, which it hasn't, nothing.
+    /// up and down, which it hasn't, nothing. A IIe's has lower case,
+    /// Delete for Backspace, and ↑ and ↓, Ctrl-K and Ctrl-J.
     fn display_key(&mut self) -> Option<u8> {
+        let iie = self.iie.is_some();
         Some(match self.display.as_mut()?.key()? {
             Key::Char(b'\n') => 0x0D,
+            Key::Char(0x08 | 0x7F) if iie => 0x7F,
             Key::Char(0x7F) => 0x08,
-            Key::Char(c @ b'a'..=b'z') => c - 0x20,
+            Key::Char(c @ b'a'..=b'z') if !iie => c - 0x20,
             Key::Char(c) if c < 0x80 => c,
             Key::Left => 0x08,
             Key::Right => 0x15,
+            Key::Up if iie => 0x0B,
+            Key::Down if iie => 0x0A,
             _ => return None,
         })
+    }
+
+    /// Whether a key is held down: the IIe's keyboard tells, at $C010.
+    fn any_key_down(&self) -> bool {
+        self.display.as_ref().is_some_and(|display| display.key_down())
     }
 
     /// The joystick, from the window: centred, without one.
@@ -251,6 +288,9 @@ impl Apple2 {
         if self.reset_held {
             if let Some(card) = &mut self.language_card {
                 card.reset();
+            }
+            if let Some(iie) = &mut self.iie {
+                iie.reset();
             }
             if let Some(card) = &mut self.disk2 {
                 card.reset();
@@ -321,7 +361,8 @@ impl Apple2 {
         };
         self.status = format!("Drive 1: {}   Drive 2: {}", name(0), name(1));
         if let Some(display) = &mut self.display {
-            display.title(&format!("Apple ][   {}", self.status));
+            let name = if self.iie.is_some() { "Apple //e" } else { "Apple ][" };
+            display.title(&format!("{name}   {}", self.status));
         }
         self.shown.clear(); // the terminal's drawn again
     }
@@ -359,15 +400,31 @@ impl Apple2 {
 
     /// The soft switches, for the video circuit.
     fn switches(&self) -> video::Switches {
-        video::Switches { graphics: self.graphics, mixed: self.mixed, page2: self.page2, hires: self.hires }
+        let switches = video::Switches { graphics: self.graphics, mixed: self.mixed, page2: self.page2, hires: self.hires, ..Default::default() };
+        match &self.iie {
+            None => switches,
+            Some(iie) => video::Switches {
+                page2: iie.shown_page2(self.page2),
+                iie: true,
+                col80: iie.col80,
+                altcharset: iie.altcharset,
+                dhires: iie.dhires,
+                ..switches
+            },
+        }
     }
 
     /// Picture line `y`, drawn from RAM by the switches as they are now.
     fn draw_line(&mut self, y: usize) {
         let flash_on = (self.frames / FLASH_FRAMES) % 2 == 0;
         let switches = self.switches();
-        let out = &mut self.picture[y * video::WIDTH..(y + 1) * video::WIDTH];
-        video::line(&self.ram, switches, flash_on, y, out);
+        let source = video::Source {
+            main: &self.ram,
+            aux: self.iie.as_ref().map_or(&[][..], |iie| &iie.aux),
+            characters: self.iie.as_ref().map(|iie| &iie.characters[..]),
+        };
+        let out = &mut self.picture[y * video::PICTURE_WIDTH..(y + 1) * video::PICTURE_WIDTH];
+        video::picture_line(&source, switches, flash_on, y, out);
     }
 
     /// The soft switches at $C050 to $C057, read or written alike.
@@ -386,10 +443,54 @@ impl Apple2 {
     /// on the bus. The cycle in the frame is the one the read is in: the
     /// bus is ticked before a read.
     fn floating_bus(&self) -> u8 {
-        let cycle = ((self.cycle + CYCLES_PER_FRAME - 1) % CYCLES_PER_FRAME) as usize;
+        let cycle = self.frame_cycle();
         let line_cycles = CYCLES_PER_LINE as usize;
         let address = video::scanner_address(self.switches(), cycle / line_cycles, cycle % line_cycles);
         self.ram[address]
+    }
+
+    /// The cycle in the frame a read is in: the bus is ticked before it.
+    fn frame_cycle(&self) -> usize {
+        ((self.cycle + CYCLES_PER_FRAME - 1) % CYCLES_PER_FRAME) as usize
+    }
+
+    /// A IIe's switch read back at $C011 to $C01F, in bit 7: the language
+    /// card's bank 2 and its RAM read; the MMU's; the vertical blank's,
+    /// low while it is ($C019); TEXT, MIXED, PAGE2 and HIRES; ALTCHARSET
+    /// and 80COL.
+    fn iie_status(&self, addr: u16) -> bool {
+        let (Some(iie), Some(card)) = (&self.iie, &self.language_card) else { return false };
+        match addr & 0x0F {
+            0x1 => card.bank2,
+            0x2 => card.read_ram,
+            0x3 => iie.ramrd,
+            0x4 => iie.ramwrt,
+            0x5 => iie.intcxrom,
+            0x6 => iie.altzp,
+            0x7 => iie.slotc3rom,
+            0x8 => iie.store80,
+            0x9 => self.frame_cycle() / (CYCLES_PER_LINE as usize) < video::HEIGHT,
+            0xA => !self.graphics,
+            0xB => self.mixed,
+            0xC => self.page2,
+            0xD => self.hires,
+            0xE => iie.altcharset,
+            _ => iie.col80,
+        }
+    }
+
+    /// $0000 to $BFFF read: main RAM, or on a IIe the auxiliary, as its MMU
+    /// says.
+    fn ram_read(&self, addr: u16) -> u8 {
+        match &self.iie {
+            Some(iie) if iie.is_aux(addr, false, self.page2, self.hires) => iie.aux[addr as usize],
+            _ => self.ram[addr as usize],
+        }
+    }
+
+    /// The language card's 16K to use: on a IIe, the auxiliary with ALTZP.
+    fn language_card_aux(&self) -> bool {
+        self.iie.as_ref().is_some_and(|iie| iie.altzp)
     }
 
     /// The I/O at $C000 to $C0FF, for a read or a write (`written`, the
@@ -399,6 +500,11 @@ impl Apple2 {
     fn io(&mut self, addr: u16, written: Option<u8>) -> u8 {
         let floating = self.floating_bus();
         match addr & 0xFFF0 {
+            // A IIe's switches, written.
+            0xC000 if written.is_some() && self.iie.is_some() => {
+                self.iie.as_mut().unwrap().switch(addr);
+                floating
+            }
             0xC000 => {
                 if self.keyboard & 0x80 == 0 {
                     if let Some(key) = self.terminal_key().or_else(|| self.display_key()) {
@@ -406,6 +512,17 @@ impl Apple2 {
                     }
                 }
                 self.keyboard
+            }
+            // A IIe's $C010 read: whether a key is down, in bit 7, with the
+            // key; its $C011 to $C01F, a switch, with the key. Each written,
+            // and $C010 read, the strobe cleared.
+            0xC010 if self.iie.is_some() => {
+                let key = self.keyboard & 0x7F;
+                if addr == 0xC010 || written.is_some() {
+                    self.keyboard = key;
+                }
+                let high = if addr == 0xC010 { self.any_key_down() } else { self.iie_status(addr) };
+                (high as u8) << 7 | key
             }
             0xC010 => {
                 self.keyboard &= 0x7F;
@@ -417,6 +534,16 @@ impl Apple2 {
             }
             0xC050 if addr <= 0xC057 => {
                 self.switch(addr);
+                floating
+            }
+            // The annunciators: on a IIe, the third's, double high-res, on
+            // at $C05E, off at $C05F.
+            0xC050 => {
+                if let Some(iie) = &mut self.iie {
+                    if addr & 0x0E == 0x0E {
+                        iie.dhires = addr & 1 == 0;
+                    }
+                }
                 floating
             }
             // The game port: the buttons, bit 7 while pressed, and the
@@ -445,15 +572,29 @@ impl Apple2 {
     }
 
     /// A text row's 40 screen bytes, on the page shown.
-    fn row(&self, row: usize) -> &[u8] {
-        let start = video::text_address(self.page2, row);
-        &self.ram[start..start + 40]
+    /// A text row's screen bytes, on the page shown: 40; or a IIe's in 80
+    /// columns, its auxiliary and main bytes in turn.
+    fn row(&self, row: usize) -> Vec<u8> {
+        let switches = self.switches();
+        let start = video::text_address(switches.page2, row);
+        let main = &self.ram[start..start + 40];
+        match &self.iie {
+            Some(iie) if iie.col80 => iie.aux[start..start + 40].iter().zip(main).flat_map(|(&aux, &main)| [aux, main]).collect(),
+            _ => main.to_vec(),
+        }
     }
 
     /// The text screen as 24 lines of 40 characters: for the tests.
     #[cfg(test)]
     pub fn text(&self) -> Vec<String> {
-        (0..24).map(|row| self.row(row).iter().map(|&b| glyph(b)).collect()).collect()
+        let lower = self.lower_case();
+        (0..24).map(|row| self.row(row).iter().map(|&b| glyph(b, lower)).collect()).collect()
+    }
+
+    /// Which of the screen's bytes are lower case: none on a II+; on a
+    /// IIe, $E0 up, and with ALTCHARSET $60 up, inverse.
+    fn lower_case(&self) -> Option<bool> {
+        self.iie.as_ref().map(|iie| iie.altcharset)
     }
 
     /// The text screen in the terminal, if it has changed: inverse in
@@ -462,15 +603,16 @@ impl Apple2 {
     fn draw(&mut self) {
         let flash_on = (self.frames / FLASH_FRAMES) % 2 == 0;
         let mut screen = String::from("\x1B[H");
+        let lower = self.lower_case();
         for row in 0..24 {
             let mut reversed = false;
-            for &b in self.row(row) {
+            for b in self.row(row) {
                 let reverse = b < 0x40 || (b < 0x80 && flash_on);
                 if reverse != reversed {
                     screen.push_str(if reverse { "\x1B[7m" } else { "\x1B[0m" });
                     reversed = reverse;
                 }
-                screen.push(glyph(b));
+                screen.push(glyph(b, lower));
             }
             if reversed {
                 screen.push_str("\x1B[0m");
@@ -492,7 +634,12 @@ impl Apple2 {
 
 /// A screen byte's character: the II+'s 64, upper case letters and
 /// symbols, whichever of its normal, inverse or flashing forms.
-fn glyph(byte: u8) -> char {
+fn glyph(byte: u8, lower: Option<bool>) -> char {
+    if let Some(altcharset) = lower {
+        if byte >= 0xE0 || (altcharset && (0x60..0x80).contains(&byte)) {
+            return (byte & 0x7F) as char;
+        }
+    }
     let c = byte & 0x3F;
     (if c < 0x20 { c + 0x40 } else { c }) as char
 }
@@ -500,11 +647,16 @@ fn glyph(byte: u8) -> char {
 impl Bus for Apple2 {
     fn read(&mut self, addr: u16) -> u8 {
         match addr {
-            0x0000..=0xBFFF => self.ram[addr as usize],
+            0x0000..=0xBFFF => self.ram_read(addr),
             0xC000..=0xC0FF => self.io(addr, None),
-            // The Mockingboards' 6522s, in slots 4 and 5; the Disk II's ROM,
-            // in slot 6; no other cards.
+            // A IIe's own ROM, as its MMU says; the Mockingboards' 6522s, in
+            // slots 4 and 5; the Disk II's ROM, in slot 6; no other cards.
             0xC100..=0xCFFF => {
+                if let Some(iie) = &mut self.iie {
+                    if iie.internal(addr) {
+                        return iie.internal_rom[addr as usize - 0xC000];
+                    }
+                }
                 if let Some(card) = self.mockingboard(addr) {
                     return card.read(addr);
                 }
@@ -514,7 +666,7 @@ impl Bus for Apple2 {
                 }
             }
             // The language card's RAM, if it is read; or the ROM.
-            _ => match self.language_card.as_ref().and_then(|card| card.read(addr)) {
+            _ => match self.language_card.as_ref().and_then(|card| card.read(addr, self.language_card_aux())) {
                 Some(value) => value,
                 None => self.rom[addr as usize - 0xD000],
             },
@@ -523,21 +675,31 @@ impl Bus for Apple2 {
 
     fn write(&mut self, addr: u16, value: u8) {
         match addr {
-            0x0000..=0xBFFF => self.ram[addr as usize] = value,
+            0x0000..=0xBFFF => match &mut self.iie {
+                Some(iie) if iie.is_aux(addr, true, self.page2, self.hires) => iie.aux[addr as usize] = value,
+                _ => self.ram[addr as usize] = value,
+            },
             0xC000..=0xC0FF => {
                 self.io(addr, Some(value));
             }
-            0xC400..=0xC5FF => {
+            // A IIe's own ROM, as its MMU says, written to nothing; the
+            // Mockingboards.
+            0xC100..=0xCFFF => {
+                if let Some(iie) = &mut self.iie {
+                    if iie.internal(addr) {
+                        return;
+                    }
+                }
                 if let Some(card) = self.mockingboard(addr) {
                     card.write(addr, value);
                 }
             }
             0xD000..=0xFFFF => {
+                let aux = self.language_card_aux();
                 if let Some(card) = &mut self.language_card {
-                    card.write(addr, value);
+                    card.write(addr, value, aux);
                 }
             }
-            _ => {} // no cards there
         }
     }
 
@@ -565,7 +727,7 @@ impl Bus for Apple2 {
             self.cycle = 0;
             self.frames += 1;
             if let Some(display) = &mut self.display {
-                display.show(&self.picture, video::WIDTH, video::HEIGHT);
+                display.show(&self.picture, video::PICTURE_WIDTH, video::HEIGHT);
                 display.play(&self.sound);
                 self.sound.clear();
             }
@@ -594,18 +756,42 @@ impl Bus for Apple2 {
     }
 }
 
-/// An Apple II+ run, with a language card and `mockingboards` (0 to 2) in
-/// slots 4 and 5, its CPU `variant`: `rom_path` a dump of its ROM (its last 12K, $D000 up);
+/// Which Apple: the II+; or a IIe, the first or the enhanced.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Model {
+    IIPlus,
+    IIe,
+    IIeEnhanced,
+}
+
+/// An Apple run, `model`, with a language card and `mockingboards` (0 to
+/// 2) in slots 4 and 5, its CPU `variant` (or its own: the 6502, the
+/// enhanced IIe's 65C02): `roms`, for the II+ a dump of its ROM (its last
+/// 12K, $D000 up), for a IIe the folder its ROMs are in, by their names;
 /// `disks` .dsk, .do, .po, .nib or .woz images, for a Disk II, whose ROMs
-/// are found beside it, the first in drive 1; in a window, or `text`, its
-/// text screen in the terminal.
-pub fn run(rom_path: &str, disks: &[&str], mockingboards: usize, variant: Variant, text: bool) {
+/// are found beside the II+'s or in the IIe's folder, the first in drive 1;
+/// in a window, or `text`, its text screen in the terminal.
+pub fn run(model: Model, roms: &str, disks: &[&str], mockingboards: usize, variant: Option<Variant>, text: bool) {
     let read = |path: &Path| std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let rom_path = Path::new(rom_path);
-    let rom = read(rom_path);
-    assert!(rom.len() >= 0x3000, "the ROM is 12K, $D000 to $FFFF");
-    let mut apple = Apple2::new(rom[rom.len() - 0x3000..].to_vec());
-    apple.language_card = Some(language_card::LanguageCard::new());
+    let roms = Path::new(roms);
+    let (mut apple, folder, title, size, own_variant) = match model {
+        Model::IIPlus => {
+            let rom = read(roms);
+            assert!(rom.len() >= 0x3000, "the ROM is 12K, $D000 to $FFFF");
+            let mut apple = Apple2::new(rom[rom.len() - 0x3000..].to_vec());
+            apple.language_card = Some(language_card::LanguageCard::new());
+            // Its 560 dots by 192 lines, shown 4:3: 840 by 576.
+            (apple, roms.parent().unwrap_or(Path::new(".")).to_path_buf(), "Apple ][", (840, 576), Variant::Nmos6502)
+        }
+        Model::IIe | Model::IIeEnhanced => {
+            let enhanced = model == Model::IIeEnhanced;
+            let [cd, ef, characters] = if enhanced { iie::ENHANCED_ROMS } else { iie::ROMS }.map(|name| read(&roms.join(name)));
+            let apple = Apple2::new_iie(&cd, &ef, characters);
+            let variant = if enhanced { Variant::Synertek65C02 } else { Variant::Nmos6502 };
+            // 80 columns' dots each a whole pixel: 1,120 by 768.
+            (apple, roms.to_path_buf(), "Apple //e", (1120, 768), variant)
+        }
+    };
     for card in apple.mockingboards.iter_mut().take(mockingboards) {
         *card = Some(mockingboard::Mockingboard::new());
     }
@@ -614,10 +800,10 @@ pub fn run(rom_path: &str, disks: &[&str], mockingboards: usize, variant: Varian
         apple.terminal = Some(Terminal::new());
         print!("\x1B[2J"); // the screen cleared, for the Apple's
     } else {
-        apple.display = Some(Box::new(Window::new("Apple ][", video::WIDTH, video::HEIGHT, 3)));
+        apple.display = Some(Box::new(Window::new(title, video::PICTURE_WIDTH, video::HEIGHT, size)));
     }
     if !disks.is_empty() {
-        let beside = |name: &str| read(&rom_path.with_file_name(name));
+        let beside = |name: &str| read(&folder.join(name));
         let card = disk2::Disk2::new(beside("disk2-p5-341-0027.bin"), &beside("disk2-p6-341-0028.bin"))
             .unwrap_or_else(|e| panic!("the Disk II's ROMs: {e}"));
         apple.disk2 = Some(card);
@@ -631,7 +817,7 @@ pub fn run(rom_path: &str, disks: &[&str], mockingboards: usize, variant: Varian
 
     let mut cpu = CPU::with_bus(apple);
     cpu.clock_hz = CLOCK_HZ;
-    cpu.variant = variant;
+    cpu.variant = variant.unwrap_or(own_variant);
     cpu.reset();
     cpu.execute_forever();
 }

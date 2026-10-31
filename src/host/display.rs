@@ -21,6 +21,12 @@ pub trait Display {
         Joystick::CENTRED
     }
 
+    /// Whether a key is held down, any but the modifiers and the function
+    /// keys.
+    fn key_down(&self) -> bool {
+        false
+    }
+
     /// Whether the machine's Reset key is held.
     fn reset_held(&self) -> bool {
         false

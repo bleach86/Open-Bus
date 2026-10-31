@@ -33,8 +33,10 @@ pub struct Window {
     pad_held: HashSet<Button>,
     keypad_held: HashSet<Keycode>,
     alt_held: [bool; 2],
-    /// F12, the Reset key.
+    /// F12, the Reset key; and the other keys held, but the modifiers and
+    /// the function keys.
     reset_held: bool,
+    keys_held: HashSet<Keycode>,
     /// The window closed.
     closed: bool,
     /// A keypad key's own text, which it would type too: not typed.
@@ -51,13 +53,13 @@ const AUDIO_CUSHION: f32 = 0.05;
 const AUDIO_MOST: f32 = 0.1;
 
 impl Window {
-    /// A window `title`d, for frames `width` by `height` pixels, shown
-    /// `scale` times their size.
-    pub fn new(title: &str, width: usize, height: usize, scale: u32) -> Window {
+    /// A window `title`d, for frames `width` by `height` pixels, shown at
+    /// `size`, the window's width and height.
+    pub fn new(title: &str, width: usize, height: usize, size: (u32, u32)) -> Window {
         let sdl = sdl2::init().expect("SDL");
         let video = sdl.video().expect("SDL's video");
         let window = video
-            .window(title, width as u32 * scale, height as u32 * scale)
+            .window(title, size.0, size.1)
             .position_centered()
             .build()
             .expect("a window");
@@ -95,6 +97,7 @@ impl Window {
             keypad_held: HashSet::new(),
             alt_held: [false; 2],
             reset_held: false,
+            keys_held: HashSet::new(),
             closed: false,
             keypad_text: None,
         }
@@ -114,6 +117,9 @@ impl Window {
                 }
                 Event::KeyDown { keycode: Some(keycode), keymod, .. } => {
                     self.keypad_text = None;
+                    if !is_modifier(keycode) && function_key(keycode).is_none() && keycode != Keycode::F12 {
+                        self.keys_held.insert(keycode);
+                    }
                     if let Some(text) = keypad(keycode) {
                         self.keypad_held.insert(keycode);
                         self.keypad_text = Some(text);
@@ -156,6 +162,7 @@ impl Window {
                 }
                 Event::KeyUp { keycode: Some(keycode), .. } => {
                     self.keypad_held.remove(&keycode);
+                    self.keys_held.remove(&keycode);
                     match keycode {
                         Keycode::LAlt => self.alt_held[0] = false,
                         Keycode::RAlt => self.alt_held[1] = false,
@@ -190,6 +197,15 @@ impl Window {
             }
         }
     }
+}
+
+/// Shift, Ctrl, Alt, the GUI keys, Caps Lock: not keys of their own.
+fn is_modifier(keycode: Keycode) -> bool {
+    matches!(
+        keycode,
+        Keycode::LShift | Keycode::RShift | Keycode::LCtrl | Keycode::RCtrl | Keycode::LAlt | Keycode::RAlt
+            | Keycode::LGui | Keycode::RGui | Keycode::CapsLock
+    )
 }
 
 /// F1 to F11's numbers.
@@ -276,6 +292,10 @@ impl Display for Window {
 
     fn reset_held(&self) -> bool {
         self.reset_held
+    }
+
+    fn key_down(&self) -> bool {
+        !self.keys_held.is_empty()
     }
 
     fn closed(&self) -> bool {
