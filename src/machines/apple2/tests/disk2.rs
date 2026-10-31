@@ -1,14 +1,16 @@
-//! The Disk II: the disk images' bits, the stepper and the motor, without
-//! anything of Apple's; the card reading every sector of DOS 3.3's System
-//! Master through its own sequencer PROM, from the .dsk and the .nib alike;
-//! and DOS 3.3 booting from it. Those last need the card's ROMs and the
-//! disks in roms/apple2/ (not part of the repository); without them they
-//! say so and pass.
+//! The Disk II: the disk images' bits, a .po's sectors in ProDOS's order,
+//! a .woz's tracks and map, the stepper and the motor, without anything of
+//! Apple's; the card reading every sector of DOS 3.3's System Master
+//! through its own sequencer PROM, from the .dsk and the .nib alike, and
+//! noise where there's no track; DOS 3.3 booting from it; and Pac-Man
+//! booting from a .woz. Those last need the card's ROMs and the disks in
+//! roms/apple2/ (not part of the repository); without them they say so and
+//! pass.
 
 #[cfg(test)]
 mod tests {
     use crate::machines::apple2::disk2::Disk2;
-    use crate::machines::apple2::disk_image::{self, Disk, DOS_ORDER, TRANSLATE};
+    use crate::machines::apple2::disk_image::{self, crc32, Disk, DOS_ORDER, TRANSLATE};
     use crate::machines::apple2::{Apple2, CLOCK_HZ};
     use crate::cpu::CPU;
     use std::path::{Path, PathBuf};
@@ -70,6 +72,96 @@ mod tests {
         let disk = Disk::from_nib(&nib).unwrap();
         // Every byte outside the field a sync of 10 bits; the field's 14, 8.
         assert_eq!(disk.tracks[0].len(), (6656 - 14) * 10 + 14 * 8);
+    }
+
+    #[test]
+    fn a_po_is_the_same_disk_in_prodos_blocks() {
+        // Each sector of a .dsk its own: track, sector, and the byte's place.
+        let mut dsk = vec![0; 143_360];
+        for (at, byte) in dsk.iter_mut().enumerate() {
+            *byte = (at / 4096 * 16 + at / 256 % 16) as u8 ^ (at % 256) as u8;
+        }
+        // The .po: a track's 8 blocks, each two DOS 3.3 sectors, as ProDOS has them.
+        let blocks = [(0x0, 0xE), (0xD, 0xC), (0xB, 0xA), (0x9, 0x8), (0x7, 0x6), (0x5, 0x4), (0x3, 0x2), (0x1, 0xF)];
+        let mut po = Vec::new();
+        for track in dsk.chunks(4096) {
+            for (first, second) in blocks {
+                po.extend_from_slice(&track[first * 256..(first + 1) * 256]);
+                po.extend_from_slice(&track[second * 256..(second + 1) * 256]);
+            }
+        }
+        let (from_dsk, from_po) = (Disk::from_dsk(&dsk).unwrap(), Disk::from_po(&po).unwrap());
+        assert!(from_dsk.tracks == from_po.tracks, "the .po not the .dsk's disk");
+    }
+
+    /// A .woz of `version` with `tracks`, mapped by `tmap`: its header and
+    /// CRC; INFO, a 5.25" disk; TMAP; and TRKS, in WOZ1 6,656 bytes a
+    /// track, in WOZ2 a list of where they are, the bits from block 3.
+    fn woz(version: u8, tracks: &[Vec<u8>], tmap: &[u8; 160]) -> Vec<u8> {
+        let packed = |bits: &Vec<u8>| -> Vec<u8> {
+            bits.chunks(8).map(|byte| byte.iter().enumerate().map(|(i, &bit)| bit << (7 - i)).sum()).collect()
+        };
+        let chunk = |id: &[u8], body: Vec<u8>| [id, &(body.len() as u32).to_le_bytes(), &body].concat();
+        let mut info = vec![0; 60];
+        info[0] = version;
+        info[1] = 1; // 5.25"
+        let mut trks = Vec::new();
+        if version == 1 {
+            for bits in tracks {
+                let mut track = packed(bits);
+                track.resize(6646, 0);
+                track.extend((bits.len().div_ceil(8) as u16).to_le_bytes());
+                track.extend((bits.len() as u16).to_le_bytes());
+                track.resize(6656, 0);
+                trks.extend(track);
+            }
+        } else {
+            let mut data = Vec::new();
+            for n in 0..160 {
+                let Some(bits) = tracks.get(n) else {
+                    trks.extend([0; 8]);
+                    continue;
+                };
+                let mut track = packed(bits);
+                track.resize(track.len().div_ceil(512) * 512, 0);
+                trks.extend(((3 + data.len() / 512) as u16).to_le_bytes());
+                trks.extend(((track.len() / 512) as u16).to_le_bytes());
+                trks.extend((bits.len() as u32).to_le_bytes());
+                data.extend(track);
+            }
+            trks.extend(data); // at 256 + 1,280: block 3
+        }
+        let body = [chunk(b"INFO", info), chunk(b"TMAP", tmap.to_vec()), chunk(b"TRKS", trks)].concat();
+        let magic: &[u8] = if version == 1 { b"WOZ1\xFF\n\r\n" } else { b"WOZ2\xFF\n\r\n" };
+        [magic, &crc32(&body).to_le_bytes(), &body].concat()
+    }
+
+    #[test]
+    fn a_woz_is_its_tracks_where_its_map_puts_them() {
+        let dsk: Vec<u8> = (0..143_360).map(|at| (at / 256 ^ at) as u8).collect();
+        let tracks = Disk::from_dsk(&dsk).unwrap().tracks;
+        // Each track at its quarter-track and those either side, none
+        // between; but track 2 at half-track 3 too.
+        let mut tmap = [0xFF; 160];
+        for track in 0..35usize {
+            for quarter in (4 * track).saturating_sub(1)..=4 * track + 1 {
+                tmap[quarter] = track as u8;
+            }
+        }
+        tmap[6] = 2;
+        for version in [1, 2] {
+            let disk = Disk::from_woz(&woz(version, &tracks, &tmap)).unwrap();
+            // WOZ2 has room for 160: the rest none.
+            assert!(disk.tracks[..35] == tracks[..], "WOZ{version}'s tracks");
+            assert!(disk.tracks[35..].iter().all(Vec::is_empty), "WOZ{version}'s tracks past 35");
+            for half in 0..70 {
+                let want = if half % 2 == 0 { Some(half / 2) } else if half == 3 { Some(2) } else { None };
+                assert_eq!(disk.half_tracks[half], want, "WOZ{version}'s half-track {half}");
+            }
+            let mut broken = woz(version, &tracks, &tmap);
+            broken[100] ^= 1;
+            assert!(Disk::from_woz(&broken).is_err(), "WOZ{version} with a wrong CRC");
+        }
     }
 
     fn card() -> Disk2 {
@@ -155,6 +247,34 @@ mod tests {
     }
 
     #[test]
+    fn where_there_is_no_track_the_card_reads_noise() {
+        let (Ok(p5), Ok(p6)) = (std::fs::read(dir().join("disk2-p5-341-0027.bin")), std::fs::read(dir().join("disk2-p6-341-0028.bin"))) else {
+            eprintln!("disk2 test: no card ROMs in roms/apple2/");
+            return;
+        };
+        let mut card = Disk2::new(p5, &p6).unwrap();
+        card.disk = Some(Disk::from_dsk(&vec![0; 143_360]).unwrap());
+        // Half-track 1, between tracks 0 and 1: no flux changes, so the
+        // amplifier's noise, and bytes of it.
+        card.io(0xC0E3, None);
+        card.io(0xC0E9, None);
+        assert_eq!(card.half_track, 1);
+        let (mut bytes, mut last) = (Vec::new(), 0u8);
+        for _ in 0..50_000 * 4 {
+            card.tick();
+            if card.data & 0x80 != 0 && last & 0x80 == 0 {
+                bytes.push(card.data);
+            }
+            last = card.data;
+        }
+        let mut kinds = bytes.clone();
+        kinds.sort();
+        kinds.dedup();
+        assert!(bytes.len() > 1000, "{} bytes of noise in a turn", bytes.len());
+        assert!(kinds.len() > 20, "{} kinds of byte in the noise", kinds.len());
+    }
+
+    #[test]
     fn the_card_reads_every_sector_of_both_images() {
         let (Some(mut dsk), Some(mut nib)) = (real_card("dsk"), real_card("nib")) else {
             eprintln!("disk2 test: no card ROMs or disks in roms/apple2/");
@@ -214,5 +334,33 @@ mod tests {
         let text = cpu.memory.text();
         assert!(text.iter().any(|line| line.contains("DISK VOLUME 254")), "the catalog: {text:#?}");
         assert!(text.iter().any(|line| line.contains("A 003 HELLO")), "HELLO not in it");
+    }
+
+    #[test]
+    fn pac_man_boots_from_a_woz() {
+        let dir = dir();
+        let read = |name: &str| std::fs::read(dir.join(name)).ok();
+        let (Some(rom), Some(p5), Some(p6), Some(woz)) = (
+            read("Apple2_Plus.rom"),
+            read("disk2-p5-341-0027.bin"),
+            read("disk2-p6-341-0028.bin"),
+            read("disks/Pac-Man (Atarisoft).woz"),
+        ) else {
+            eprintln!("disk2 test: no II+ ROM, card ROMs or Pac-Man .woz in roms/apple2/");
+            return;
+        };
+        let mut card = Disk2::new(p5, &p6).unwrap();
+        card.disk = Some(Disk::from_woz(&woz).unwrap());
+        let mut apple = Apple2::new(rom);
+        apple.disk2 = Some(card);
+        let mut cpu = CPU::with_bus(apple);
+        cpu.clock_hz = u32::MAX; // as fast as it goes
+        cpu.reset();
+        // DOS 3.3 loads it a sector a turn: half a minute.
+        let menu = |cpu: &CPU<Apple2>| cpu.memory.text().iter().any(|line| line.contains("CHOOSE A MODE (1 - 2)"));
+        while !menu(&cpu) && cpu.clock < 45 * CLOCK_HZ {
+            cpu.execute(100_000);
+        }
+        assert!(menu(&cpu), "not at its menu in 45 seconds: {:#?}", cpu.memory.text());
     }
 }

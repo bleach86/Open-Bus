@@ -11,13 +11,18 @@
 //! become the bytes the CPU reads.
 //!
 //! The drive turns the disk a bit every 8 sequencer steps, 4 microseconds,
-//! a 1 a read pulse in its first; the stepper moves the head a half-track
+//! a 1 (a flux change) a read pulse in its first. Its read amplifier, an
+//! MC3470, passes them on a bit late; but more than three bits without
+//! one, it has turned its gain up so far that it reads noise, pulses at
+//! random, 3 bits in 10: copy protection counts on it, and so does a
+//! half-track with no track. The stepper moves the head a half-track
 //! at a time toward a magnet next to it. Switched off, the motor runs on
 //! for a second, held by a timer on the card: DOS counts on it, to find
 //! the disk still turning when it next reads. RESET clears the switches'
 //! latch: the magnets off, the motor switched off (it runs on), drive 1,
 //! Q6 and Q7 off. Writing isn't yet: the disk is write protected.
 
+use super::CLOCK_HZ;
 use super::disk_image::{Disk, TRACKS};
 
 pub struct Disk2 {
@@ -43,10 +48,17 @@ pub struct Disk2 {
     pub half_track: usize,
     bit: usize,
     step: u8,
+    /// The amplifier's last 4 bits, the latest lowest; and its noise.
+    window: u8,
+    noise: u32,
 }
 
 /// How long the motor runs on, switched off: a second.
-const MOTOR_RUNS_ON: u32 = 1_022_727;
+const MOTOR_RUNS_ON: u32 = CLOCK_HZ;
+
+/// The bits in a turn of the disk, where there is no track: at 300 rpm,
+/// a bit every 4 microseconds.
+const REVOLUTION_BITS: usize = 50_000;
 
 /// The farthest the head goes: track 34's half-track, and one more.
 const LAST_HALF_TRACK: usize = 2 * (TRACKS - 1) + 1;
@@ -73,6 +85,8 @@ impl Disk2 {
             half_track: 0,
             bit: 0,
             step: 0,
+            window: 0,
+            noise: 0x2545_F491,
         })
     }
 
@@ -140,24 +154,24 @@ impl Disk2 {
         };
         // The same place round the disk, on the next track.
         let (from_len, to_len) = (self.track_len(self.half_track), self.track_len(to));
-        if from_len > 0 && to_len > 0 {
-            self.bit = self.bit * to_len / from_len;
-        }
+        self.bit = self.bit * to_len / from_len;
         self.half_track = to;
     }
 
-    /// The bits under the head: a track's, at an even half-track of drive
-    /// 1 with a disk; none, between tracks or on drive 2.
-    fn track(&self) -> Option<&Vec<u8>> {
-        let disk = self.disk.as_ref().filter(|_| !self.drive2)?;
-        if self.half_track % 2 == 0 { disk.tracks.get(self.half_track / 2) } else { None }
+    /// The disk in the drive switched to: drive 1's; drive 2 has none.
+    fn disk(&self) -> Option<&Disk> {
+        self.disk.as_ref().filter(|_| !self.drive2)
     }
 
+    /// The bits under the head: the track's at its half-track, if there is
+    /// one there.
+    fn track(&self) -> Option<&Vec<u8>> {
+        self.disk()?.track(self.half_track)
+    }
+
+    /// The bits in a turn at `half_track`: its track's, or a turn's of none.
     fn track_len(&self, half_track: usize) -> usize {
-        match &self.disk {
-            Some(disk) if half_track % 2 == 0 => disk.tracks.get(half_track / 2).map_or(0, Vec::len),
-            _ => 0,
-        }
+        self.disk.as_ref().and_then(|disk| disk.track(half_track)).map_or(REVOLUTION_BITS, Vec::len)
     }
 
     /// Whether the disk is turning: the motor on, or running on.
@@ -173,18 +187,19 @@ impl Disk2 {
     }
 
     fn sequencer_step(&mut self) {
-        // The disk turning under the head, while the motor is on: a 1's read
-        // pulse in its bit's first step.
+        // The disk turning under the head, while the motor is on: the
+        // amplifier's read pulse in each bit's first step; no track, no
+        // flux changes.
         let mut pulse = false;
-        if self.spinning() {
-            if let Some(track) = self.track() {
-                let len = track.len();
-                pulse = self.step == 0 && track[self.bit % len] == 1;
-                self.step += 1;
-                if self.step == 8 {
-                    self.step = 0;
-                    self.bit = (self.bit + 1) % len;
-                }
+        if self.spinning() && self.disk().is_some() {
+            if self.step == 0 {
+                let bit = self.track().map_or(0, |track| track[self.bit % track.len()]);
+                pulse = self.amplify(bit);
+            }
+            self.step += 1;
+            if self.step == 8 {
+                self.step = 0;
+                self.bit = (self.bit + 1) % self.track_len(self.half_track);
             }
         }
 
@@ -204,6 +219,23 @@ impl Disk2 {
             0xD => self.data = self.data << 1 | 1,                      // shift in a 1
             _ => {}                                                     // nothing
         }
+    }
+
+    /// The read amplifier given a bit from the head: the bit before it,
+    /// while there has been a 1 in the last 4; then noise.
+    fn amplify(&mut self, bit: u8) -> bool {
+        self.window = (self.window << 1 | bit) & 0x0F;
+        if self.window != 0 { self.window & 0x02 != 0 } else { self.noise() }
+    }
+
+    /// The amplifier's noise: a 1, 3 times in 10; by xorshift.
+    fn noise(&mut self) -> bool {
+        let mut x = self.noise;
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        self.noise = x;
+        x % 10 < 3
     }
 }
 

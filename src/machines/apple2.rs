@@ -1,4 +1,4 @@
-//! The Apple II (the II+): a 6502 at 1.023 MHz; 48K of RAM; the keyboard,
+//! The Apple II (the II+): a 6502 at 1.02 MHz; 48K of RAM; the keyboard,
 //! the speaker, the soft switches and the joystick at $C000; a language
 //! card in slot 0 and a Disk II card in slot 6, if there are; and 12K of
 //! ROM at $D000, the monitor and BASIC, from a dump of the machine's own
@@ -27,8 +27,10 @@ use crate::host::window::Window;
 use std::io::Write;
 use std::path::Path;
 
-/// 14.31818 MHz, a fourteenth.
-pub const CLOCK_HZ: u32 = 1_022_727;
+/// The 14.31818 MHz crystal's, on average: a cycle is 14 of its ticks, but
+/// each line's last is 16, keeping the colour signal in step line to line;
+/// so 65 cycles a line are 912 ticks.
+pub const CLOCK_HZ: u32 = 1_020_484;
 /// 65 cycles a line, 262 lines: 192 seen, the rest the beam's way back.
 pub const CYCLES_PER_LINE: u32 = 65;
 pub const CYCLES_PER_FRAME: u32 = 17_030;
@@ -411,8 +413,9 @@ impl Bus for Apple2 {
 }
 
 /// An Apple II+ run, with a language card: `rom_path` a dump of its ROM (its
-/// last 12K, $D000 up); `disk` a .dsk or .nib in a Disk II, whose ROMs are
-/// found beside it; in a window, or `text`, its text screen in the terminal.
+/// last 12K, $D000 up); `disk` a .dsk, .do, .po, .nib or .woz in a Disk II,
+/// whose ROMs are found beside it; in a window, or `text`, its text screen in the
+/// terminal.
 pub fn run(rom_path: &str, disk: Option<&str>, text: bool) {
     let read = |path: &Path| std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let rom_path = Path::new(rom_path);
@@ -432,8 +435,12 @@ pub fn run(rom_path: &str, disk: Option<&str>, text: bool) {
                 disk_image::Disk::from_nib(&image)
             } else if lower.ends_with(".dsk") || lower.ends_with(".do") {
                 disk_image::Disk::from_dsk(&image)
+            } else if lower.ends_with(".po") {
+                disk_image::Disk::from_po(&image)
+            } else if lower.ends_with(".woz") {
+                disk_image::Disk::from_woz(&image)
             } else {
-                Err("a .dsk, .do or .nib".to_string())
+                Err("a .dsk, .do, .po, .nib or .woz".to_string())
             }
             .unwrap_or_else(|e| panic!("{disk}: {e}")),
         );

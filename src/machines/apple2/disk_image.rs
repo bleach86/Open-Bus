@@ -1,20 +1,34 @@
 //! Disk images as the drive reads them: each track a ring of bits, as the
 //! head passes over it, a bit every 4 microseconds.
 //!
-//! A .nib holds each track as its bytes on the disk; a .dsk holds only its
-//! sectors, in DOS 3.3's order, and its tracks are rebuilt as DOS 3.3
-//! formats them. Either way the sync bytes in the gaps between fields are
+//! A .nib holds each track as its bytes on the disk; a .dsk (or .do) holds
+//! only its sectors, in DOS 3.3's order, and a .po the same in ProDOS's,
+//! and their tracks are rebuilt as DOS 3.3 formats them (ProDOS formats
+//! them the same). Either way the sync bytes in the gaps between fields are
 //! written as on a disk, FF and two 0s: the controller skips 0s before a
 //! byte, so a run of them brings it into step. The bytes in a field,
-//! including its FFs, are 8 bits.
+//! including its FFs, are 8 bits. Their tracks are under the head at whole
+//! tracks only.
+//!
+//! A .woz holds each track's bits as they were read off a disk, copy
+//! protection and all, and which track is under the head at each
+//! quarter-track; at those between tracks, often none.
 
 pub const TRACKS: usize = 35;
 const NIB_TRACK: usize = 6656;
-const DSK_TRACK: usize = 16 * 256;
+const SECTORS_TRACK: usize = 16 * 256;
+/// The half-tracks a .woz maps: 40 tracks' worth.
+const WOZ_HALF_TRACKS: usize = 80;
+/// A WOZ1 track: its bits in 6,646 bytes, then how many, and the rest.
+const WOZ1_TRACK: usize = 6656;
+/// WOZ2's TRKS: where its 160 tracks are, 8 bytes each, then their bits.
+const WOZ2_ENTRIES: usize = 160;
 
-/// A disk: its tracks' bits, one a byte (0 or 1).
+/// A disk: its tracks' bits, one a byte (0 or 1); and at each half-track,
+/// which track is under the head, if one is.
 pub struct Disk {
     pub tracks: Vec<Vec<u8>>,
+    pub half_tracks: Vec<Option<usize>>,
 }
 
 /// DOS 3.3's 64 disk bytes, for 6 bits each: bytes with their top bit set
@@ -29,6 +43,10 @@ pub const TRANSLATE: [u8; 64] = [
 /// The sector of a .dsk track at each physical sector, the order they pass
 /// the head: DOS 3.3's interleave.
 pub const DOS_ORDER: [usize; 16] = [0x0, 0x7, 0xE, 0x6, 0xD, 0x5, 0xC, 0x4, 0xB, 0x3, 0xA, 0x2, 0x9, 0x1, 0x8, 0xF];
+
+/// The same for a .po: ProDOS's, its 512-byte blocks each two sectors, a
+/// physical sector apart.
+pub const PRODOS_ORDER: [usize; 16] = [0x0, 0x8, 0x1, 0x9, 0x2, 0xA, 0x3, 0xB, 0x4, 0xC, 0x5, 0xD, 0x6, 0xE, 0x7, 0xF];
 
 /// The volume a rebuilt disk's address fields have: DOS 3.3's own.
 const VOLUME: u8 = 254;
@@ -51,19 +69,29 @@ impl Disk {
             }
             bits
         });
-        Ok(Disk { tracks: tracks.collect() })
+        Ok(Disk::whole_tracks(tracks.collect()))
     }
 
     /// A .dsk: 35 tracks of 16 sectors of 256 bytes, in DOS 3.3's order;
     /// each track rebuilt as DOS 3.3 formats it.
     pub fn from_dsk(image: &[u8]) -> Result<Disk, String> {
-        if image.len() != TRACKS * DSK_TRACK {
-            return Err(format!("a .dsk is {} bytes, not {}", TRACKS * DSK_TRACK, image.len()));
+        Disk::from_sectors(image, &DOS_ORDER, ".dsk")
+    }
+
+    /// A .po: the same, in ProDOS's order.
+    pub fn from_po(image: &[u8]) -> Result<Disk, String> {
+        Disk::from_sectors(image, &PRODOS_ORDER, ".po")
+    }
+
+    /// 35 tracks of 16 sectors, in `order`: a `kind` of image.
+    fn from_sectors(image: &[u8], order: &[usize; 16], kind: &str) -> Result<Disk, String> {
+        if image.len() != TRACKS * SECTORS_TRACK {
+            return Err(format!("a {kind} is {} bytes, not {}", TRACKS * SECTORS_TRACK, image.len()));
         }
-        let tracks = image.chunks(DSK_TRACK).enumerate().map(|(track, sectors)| {
+        let tracks = image.chunks(SECTORS_TRACK).enumerate().map(|(track, sectors)| {
             let mut bits = Vec::new();
             sync(&mut bits, 48);
-            for (physical, &sector) in DOS_ORDER.iter().enumerate() {
+            for (physical, &sector) in order.iter().enumerate() {
                 for byte in address_field(VOLUME, track as u8, physical as u8) {
                     push_byte(&mut bits, byte);
                 }
@@ -76,8 +104,100 @@ impl Disk {
             }
             bits
         });
-        Ok(Disk { tracks: tracks.collect() })
+        Ok(Disk::whole_tracks(tracks.collect()))
     }
+
+    /// The track under the head at `half_track`, if one is: its bits.
+    pub fn track(&self, half_track: usize) -> Option<&Vec<u8>> {
+        self.half_tracks.get(half_track).copied().flatten().map(|track| &self.tracks[track])
+    }
+
+    /// A disk with `tracks` under the head at whole tracks, none between.
+    fn whole_tracks(tracks: Vec<Vec<u8>>) -> Disk {
+        let half_tracks = (0..2 * tracks.len()).map(|half| (half % 2 == 0).then_some(half / 2)).collect();
+        Disk { tracks, half_tracks }
+    }
+
+    /// A .woz, WOZ1 or WOZ2: after its header and CRC, chunks, each an ID
+    /// and a length. INFO says what disk it is; TMAP, which track is at
+    /// each of 160 quarter-tracks, FF for none; TRKS, the tracks: in WOZ1,
+    /// 6,656 bytes each, their bits from the first byte's top bit, and how
+    /// many at 6,648; in WOZ2, where each one's bits are in the file, in
+    /// 512-byte blocks, and how many, then the bits. The stepper stops at half-tracks:
+    /// their quarter-tracks' are the ones used.
+    pub fn from_woz(image: &[u8]) -> Result<Disk, String> {
+        let version = match image.get(..8) {
+            Some(b"WOZ1\xFF\n\r\n") => 1,
+            Some(b"WOZ2\xFF\n\r\n") => 2,
+            _ => return Err("not a WOZ1 or WOZ2".to_string()),
+        };
+        let crc = u32::from_le_bytes(image.get(8..12).ok_or("no CRC")?.try_into().unwrap());
+        if crc != 0 && crc != crc32(&image[12..]) {
+            return Err("its CRC is wrong".to_string());
+        }
+        let (mut info, mut tmap, mut trks) = (None, None, None);
+        let mut at = 12;
+        while at + 8 <= image.len() {
+            let size = u32::from_le_bytes(image[at + 4..at + 8].try_into().unwrap()) as usize;
+            let body = image.get(at + 8..at + 8 + size).ok_or("a chunk cut short")?;
+            match &image[at..at + 4] {
+                b"INFO" => info = Some(body),
+                b"TMAP" => tmap = Some(body),
+                b"TRKS" => trks = Some(body),
+                _ => {}
+            }
+            at += 8 + size;
+        }
+        let (Some(info), Some(tmap), Some(trks)) = (info, tmap, trks) else {
+            return Err("no INFO, TMAP or TRKS".to_string());
+        };
+        if info.get(1) != Some(&1) {
+            return Err("not a 5.25\" disk".to_string());
+        }
+        let u16_at = |bytes: &[u8], at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]) as usize;
+
+        let tracks: Option<Vec<Vec<u8>>> = if version == 1 {
+            trks.chunks_exact(WOZ1_TRACK).map(|track| bits(&track[..6646], u16_at(track, 6648))).collect()
+        } else {
+            trks.get(..WOZ2_ENTRIES * 8)
+                .ok_or("its TRKS cut short")?
+                .chunks_exact(8)
+                .map(|entry| {
+                    let (start, length) = (u16_at(entry, 0) * 512, u16_at(entry, 2) * 512);
+                    let count = u32::from_le_bytes(entry[4..8].try_into().unwrap()) as usize;
+                    bits(image.get(start..start + length)?, count)
+                })
+                .collect()
+        };
+        let tracks = tracks.ok_or("a track's bits past its bytes")?;
+
+        let half_tracks = (0..WOZ_HALF_TRACKS)
+            .map(|half| match tmap.get(2 * half).copied() {
+                None | Some(0xFF) => Ok(None),
+                Some(track) if tracks.get(track as usize).is_some_and(|bits| !bits.is_empty()) => Ok(Some(track as usize)),
+                Some(track) => Err(format!("its map has track {track}, which it hasn't")),
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Disk { tracks, half_tracks })
+    }
+}
+
+/// The first `count` bits of `bytes`, from the first byte's top bit; none
+/// if it hasn't as many.
+fn bits(bytes: &[u8], count: usize) -> Option<Vec<u8>> {
+    (count <= bytes.len() * 8).then(|| (0..count).map(|i| (bytes[i / 8] >> (7 - i % 8)) & 1).collect())
+}
+
+/// The CRC-32 a .woz has for all after its header: the one zip has.
+pub fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    for &byte in bytes {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+        }
+    }
+    !crc
 }
 
 /// Which of a .nib track's bytes are in a field: from an address field's

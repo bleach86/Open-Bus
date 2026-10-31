@@ -15,9 +15,9 @@ mod machines {
 
 /// The machine to run: `cpu_emu` for this one, with BASIC; `cpu_emu apple2
 /// ROM [DISK]` for an Apple II+, ROM a dump of its ROM (its last 12K, $D000
-/// up), DISK a .dsk or .nib in a Disk II (its ROMs, disk2-p5-341-0027.bin
-/// and disk2-p6-341-0028.bin, beside ROM); in a window, or with `--text`
-/// its text screen in the terminal.
+/// up), DISK a .dsk, .do, .po, .nib or .woz in a Disk II (its ROMs,
+/// disk2-p5-341-0027.bin and disk2-p6-341-0028.bin, beside ROM); in a
+/// window, or with `--text` its text screen in the terminal.
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let usage = "cpu_emu apple2 ROM [DISK] [--text]";
