@@ -30,12 +30,6 @@ pub enum StatusFlag {
     Negative = 7,
 }
 
-/// What an instruction leaves the run loop to do.
-pub enum Flow {
-    Continue,
-    Illegal(u8),
-}
-
 pub enum Registers {
     A,
     X,
@@ -93,6 +87,7 @@ pub struct CPU<B: Bus = Memory> {
     pub irq: bool,              // IRQ line: held by a device until it's served
     pub nmi: bool,              // NMI: an edge, taken once
     in_reset: bool,             // held in reset: resets when RESET is let go
+    jammed: Option<u8>,         // stopped by a JAM: its cycles since, up to 3
     pub clock: u32,             // CPU clock counter
     pub clock_hz: u32,          // its speed: cycles a second
 }
@@ -117,6 +112,7 @@ impl<B: Bus> CPU<B> {
             irq: false,
             nmi: false,
             in_reset: false,
+            jammed: None,
             clock: 0,
             clock_hz: DEFAULT_CLOCK_HZ,
         }
@@ -136,12 +132,10 @@ impl<B: Bus> CPU<B> {
         self.pc = self.read_word(0xFFFC); // the reset vector
 
         self.status.interrupt_disable = true; // reset sets I, as on the 6502
+        self.jammed = None; // the one way out of a JAM
     }
 
     pub fn execute_forever(&mut self) {
-        println!("PC set to {:04X}", self.pc);
-        //std::process::exit(0);
-
         let cycles = u32::MAX;
 
         self.execute_inner(cycles, true);
@@ -149,9 +143,6 @@ impl<B: Bus> CPU<B> {
 
     #[allow(dead_code)]
     pub fn execute(&mut self, cycles: u32) {
-        println!("PC set to {:04X}", self.pc);
-        //std::process::exit(0);
-
         self.execute_inner(cycles, false);
     }
 
@@ -175,9 +166,10 @@ impl<B: Bus> CPU<B> {
             } else if self.in_reset {
                 self.in_reset = false;
                 self.reset();
-            } else if let Flow::Illegal(opcode) = self.step() {
-                println!("Unimplemented opcode: ${:02X}", opcode);
-                break;
+            } else if self.jammed.is_some() {
+                self.jammed_cycle();
+            } else {
+                self.step();
             }
 
             let used = self.clock.wrapping_sub(cycle_start) as u64;
@@ -199,19 +191,22 @@ impl<B: Bus> CPU<B> {
     }
 
     /// An instruction, and the interrupt after it, if one is due.
-    fn step(&mut self) -> Flow {
+    fn step(&mut self) {
         let i_before = self.status.interrupt_disable;
 
         let opcode = self.fetch_byte();
 
-        if let Flow::Illegal(opcode) = self.exec_opcode(opcode) {
-            return Flow::Illegal(opcode);
+        self.exec_opcode(opcode);
+
+        // A JAM stopped it dead: it doesn't get as far as an interrupt.
+        if self.jammed.is_some() {
+            return;
         }
 
         // The 6502 looks at IRQ before an instruction's last cycle: the I
         // that CLI, SEI and PLP set on that cycle counts from the next.
         let masked = match Opcode::from_byte(opcode) {
-            Some(Opcode::CLI | Opcode::SEI | Opcode::PLP) => i_before,
+            Opcode::CLI | Opcode::SEI | Opcode::PLP => i_before,
             _ => self.status.interrupt_disable,
         };
 
@@ -222,471 +217,678 @@ impl<B: Bus> CPU<B> {
         } else if self.irq && !masked {
             self.interrupt(0xFFFE);
         }
-        Flow::Continue
     }
 
     /// One instruction, already fetched: what execute_inner's loop does next.
-    pub(crate) fn exec_opcode(&mut self, opcode: u8) -> Flow {
+    pub(crate) fn exec_opcode(&mut self, opcode: u8) {
         match Opcode::from_byte(opcode) {
-            Some(Opcode::ADCImmediate) => {
+            Opcode::ADCImmediate => {
                 self.adc_immediate();
             }
-            Some(Opcode::ADCZeroPage) => {
+            Opcode::ADCZeroPage => {
                 self.adc_zero_page();
             }
-            Some(Opcode::ADCZeroPageX) => {
+            Opcode::ADCZeroPageX => {
                 self.adc_zero_page_x();
             }
-            Some(Opcode::ADCAbsolute) => {
+            Opcode::ADCAbsolute => {
                 self.adc_absolute();
             }
-            Some(Opcode::ADCAbsoluteX) => {
+            Opcode::ADCAbsoluteX => {
                 self.adc_absolute_x();
             }
-            Some(Opcode::ADCAbsoluteY) => {
+            Opcode::ADCAbsoluteY => {
                 self.adc_absolute_y();
             }
-            Some(Opcode::ADCIndirectX) => {
+            Opcode::ADCIndirectX => {
                 self.adc_indirect_x();
             }
-            Some(Opcode::ADCIndirectY) => {
+            Opcode::ADCIndirectY => {
                 self.adc_indirect_y();
             }
-            Some(Opcode::ANDImmediate) => {
+            Opcode::ANDImmediate => {
                 self.and_immediate();
             }
-            Some(Opcode::ANDZeroPage) => {
+            Opcode::ANDZeroPage => {
                 self.and_zero_page();
             }
-            Some(Opcode::ANDZeroPageX) => {
+            Opcode::ANDZeroPageX => {
                 self.and_zero_page_x();
             }
-            Some(Opcode::ANDAbsolute) => {
+            Opcode::ANDAbsolute => {
                 self.and_absolute();
             }
-            Some(Opcode::ANDAbsoluteX) => {
+            Opcode::ANDAbsoluteX => {
                 self.and_absolute_x();
             }
-            Some(Opcode::ANDAbsoluteY) => {
+            Opcode::ANDAbsoluteY => {
                 self.and_absolute_y();
             }
-            Some(Opcode::ANDIndirectX) => {
+            Opcode::ANDIndirectX => {
                 self.and_indirect_x();
             }
-            Some(Opcode::ANDIndirectY) => {
+            Opcode::ANDIndirectY => {
                 self.and_indirect_y();
             }
-            Some(Opcode::ASLAccumulator) => {
+            Opcode::ASLAccumulator => {
                 self.asl_accumulator();
             }
-            Some(Opcode::ASLZeroPage) => {
+            Opcode::ASLZeroPage => {
                 self.asl_zero_page();
             }
-            Some(Opcode::ASLZeroPageX) => {
+            Opcode::ASLZeroPageX => {
                 self.asl_zero_page_x();
             }
-            Some(Opcode::ASLAbsolute) => {
+            Opcode::ASLAbsolute => {
                 self.asl_absolute();
             }
-            Some(Opcode::ASLAbsoluteX) => {
+            Opcode::ASLAbsoluteX => {
                 self.asl_absolute_x();
             }
-            Some(Opcode::BCC) => {
+            Opcode::BCC => {
                 self.branch(StatusFlag::Carry, Opcode::BCC);
             }
-            Some(Opcode::BCS) => {
+            Opcode::BCS => {
                 self.branch(StatusFlag::Carry, Opcode::BCS);
             }
-            Some(Opcode::BEQ) => {
+            Opcode::BEQ => {
                 self.branch(StatusFlag::Zero, Opcode::BEQ);
             }
-            Some(Opcode::BMI) => {
+            Opcode::BMI => {
                 self.branch(StatusFlag::Negative, Opcode::BMI);
             }
-            Some(Opcode::BNE) => {
+            Opcode::BNE => {
                 self.branch(StatusFlag::Zero, Opcode::BNE);
             }
-            Some(Opcode::BPL) => {
+            Opcode::BPL => {
                 self.branch(StatusFlag::Negative, Opcode::BPL);
             }
-            Some(Opcode::BVC) => {
+            Opcode::BVC => {
                 self.branch(StatusFlag::Overflow, Opcode::BVC);
             }
-            Some(Opcode::BVS) => {
+            Opcode::BVS => {
                 self.branch(StatusFlag::Overflow, Opcode::BVS);
             }
-            Some(Opcode::BITZeroPage) => {
+            Opcode::BITZeroPage => {
                 self.bit_zero_page();
             }
-            Some(Opcode::BITAbsolute) => {
+            Opcode::BITAbsolute => {
                 self.bit_absolute();
             }
-            Some(Opcode::CLC) => {
+            Opcode::CLC => {
                 self.mod_flag(StatusFlag::Carry, false);
             }
-            Some(Opcode::CLD) => {
+            Opcode::CLD => {
                 self.mod_flag(StatusFlag::DecimalMode, false);
             }
-            Some(Opcode::CLI) => {
+            Opcode::CLI => {
                 self.mod_flag(StatusFlag::InterruptDisable, false);
             }
-            Some(Opcode::CLV) => {
+            Opcode::CLV => {
                 self.mod_flag(StatusFlag::Overflow, false);
             }
-            Some(Opcode::CMPImmediate) => {
+            Opcode::CMPImmediate => {
                 self.cmp_immediate();
             }
-            Some(Opcode::CMPZeroPage) => {
+            Opcode::CMPZeroPage => {
                 self.cmp_zero_page();
             }
-            Some(Opcode::CMPZeroPageX) => {
+            Opcode::CMPZeroPageX => {
                 self.cmp_zero_page_x();
             }
-            Some(Opcode::CMPAbsolute) => {
+            Opcode::CMPAbsolute => {
                 self.cmp_absolute();
             }
-            Some(Opcode::CMPAbsoluteX) => {
+            Opcode::CMPAbsoluteX => {
                 self.cmp_absolute_x();
             }
-            Some(Opcode::CMPAbsoluteY) => {
+            Opcode::CMPAbsoluteY => {
                 self.cmp_absolute_y();
             }
-            Some(Opcode::CMPIndirectX) => {
+            Opcode::CMPIndirectX => {
                 self.cmp_indirect_x();
             }
-            Some(Opcode::CMPIndirectY) => {
+            Opcode::CMPIndirectY => {
                 self.cmp_indirect_y();
             }
-            Some(Opcode::CPXImmediate) => {
+            Opcode::CPXImmediate => {
                 self.cpx_immediate();
             }
-            Some(Opcode::CPXZeroPage) => {
+            Opcode::CPXZeroPage => {
                 self.cpx_zero_page();
             }
-            Some(Opcode::CPXAbsolute) => {
+            Opcode::CPXAbsolute => {
                 self.cpx_absolute();
             }
-            Some(Opcode::CPYImmediate) => {
+            Opcode::CPYImmediate => {
                 self.cpy_immediate();
             }
-            Some(Opcode::CPYZeroPage) => {
+            Opcode::CPYZeroPage => {
                 self.cpy_zero_page();
             }
-            Some(Opcode::CPYAbsolute) => {
+            Opcode::CPYAbsolute => {
                 self.cpy_absolute();
             }
-            Some(Opcode::DEX) => {
+            Opcode::DEX => {
                 self.dex();
             }
-            Some(Opcode::DEY) => {
+            Opcode::DEY => {
                 self.dey();
             }
-            Some(Opcode::DECZeroPage) => {
+            Opcode::DECZeroPage => {
                 self.dec_zero_page();
             }
-            Some(Opcode::DECZeroPageX) => {
+            Opcode::DECZeroPageX => {
                 self.dec_zero_page_x();
             }
-            Some(Opcode::DECAbsolute) => {
+            Opcode::DECAbsolute => {
                 self.dec_absolute();
             }
-            Some(Opcode::DECAbsoluteX) => {
+            Opcode::DECAbsoluteX => {
                 self.dec_absolute_x();
             }
-            Some(Opcode::EORImmediate) => {
+            Opcode::EORImmediate => {
                 self.eor_immediate();
             }
-            Some(Opcode::EORZeroPage) => {
+            Opcode::EORZeroPage => {
                 self.eor_zero_page();
             }
-            Some(Opcode::EORZeroPageX) => {
+            Opcode::EORZeroPageX => {
                 self.eor_zero_page_x();
             }
-            Some(Opcode::EORAbsolute) => {
+            Opcode::EORAbsolute => {
                 self.eor_absolute();
             }
-            Some(Opcode::EORAbsoluteX) => {
+            Opcode::EORAbsoluteX => {
                 self.eor_absolute_x();
             }
-            Some(Opcode::EORAbsoluteY) => {
+            Opcode::EORAbsoluteY => {
                 self.eor_absolute_y();
             }
-            Some(Opcode::EORIndirectX) => {
+            Opcode::EORIndirectX => {
                 self.eor_indirect_x();
             }
-            Some(Opcode::EORIndirectY) => {
+            Opcode::EORIndirectY => {
                 self.eor_indirect_y();
             }
-            Some(Opcode::JMPAbsolute) => {
+            Opcode::JMPAbsolute => {
                 self.jmp_absolute();
             }
-            Some(Opcode::JMPIndirect) => {
+            Opcode::JMPIndirect => {
                 self.jmp_indirect();
             }
-            Some(Opcode::INX) => {
+            Opcode::INX => {
                 self.inx();
             }
-            Some(Opcode::INY) => {
+            Opcode::INY => {
                 self.iny();
             }
-            Some(Opcode::INCZeroPage) => {
+            Opcode::INCZeroPage => {
                 self.inc_zero_page();
             }
-            Some(Opcode::INCZeroPageX) => {
+            Opcode::INCZeroPageX => {
                 self.inc_zero_page_x();
             }
-            Some(Opcode::INCAbsolute) => {
+            Opcode::INCAbsolute => {
                 self.inc_absolute();
             }
-            Some(Opcode::INCAbsoluteX) => {
+            Opcode::INCAbsoluteX => {
                 self.inc_absolute_x();
             }
-            Some(Opcode::LDAImmediate) => {
+            Opcode::LDAImmediate => {
                 self.lda_immediate();
             }
-            Some(Opcode::LDAZeroPage) => {
+            Opcode::LDAZeroPage => {
                 self.lda_zero_page();
             }
-            Some(Opcode::LDAZeroPageX) => {
+            Opcode::LDAZeroPageX => {
                 self.lda_zero_page_x();
             }
-            Some(Opcode::LDAAbsolute) => {
+            Opcode::LDAAbsolute => {
                 self.lda_absolute();
             }
-            Some(Opcode::LDAAbsoluteX) => {
+            Opcode::LDAAbsoluteX => {
                 self.lda_absolute_x();
             }
-            Some(Opcode::LDAAbsoluteY) => {
+            Opcode::LDAAbsoluteY => {
                 self.lda_absolute_y();
             }
-            Some(Opcode::LDAIndirectX) => {
+            Opcode::LDAIndirectX => {
                 self.lda_indirect_x();
             }
-            Some(Opcode::LDAIndirectY) => {
+            Opcode::LDAIndirectY => {
                 self.lda_indirect_y();
             }
-            Some(Opcode::LDXImmediate) => {
+            Opcode::LDXImmediate => {
                 self.ldx_immediate();
             }
-            Some(Opcode::LDXZeroPage) => {
+            Opcode::LDXZeroPage => {
                 self.ldx_zero_page();
             }
-            Some(Opcode::LDXZeroPageY) => {
+            Opcode::LDXZeroPageY => {
                 self.ldx_zero_page_y();
             }
-            Some(Opcode::LDXAbsolute) => {
+            Opcode::LDXAbsolute => {
                 self.ldx_absolute();
             }
-            Some(Opcode::LDXAbsoluteY) => {
+            Opcode::LDXAbsoluteY => {
                 self.ldx_absolute_y();
             }
-            Some(Opcode::LDYImmediate) => {
+            Opcode::LDYImmediate => {
                 self.ldy_immediate();
             }
-            Some(Opcode::LDYZeroPage) => {
+            Opcode::LDYZeroPage => {
                 self.ldy_zero_page();
             }
-            Some(Opcode::LDYZeroPageX) => {
+            Opcode::LDYZeroPageX => {
                 self.ldy_zero_page_x();
             }
-            Some(Opcode::LDYAbsolute) => {
+            Opcode::LDYAbsolute => {
                 self.ldy_absolute();
             }
-            Some(Opcode::LDYAbsoluteX) => {
+            Opcode::LDYAbsoluteX => {
                 self.ldy_absolute_x();
             }
-            Some(Opcode::LSRAccumulator) => {
+            Opcode::LSRAccumulator => {
                 self.lsr_accumulator();
             }
-            Some(Opcode::LSRZeroPage) => {
+            Opcode::LSRZeroPage => {
                 self.lsr_zero_page();
             }
-            Some(Opcode::LSRZeroPageX) => {
+            Opcode::LSRZeroPageX => {
                 self.lsr_zero_page_x();
             }
-            Some(Opcode::LSRAbsolute) => {
+            Opcode::LSRAbsolute => {
                 self.lsr_absolute();
             }
-            Some(Opcode::LSRAbsoluteX) => {
+            Opcode::LSRAbsoluteX => {
                 self.lsr_absolute_x();
             }
-            Some(Opcode::PHA) => {
+            Opcode::PHA => {
                 self.pha();
             }
-            Some(Opcode::PHP) => {
+            Opcode::PHP => {
                 self.php();
             }
-            Some(Opcode::PLA) => {
+            Opcode::PLA => {
                 self.pla();
             }
-            Some(Opcode::PLP) => {
+            Opcode::PLP => {
                 self.plp();
             }
-            Some(Opcode::ORAbsoluteY) => {
+            Opcode::ORAbsoluteY => {
                 self.or_absolute_y();
             }
-            Some(Opcode::ORIndirectX) => {
+            Opcode::ORIndirectX => {
                 self.or_indirect_x();
             }
-            Some(Opcode::ORIndirectY) => {
+            Opcode::ORIndirectY => {
                 self.or_indirect_y();
             }
-            Some(Opcode::ORImmediate) => {
+            Opcode::ORImmediate => {
                 self.or_immediate();
             }
-            Some(Opcode::ORZeroPage) => {
+            Opcode::ORZeroPage => {
                 self.or_zero_page();
             }
-            Some(Opcode::ORZeroPageX) => {
+            Opcode::ORZeroPageX => {
                 self.or_zero_page_x();
             }
-            Some(Opcode::ORAbsolute) => {
+            Opcode::ORAbsolute => {
                 self.or_absolute();
             }
-            Some(Opcode::ORAbsoluteX) => {
+            Opcode::ORAbsoluteX => {
                 self.or_absolute_x();
             }
-            Some(Opcode::SBCImmediate) => {
+            Opcode::SBCImmediate => {
                 self.sbc_immediate();
             }
-            Some(Opcode::SBCZeroPage) => {
+            Opcode::SBCZeroPage => {
                 self.sbc_zero_page();
             }
-            Some(Opcode::SBCZeroPageX) => {
+            Opcode::SBCZeroPageX => {
                 self.sbc_zero_page_x();
             }
-            Some(Opcode::SBCAbsolute) => {
+            Opcode::SBCAbsolute => {
                 self.sbc_absolute();
             }
-            Some(Opcode::SBCAbsoluteX) => {
+            Opcode::SBCAbsoluteX => {
                 self.sbc_absolute_x();
             }
-            Some(Opcode::SBCAbsoluteY) => {
+            Opcode::SBCAbsoluteY => {
                 self.sbc_absolute_y();
             }
-            Some(Opcode::SBCIndirectX) => {
+            Opcode::SBCIndirectX => {
                 self.sbc_indirect_x();
             }
-            Some(Opcode::SBCIndirectY) => {
+            Opcode::SBCIndirectY => {
                 self.sbc_indirect_y();
             }
-            Some(Opcode::SEC) => {
+            Opcode::SEC => {
                 self.mod_flag(StatusFlag::Carry, true);
             }
-            Some(Opcode::SED) => {
+            Opcode::SED => {
                 self.mod_flag(StatusFlag::DecimalMode, true);
             }
-            Some(Opcode::SEI) => {
+            Opcode::SEI => {
                 self.mod_flag(StatusFlag::InterruptDisable, true);
             }
-            Some(Opcode::STAZeroPage) => {
+            Opcode::STAZeroPage => {
                 self.sta_zero_page();
             }
-            Some(Opcode::STAZeroPageX) => {
+            Opcode::STAZeroPageX => {
                 self.sta_zero_page_x();
             }
-            Some(Opcode::STAAbsolute) => {
+            Opcode::STAAbsolute => {
                 self.sta_absolute();
             }
-            Some(Opcode::STAAbsoluteX) => {
+            Opcode::STAAbsoluteX => {
                 self.sta_absolute_x();
             }
-            Some(Opcode::STAAbsoluteY) => {
+            Opcode::STAAbsoluteY => {
                 self.sta_absolute_y();
             }
-            Some(Opcode::STAIndirectX) => {
+            Opcode::STAIndirectX => {
                 self.sta_indirect_x();
             }
-            Some(Opcode::STAIndirectY) => {
+            Opcode::STAIndirectY => {
                 self.sta_indirect_y();
             }
-            Some(Opcode::STXZeroPage) => {
+            Opcode::STXZeroPage => {
                 self.stx_zero_page();
             }
-            Some(Opcode::STXZeroPageY) => {
+            Opcode::STXZeroPageY => {
                 self.stx_zero_page_y();
             }
-            Some(Opcode::STXAbsolute) => {
+            Opcode::STXAbsolute => {
                 self.stx_absolute();
             }
-            Some(Opcode::STYZeroPage) => {
+            Opcode::STYZeroPage => {
                 self.sty_zero_page();
             }
-            Some(Opcode::STYZeroPageX) => {
+            Opcode::STYZeroPageX => {
                 self.sty_zero_page_x();
             }
-            Some(Opcode::STYAbsolute) => {
+            Opcode::STYAbsolute => {
                 self.sty_absolute();
             }
-            Some(Opcode::TAX) => {
+            Opcode::TAX => {
                 self.transfer_register(Registers::A, Registers::X);
             }
-            Some(Opcode::TAY) => {
+            Opcode::TAY => {
                 self.transfer_register(Registers::A, Registers::Y);
             }
-            Some(Opcode::TXA) => {
+            Opcode::TXA => {
                 self.transfer_register(Registers::X, Registers::A);
             }
-            Some(Opcode::TYA) => {
+            Opcode::TYA => {
                 self.transfer_register(Registers::Y, Registers::A);
             }
-            Some(Opcode::TSX) => {
+            Opcode::TSX => {
                 self.tsx();
             }
-            Some(Opcode::TXS) => {
+            Opcode::TXS => {
                 self.txs();
             }
-            Some(Opcode::JSRAbsolute) => {
+            Opcode::JSRAbsolute => {
                 self.jsr_absolute();
                 ////println!("JSR ${:04X}", sub_addr);
             }
-            Some(Opcode::ROLAccumulator) => {
+            Opcode::ROLAccumulator => {
                 self.rol_accumulator();
             }
-            Some(Opcode::ROLZeroPage) => {
+            Opcode::ROLZeroPage => {
                 self.rol_zero_page();
             }
-            Some(Opcode::ROLZeroPageX) => {
+            Opcode::ROLZeroPageX => {
                 self.rol_zero_page_x();
             }
-            Some(Opcode::ROLAbsolute) => {
+            Opcode::ROLAbsolute => {
                 self.rol_absolute();
             }
-            Some(Opcode::ROLAbsoluteX) => {
+            Opcode::ROLAbsoluteX => {
                 self.rol_absolute_x();
             }
-            Some(Opcode::RORAccumulator) => {
+            Opcode::RORAccumulator => {
                 self.ror_accumulator();
             }
-            Some(Opcode::RORZeroPage) => {
+            Opcode::RORZeroPage => {
                 self.ror_zero_page();
             }
-            Some(Opcode::RORZeroPageX) => {
+            Opcode::RORZeroPageX => {
                 self.ror_zero_page_x();
             }
-            Some(Opcode::RORAbsolute) => {
+            Opcode::RORAbsolute => {
                 self.ror_absolute();
             }
-            Some(Opcode::RORAbsoluteX) => {
+            Opcode::RORAbsoluteX => {
                 self.ror_absolute_x();
             }
-            Some(Opcode::RTS) => {
+            Opcode::RTS => {
                 self.rts();
 
                 ////println!("RTS to ${:04X}", self.pc);
             }
-            Some(Opcode::RTI) => {
+            Opcode::RTI => {
                 self.rti();
             }
-            Some(Opcode::NOP) => {
+            Opcode::NOP => {
                 self.nop();
             }
-            Some(Opcode::BRK) => {
+            Opcode::BRK => {
                 self.brk();
             }
-            None => return Flow::Illegal(opcode),
+            Opcode::SLOZeroPage => {
+                self.slo_zero_page();
+            }
+            Opcode::SLOZeroPageX => {
+                self.slo_zero_page_x();
+            }
+            Opcode::SLOAbsolute => {
+                self.slo_absolute();
+            }
+            Opcode::SLOAbsoluteX => {
+                self.slo_absolute_x();
+            }
+            Opcode::SLOAbsoluteY => {
+                self.slo_absolute_y();
+            }
+            Opcode::SLOIndirectX => {
+                self.slo_indirect_x();
+            }
+            Opcode::SLOIndirectY => {
+                self.slo_indirect_y();
+            }
+            Opcode::RLAZeroPage => {
+                self.rla_zero_page();
+            }
+            Opcode::RLAZeroPageX => {
+                self.rla_zero_page_x();
+            }
+            Opcode::RLAAbsolute => {
+                self.rla_absolute();
+            }
+            Opcode::RLAAbsoluteX => {
+                self.rla_absolute_x();
+            }
+            Opcode::RLAAbsoluteY => {
+                self.rla_absolute_y();
+            }
+            Opcode::RLAIndirectX => {
+                self.rla_indirect_x();
+            }
+            Opcode::RLAIndirectY => {
+                self.rla_indirect_y();
+            }
+            Opcode::SREZeroPage => {
+                self.sre_zero_page();
+            }
+            Opcode::SREZeroPageX => {
+                self.sre_zero_page_x();
+            }
+            Opcode::SREAbsolute => {
+                self.sre_absolute();
+            }
+            Opcode::SREAbsoluteX => {
+                self.sre_absolute_x();
+            }
+            Opcode::SREAbsoluteY => {
+                self.sre_absolute_y();
+            }
+            Opcode::SREIndirectX => {
+                self.sre_indirect_x();
+            }
+            Opcode::SREIndirectY => {
+                self.sre_indirect_y();
+            }
+            Opcode::RRAZeroPage => {
+                self.rra_zero_page();
+            }
+            Opcode::RRAZeroPageX => {
+                self.rra_zero_page_x();
+            }
+            Opcode::RRAAbsolute => {
+                self.rra_absolute();
+            }
+            Opcode::RRAAbsoluteX => {
+                self.rra_absolute_x();
+            }
+            Opcode::RRAAbsoluteY => {
+                self.rra_absolute_y();
+            }
+            Opcode::RRAIndirectX => {
+                self.rra_indirect_x();
+            }
+            Opcode::RRAIndirectY => {
+                self.rra_indirect_y();
+            }
+            Opcode::DCPZeroPage => {
+                self.dcp_zero_page();
+            }
+            Opcode::DCPZeroPageX => {
+                self.dcp_zero_page_x();
+            }
+            Opcode::DCPAbsolute => {
+                self.dcp_absolute();
+            }
+            Opcode::DCPAbsoluteX => {
+                self.dcp_absolute_x();
+            }
+            Opcode::DCPAbsoluteY => {
+                self.dcp_absolute_y();
+            }
+            Opcode::DCPIndirectX => {
+                self.dcp_indirect_x();
+            }
+            Opcode::DCPIndirectY => {
+                self.dcp_indirect_y();
+            }
+            Opcode::ISCZeroPage => {
+                self.isc_zero_page();
+            }
+            Opcode::ISCZeroPageX => {
+                self.isc_zero_page_x();
+            }
+            Opcode::ISCAbsolute => {
+                self.isc_absolute();
+            }
+            Opcode::ISCAbsoluteX => {
+                self.isc_absolute_x();
+            }
+            Opcode::ISCAbsoluteY => {
+                self.isc_absolute_y();
+            }
+            Opcode::ISCIndirectX => {
+                self.isc_indirect_x();
+            }
+            Opcode::ISCIndirectY => {
+                self.isc_indirect_y();
+            }
+            Opcode::LAXZeroPage => {
+                self.lax_zero_page();
+            }
+            Opcode::LAXZeroPageY => {
+                self.lax_zero_page_y();
+            }
+            Opcode::LAXAbsolute => {
+                self.lax_absolute();
+            }
+            Opcode::LAXAbsoluteY => {
+                self.lax_absolute_y();
+            }
+            Opcode::LAXIndirectX => {
+                self.lax_indirect_x();
+            }
+            Opcode::LAXIndirectY => {
+                self.lax_indirect_y();
+            }
+            Opcode::SAXZeroPage => {
+                self.sax_zero_page();
+            }
+            Opcode::SAXZeroPageY => {
+                self.sax_zero_page_y();
+            }
+            Opcode::SAXAbsolute => {
+                self.sax_absolute();
+            }
+            Opcode::SAXIndirectX => {
+                self.sax_indirect_x();
+            }
+            Opcode::NOPImmediate => {
+                self.nop_immediate();
+            }
+            Opcode::NOPZeroPage => {
+                self.nop_zero_page();
+            }
+            Opcode::NOPZeroPageX => {
+                self.nop_zero_page_x();
+            }
+            Opcode::NOPAbsolute => {
+                self.nop_absolute();
+            }
+            Opcode::NOPAbsoluteX => {
+                self.nop_absolute_x();
+            }
+            Opcode::ANCImmediate => {
+                self.anc_immediate();
+            }
+            Opcode::ALRImmediate => {
+                self.alr_immediate();
+            }
+            Opcode::ARRImmediate => {
+                self.arr_immediate();
+            }
+            Opcode::SBXImmediate => {
+                self.sbx_immediate();
+            }
+            Opcode::ANEImmediate => {
+                self.ane_immediate();
+            }
+            Opcode::LXAImmediate => {
+                self.lxa_immediate();
+            }
+            Opcode::SHAAbsoluteY => {
+                self.sha_absolute_y();
+            }
+            Opcode::SHAIndirectY => {
+                self.sha_indirect_y();
+            }
+            Opcode::SHXAbsoluteY => {
+                self.shx_absolute_y();
+            }
+            Opcode::SHYAbsoluteX => {
+                self.shy_absolute_x();
+            }
+            Opcode::TASAbsoluteY => {
+                self.tas_absolute_y();
+            }
+            Opcode::LASAbsoluteY => {
+                self.las_absolute_y();
+            }
+            Opcode::JAM => {
+                self.jam();
+            }
         }
-        Flow::Continue
     }
 
     pub fn sp_to_addr(&self) -> u16 {
@@ -735,6 +937,46 @@ impl<B: Bus> CPU<B> {
         if (base & 0xFF00) != (addr & 0xFF00) {
             self.read_byte((base & 0xFF00) | (addr & 0x00FF));
         }
+        addr
+    }
+
+    /// zp,X or zp,Y: the base read before the index is added, the sum
+    /// wrapping in the zero page.
+    pub fn fetch_addr_zero_page_indexed(&mut self, index: u8) -> u16 {
+        let base_addr = self.fetch_byte();
+        self.read_byte(base_addr as u16); // the base, read before the index is added
+        base_addr.wrapping_add(index) as u16
+    }
+
+    /// abs,X or abs,Y, for a read: an extra cycle if a page is crossed, the
+    /// address read first with the high byte not yet carried into.
+    pub fn fetch_addr_absolute_indexed(&mut self, index: u8) -> u16 {
+        let base_addr = self.fetch_word();
+        let addr = base_addr.wrapping_add(index as u16);
+        if (base_addr & 0xFF00) != (addr & 0xFF00) {
+            self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF));
+        }
+        addr
+    }
+
+    /// abs,X or abs,Y, for a write or a read-modify-write: the address read
+    /// before the carry always, crossed or not.
+    pub fn fetch_addr_absolute_indexed_for_write(&mut self, index: u8) -> u16 {
+        let base_addr = self.fetch_word();
+        let addr = base_addr.wrapping_add(index as u16);
+        self.read_byte((base_addr & 0xFF00) | (addr & 0x00FF)); // before the carry
+        addr
+    }
+
+    /// (zp),Y, for a write or a read-modify-write: the address read before
+    /// the carry always, crossed or not.
+    pub fn fetch_addr_indirect_y_for_write(&mut self) -> u16 {
+        let zp_addr = self.fetch_byte();
+        let lo = self.read_byte(zp_addr as u16) as u16;
+        let hi = self.read_byte(zp_addr.wrapping_add(1) as u16) as u16;
+        let base = (hi << 8) | lo;
+        let addr = base.wrapping_add(self.y as u16);
+        self.read_byte((base & 0xFF00) | (addr & 0x00FF)); // before the carry
         addr
     }
 

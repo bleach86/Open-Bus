@@ -2,7 +2,7 @@ use crate::cpu::bus::Bus;
 use crate::cpu::CPU;
 
 impl<B: Bus> CPU<B> {
-    fn and_set_flags(&mut self) {
+    pub(crate) fn and_set_flags(&mut self) {
         self.status.zero = self.a == 0;
         self.status.negative = (self.a & 0x80) != 0;
     }

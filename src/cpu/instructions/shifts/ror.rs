@@ -8,13 +8,16 @@ impl<B: Bus> CPU<B> {
         self.status.negative = (result & 0x80) != 0;
     }
 
-    fn ror_memory(&mut self, addr: u16) {
+    /// The byte at `addr` rotated, as the 6502 does it: read, written back
+    /// as it was, then written rotated; what it wrote.
+    pub(crate) fn ror_memory(&mut self, addr: u16) -> u8 {
         let original = self.read_byte(addr);
         self.write_byte(addr, original); // written back first, as it was
         let carry_in = if self.status.carry { 1 } else { 0 };
         let result = (original >> 1) | (carry_in << 7);
         self.write_byte(addr, result);
         self.ror_set_flags(original, result);
+        result
     }
 
     pub fn ror_accumulator(&mut self) {

@@ -12,7 +12,7 @@ impl<B: Bus> CPU<B> {
         self.status.overflow = (!(self.a ^ operand) & (self.a ^ result)) & 0x80 != 0;
     }
 
-    fn adc_binary(&mut self, operand: u8) {
+    pub(crate) fn adc_binary(&mut self, operand: u8) {
         let carry_in: u16 = if self.status.carry { 1 } else { 0 } as u16;
 
         let sum = (self.a as u16) + (operand as u16) + (carry_in);
@@ -20,7 +20,7 @@ impl<B: Bus> CPU<B> {
         self.a = sum as u8;
     }
 
-    fn adc_decimal(&mut self, operand: u8) {
+    pub(crate) fn adc_decimal(&mut self, operand: u8) {
         let carry_in = if self.status.carry { 1 } else { 0 };
 
         let mut low_nibble = (self.a & 0x0F) + (operand & 0x0F) + carry_in;

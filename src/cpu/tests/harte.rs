@@ -1,17 +1,18 @@
-//! Tom Harte's 6502 tests (SingleStepTests): for each documented opcode,
-//! 10,000 cases of one instruction each, all run, the state before and after and its
-//! cycles. Each runs as the Dormann tests do: memory loaded, reset, the
-//! registers set as the case has them, execute for the instruction's
-//! cycles; then the registers and memory are compared with the case's.
+//! Tom Harte's 6502 tests (SingleStepTests): for each of the 256 opcodes,
+//! documented or not, 10,000 cases of one instruction each, all run, the
+//! state before and after and its cycles. Each runs as the Dormann tests
+//! do: memory loaded, reset, the registers set as the case has them,
+//! execute for the instruction's cycles; then the registers and memory are
+//! compared with the case's.
 //!
 //! The cycles are checked by the byte after the instruction, whose value it
-//! doesn't use: it is made a JAM ($02, an opcode the CPU doesn't run), so
-//! that execute stops on it, one past it, if any cycles are left over. Run
-//! for its cycles, the instruction must leave none; run for one more, it
-//! must leave that one. Where one is wrong, the cycles it does take are the
-//! most it can be given and still leave none. Then its bus cycles, from the
-//! memory's bus log, are compared with the case's: each read or write, its
-//! address and value, in order.
+//! doesn't use: it is made a JAM ($02), which stops the CPU dead, so that
+//! if any cycles are left over the CPU starts on it, and stops one past
+//! it. Run for its cycles, the instruction must leave none; run for one
+//! more, it must leave that one. Where one is wrong, the cycles it does
+//! take are the most it can be given and still leave none. Then its bus
+//! cycles, from the memory's bus log, are compared with the case's: each
+//! read or write, its address and value, in order.
 //!
 //! `tools/fetch-harte` puts the tests (MIT, not part of the repository) in
 //! target/harte/; without them the test says so and passes.

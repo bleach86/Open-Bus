@@ -8,12 +8,15 @@ impl<B: Bus> CPU<B> {
         self.status.negative = (result & 0x80) != 0;
     }
 
-    fn asl_memory(&mut self, addr: u16) {
+    /// The byte at `addr` shifted, as the 6502 does it: read, written back
+    /// as it was, then written shifted; what it wrote.
+    pub(crate) fn asl_memory(&mut self, addr: u16) -> u8 {
         let original = self.read_byte(addr);
         self.write_byte(addr, original); // written back first, as it was
         let result = original.wrapping_shl(1);
         self.write_byte(addr, result);
         self.asl_set_flags(original, result);
+        result
     }
 
     pub fn asl_accumulator(&mut self) {

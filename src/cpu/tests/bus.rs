@@ -108,4 +108,27 @@ mod tests {
         assert!(cpu.status.interrupt_disable, "I not set");
         assert_eq!((cpu.a, cpu.x), (a, x), "A and X not as they were");
     }
+
+    #[test]
+    fn a_jam_stops_the_cpu_until_reset() {
+        let Some((mut cpu, done)) = run() else { return };
+        let start = u16::from_le_bytes([cpu.memory.ram[0xFFFC], cpu.memory.ram[0xFFFD]]);
+        cpu.memory.ram[done as usize] = 0x02; // a JAM where the program ends
+        cpu.irq = true;
+        cpu.nmi = true;
+        cpu.execute(1_000);
+        assert_eq!(cpu.pc, done.wrapping_add(1), "past the JAM");
+        assert_eq!(cpu.memory.ticks, cpu.clock, "the bus not ticked, jammed");
+        assert!(cpu.nmi, "an NMI taken, jammed");
+
+        cpu.irq = false;
+        cpu.nmi = false;
+        cpu.memory.reset = true;
+        cpu.execute(10);
+        cpu.memory.reset = false;
+        cpu.execute(7);
+        assert_eq!(cpu.pc, start, "not reset out of the JAM");
+        cpu.execute(4); // the program's first instruction, LDA PORT
+        assert_eq!(cpu.pc, start.wrapping_add(3), "not running again");
+    }
 }

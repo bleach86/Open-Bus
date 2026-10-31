@@ -2,7 +2,7 @@ use crate::cpu::bus::Bus;
 use crate::cpu::CPU;
 
 impl<B: Bus> CPU<B> {
-    fn sbc_binary(&mut self, operand: u8) {
+    pub(crate) fn sbc_binary(&mut self, operand: u8) {
         let carry_in = u16::from(self.status.carry);
         let result = (self.a as u16)
             .wrapping_sub(operand as u16)
@@ -18,7 +18,7 @@ impl<B: Bus> CPU<B> {
         self.a = result as u8;
     }
 
-    fn sbc_decimal(&mut self, operand: u8) {
+    pub(crate) fn sbc_decimal(&mut self, operand: u8) {
         let carry_in = u8::from(self.status.carry);
 
         let mut low_nibble = (self.a & 0x0F)

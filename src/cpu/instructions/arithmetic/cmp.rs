@@ -1,8 +1,8 @@
-use crate::cpu::bus::Bus;
 use crate::cpu::CPU;
+use crate::cpu::bus::Bus;
 
 impl<B: Bus> CPU<B> {
-    fn cmp_set_flags(&mut self, result: u8, operand: u8) {
+    pub(crate) fn cmp_set_flags(&mut self, result: u8, operand: u8) {
         self.status.carry = self.a >= operand;
         self.status.zero = self.a == operand;
         self.status.negative = (result & 0x80) != 0;

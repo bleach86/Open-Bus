@@ -72,4 +72,20 @@ pub mod system_functions {
     mod rti;
 }
 
+/// The opcodes the 6502's makers didn't document, there all the same: the
+/// rest of the 256, as the NMOS 6502 runs them.
+pub mod undocumented {
+    mod dcp;
+    mod high_byte_stores;
+    mod immediate;
+    mod isc;
+    mod jam;
+    mod lax;
+    mod rla;
+    mod rra;
+    mod sax;
+    mod slo;
+    mod sre;
+}
+
 pub mod op_codes;
