@@ -1,10 +1,12 @@
 //! The Apple II (the II+): a 6502 at 1.023 MHz; 48K of RAM; the keyboard,
-//! the speaker and the soft switches at $C000; no cards; and 12K of ROM at
-//! $D000, the monitor and BASIC, from a dump of the machine's own (not
-//! part of this repository). Its picture is drawn a line at a time, as the
+//! the speaker and the soft switches at $C000; a Disk II card in slot 6,
+//! if there is one; and 12K of ROM at $D000, the monitor and BASIC, from a
+//! dump of the machine's own (not part of this repository). Its picture is drawn a line at a time, as the
 //! video circuit draws it, and shown in a window once a frame; or its text
 //! screen alone in the host's terminal.
 
+pub mod disk2;
+pub mod disk_image;
 pub mod video;
 
 use crate::bus::Bus;
@@ -26,6 +28,8 @@ pub struct Apple2 {
     /// The keyboard: the last key, bit 7 set until $C010 clears it.
     pub keyboard: u8,
     pub terminal: Option<Terminal>,
+    /// The Disk II card, in slot 6.
+    pub disk2: Option<disk2::Disk2>,
     /// The window the picture is shown in, and the keys come from.
     pub display: Option<Box<dyn Display>>,
     /// The picture, as far as this frame has drawn it.
@@ -51,6 +55,7 @@ impl Apple2 {
             rom,
             keyboard: 0,
             terminal: None,
+            disk2: None,
             display: None,
             picture: vec![0; video::WIDTH * video::HEIGHT],
             graphics: false,
@@ -131,8 +136,9 @@ impl Apple2 {
         }
     }
 
-    /// The I/O at $C000 to $C0FF, for a read or a write: what a read gives.
-    fn io(&mut self, addr: u16) -> u8 {
+    /// The I/O at $C000 to $C0FF, for a read or a write (`written`, the
+    /// byte): what a read gives.
+    fn io(&mut self, addr: u16, written: Option<u8>) -> u8 {
         match addr & 0xFFF0 {
             0xC000 => {
                 if self.keyboard & 0x80 == 0 {
@@ -150,6 +156,7 @@ impl Apple2 {
                 self.switch(addr);
                 0
             }
+            0xC0E0 => self.disk2.as_mut().map_or(0, |card| card.io(addr, written)),
             _ => 0,
         }
     }
@@ -207,8 +214,9 @@ impl Bus for Apple2 {
     fn read(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000..=0xBFFF => self.ram[addr as usize],
-            0xC000..=0xC0FF => self.io(addr),
-            0xC100..=0xCFFF => 0, // no cards
+            0xC000..=0xC0FF => self.io(addr, None),
+            0xC600..=0xC6FF => self.disk2.as_ref().map_or(0, |card| card.rom(addr)),
+            0xC100..=0xCFFF => 0, // no other cards
             _ => self.rom[addr as usize - 0xD000],
         }
     }
@@ -217,13 +225,16 @@ impl Bus for Apple2 {
         match addr {
             0x0000..=0xBFFF => self.ram[addr as usize] = value,
             0xC000..=0xC0FF => {
-                self.io(addr);
+                self.io(addr, Some(value));
             }
             _ => {} // no cards; ROM
         }
     }
 
     fn tick(&mut self) {
+        if let Some(card) = &mut self.disk2 {
+            card.tick();
+        }
         self.cycle += 1;
         // A line ended: drawn, if it is one of those seen.
         if self.cycle % CYCLES_PER_LINE == 0 {

@@ -5,3 +5,10 @@
 *.lbl
 # ROM dumps of real machines: their makers', not part of the repository
 *.rom
+# Disk images of real software: their makers', likewise
+*.dsk
+*.do
+*.po
+*.nib
+*.woz
+*.d13
