@@ -20,10 +20,16 @@
 //! for a second, held by a timer on the card: DOS counts on it, to find
 //! the disk still turning when it next reads. RESET clears the switches'
 //! latch: the magnets off, the motor switched off (it runs on), drive 1,
-//! Q6 and Q7 off. Writing isn't yet: the disk is write protected.
+//! Q6 and Q7 off.
+//!
+//! Writing, Q7 on, the sequencer's state's top bit is the write signal:
+//! each 1 the CPU's bytes shift out of the data register changes it, and
+//! the head writes each change as a flux change, in the bit it comes in;
+//! the read pulses stop meanwhile. Unless the disk is write protected:
+//! then the drive won't write, and the sequencer senses so.
 
 use super::CLOCK_HZ;
-use super::disk_image::{Disk, TRACKS};
+use super::disk_image::{Disk, REVOLUTION_BITS, TRACKS};
 
 pub struct Disk2 {
     boot_rom: Vec<u8>,
@@ -51,14 +57,14 @@ pub struct Disk2 {
     /// The amplifier's last 4 bits, the latest lowest; and its noise.
     window: u8,
     noise: u32,
+    /// The write signal, as last stepped; and whether it has changed in
+    /// the bit under the head.
+    write_signal: bool,
+    flux_change: bool,
 }
 
 /// How long the motor runs on, switched off: a second.
 const MOTOR_RUNS_ON: u32 = CLOCK_HZ;
-
-/// The bits in a turn of the disk, where there is no track: at 300 rpm,
-/// a bit every 4 microseconds.
-const REVOLUTION_BITS: usize = 50_000;
 
 /// The farthest the head goes: track 34's half-track, and one more.
 const LAST_HALF_TRACK: usize = 2 * (TRACKS - 1) + 1;
@@ -87,6 +93,8 @@ impl Disk2 {
             step: 0,
             window: 0,
             noise: 0x2545_F491,
+            write_signal: false,
+            flux_change: false,
         })
     }
 
@@ -96,8 +104,9 @@ impl Disk2 {
     }
 
     /// A switch, $C0E0 to $C0EF, read or written (`written`, the byte):
-    /// what a read gives, the data register at an even address.
-    pub fn io(&mut self, addr: u16, written: Option<u8>) -> u8 {
+    /// what a read gives, the data register at an even address; at an odd
+    /// one, nothing, the card leaving the bus alone.
+    pub fn io(&mut self, addr: u16, written: Option<u8>) -> Option<u8> {
         let switch = (addr & 0x0F) as u8;
         match switch {
             0x0..=0x7 => {
@@ -129,7 +138,7 @@ impl Disk2 {
         if let Some(value) = written {
             self.bus = value;
         }
-        if switch & 1 == 0 { self.data } else { 0 }
+        (switch & 1 == 0).then_some(self.data)
     }
 
     /// RESET: every switch off, as the latch holding them is cleared.
@@ -174,6 +183,12 @@ impl Disk2 {
         self.disk.as_ref().and_then(|disk| disk.track(half_track)).map_or(REVOLUTION_BITS, Vec::len)
     }
 
+    /// Whether the drive senses write protect: the disk's notch covered;
+    /// with no disk, as if.
+    fn write_protected(&self) -> bool {
+        self.disk().is_none_or(|disk| disk.write_protected)
+    }
+
     /// Whether the disk is turning: the motor on, or running on.
     pub fn spinning(&self) -> bool {
         self.motor || self.motor_off_in > 0
@@ -187,18 +202,25 @@ impl Disk2 {
     }
 
     fn sequencer_step(&mut self) {
-        // The disk turning under the head, while the motor is on: the
-        // amplifier's read pulse in each bit's first step; no track, no
-        // flux changes.
+        // The disk turning under the head, while the motor is on: reading,
+        // the amplifier's read pulse in each bit's first step, no track no
+        // flux changes; writing, at each bit's end, whether the write signal
+        // changed in it.
         let mut pulse = false;
+        let writing = self.q7 && !self.write_protected();
         if self.spinning() && self.disk().is_some() {
-            if self.step == 0 {
+            if self.step == 0 && !writing {
                 let bit = self.track().map_or(0, |track| track[self.bit % track.len()]);
                 pulse = self.amplify(bit);
             }
             self.step += 1;
             if self.step == 8 {
                 self.step = 0;
+                if writing {
+                    let (half_track, bit, change) = (self.half_track, self.bit, self.flux_change as u8);
+                    self.disk.as_mut().unwrap().write_bit(half_track, bit, change);
+                }
+                self.flux_change = false;
                 self.bit = (self.bit + 1) % self.track_len(self.half_track);
             }
         }
@@ -214,10 +236,17 @@ impl Disk2 {
         match next & 0x0F {
             0x0..=0x7 => self.data = 0,                                 // clear
             0x9 => self.data <<= 1,                                     // shift in a 0
-            0xA | 0xE => self.data = self.data >> 1 | 0x80,             // shift in write protect, on
+            0xA | 0xE => self.data = self.data >> 1 | (self.write_protected() as u8) << 7, // shift in write protect
             0xB | 0xF => self.data = self.bus,                          // load
             0xD => self.data = self.data << 1 | 1,                      // shift in a 1
             _ => {}                                                     // nothing
+        }
+
+        // The write signal, the state's top bit: each change a flux change.
+        let signal = self.state & 0x80 != 0;
+        if signal != self.write_signal {
+            self.write_signal = signal;
+            self.flux_change = true;
         }
     }
 

@@ -5,7 +5,8 @@
 //! (not part of this repository). Its picture is drawn a line at a time, as
 //! the video circuit draws it, and shown in a window once a frame; or its
 //! text screen alone in the host's terminal. Its Reset key holds the RESET
-//! line, the CPU's and the cards'.
+//! line, the CPU's and the cards'. A read of an address nothing answers
+//! gets the floating bus: the byte the video circuit last read from RAM.
 
 pub mod disk2;
 pub mod disk_image;
@@ -15,6 +16,7 @@ pub mod video;
 #[cfg(test)]
 mod tests {
     mod disk2;
+    mod disk_writing;
     mod language_card;
     mod machine;
 }
@@ -25,7 +27,7 @@ use crate::host::display::{Display, Joystick, Key, SAMPLE_RATE};
 use crate::host::terminal::Terminal;
 use crate::host::window::Window;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The 14.31818 MHz crystal's, on average: a cycle is 14 of its ticks, but
 /// each line's last is 16, keeping the colour signal in step line to line;
@@ -58,8 +60,9 @@ pub struct Apple2 {
     pub terminal: Option<Terminal>,
     /// The language card, in slot 0.
     pub language_card: Option<language_card::LanguageCard>,
-    /// The Disk II card, in slot 6.
+    /// The Disk II card, in slot 6; and the image its disk is saved to.
     pub disk2: Option<disk2::Disk2>,
+    pub disk_file: Option<PathBuf>,
     /// The window the picture is shown in, and the keys come from.
     pub display: Option<Box<dyn Display>>,
     /// The picture, as far as this frame has drawn it.
@@ -103,6 +106,7 @@ impl Apple2 {
             terminal: None,
             language_card: None,
             disk2: None,
+            disk_file: None,
             display: None,
             picture: vec![0; video::WIDTH * video::HEIGHT],
             graphics: false,
@@ -225,6 +229,27 @@ impl Apple2 {
         }
     }
 
+    /// The disk saved to its image, if it has been written: once it has
+    /// stopped turning, so once what was writing it has finished, as DOS or
+    /// a game lets the motor go when it has; or, `now`, the machine going
+    /// off. Saved to a file beside it, then put in its place, so the image
+    /// is never half saved.
+    fn save_disk(&mut self, now: bool) {
+        let (Some(card), Some(path)) = (&mut self.disk2, &self.disk_file) else { return };
+        if card.spinning() && !now {
+            return;
+        }
+        let Some(disk) = card.disk.as_mut().filter(|disk| disk.written) else { return };
+        disk.written = false;
+        let saving = path.with_extension("saving");
+        let saved = disk.to_image().and_then(|image| {
+            std::fs::write(&saving, image).and_then(|_| std::fs::rename(&saving, path)).map_err(|e| e.to_string())
+        });
+        if let Err(e) = saved {
+            eprintln!("{}: not saved: {e}", path.display());
+        }
+    }
+
     /// The soft switches, for the video circuit.
     fn switches(&self) -> video::Switches {
         video::Switches { graphics: self.graphics, mixed: self.mixed, page2: self.page2, hires: self.hires }
@@ -249,9 +274,23 @@ impl Apple2 {
         }
     }
 
+    /// The floating bus: what a read of an address nothing answers gets,
+    /// the byte the video circuit read from RAM in the cycle before, still
+    /// on the bus. The cycle in the frame is the one the read is in: the
+    /// bus is ticked before a read.
+    fn floating_bus(&self) -> u8 {
+        let cycle = ((self.cycle + CYCLES_PER_FRAME - 1) % CYCLES_PER_FRAME) as usize;
+        let line_cycles = CYCLES_PER_LINE as usize;
+        let address = video::scanner_address(self.switches(), cycle / line_cycles, cycle % line_cycles);
+        self.ram[address]
+    }
+
     /// The I/O at $C000 to $C0FF, for a read or a write (`written`, the
-    /// byte): what a read gives.
+    /// byte): what a read gives. Only the keyboard and the Disk II's data
+    /// register give a byte of their own, and the game port its bit 7;
+    /// the rest is the floating bus.
     fn io(&mut self, addr: u16, written: Option<u8>) -> u8 {
+        let floating = self.floating_bus();
         match addr & 0xFFF0 {
             0xC000 => {
                 if self.keyboard & 0x80 == 0 {
@@ -263,35 +302,38 @@ impl Apple2 {
             }
             0xC010 => {
                 self.keyboard &= 0x7F;
-                self.keyboard
+                floating
             }
             0xC030 => {
                 self.speaker = !self.speaker;
-                0
+                floating
             }
             0xC050 if addr <= 0xC057 => {
                 self.switch(addr);
-                0
+                floating
             }
             // The game port: the buttons, bit 7 while pressed, and the
-            // paddles, while their timers run.
-            0xC060 => match addr & 7 {
-                button @ 1..=3 => (self.joystick().buttons[button as usize - 1] as u8) << 7,
-                paddle @ 4..=7 => ((self.now < self.paddle_until[paddle as usize - 4]) as u8) << 7,
-                _ => 0,
-            },
+            // paddles, while their timers run; the cassette input, not.
+            0xC060 => {
+                let high = match addr & 7 {
+                    button @ 1..=3 => self.joystick().buttons[button as usize - 1],
+                    paddle @ 4..=7 => self.now < self.paddle_until[paddle as usize - 4],
+                    _ => false,
+                };
+                (high as u8) << 7 | (floating & 0x7F)
+            }
             0xC070 => {
                 self.start_paddles();
-                0
+                floating
             }
             0xC080 => {
                 if let Some(card) = &mut self.language_card {
                     card.switch(addr, written.is_none());
                 }
-                0
+                floating
             }
-            0xC0E0 => self.disk2.as_mut().map_or(0, |card| card.io(addr, written)),
-            _ => 0,
+            0xC0E0 => self.disk2.as_mut().and_then(|card| card.io(addr, written)).unwrap_or(floating),
+            _ => floating,
         }
     }
 
@@ -350,8 +392,11 @@ impl Bus for Apple2 {
         match addr {
             0x0000..=0xBFFF => self.ram[addr as usize],
             0xC000..=0xC0FF => self.io(addr, None),
-            0xC600..=0xC6FF => self.disk2.as_ref().map_or(0, |card| card.rom(addr)),
-            0xC100..=0xCFFF => 0, // no other cards
+            // The Disk II's ROM, in slot 6; no other cards.
+            0xC100..=0xCFFF => match &self.disk2 {
+                Some(card) if (0xC600..=0xC6FF).contains(&addr) => card.rom(addr),
+                _ => self.floating_bus(),
+            },
             // The language card's RAM, if it is read; or the ROM.
             _ => match self.language_card.as_ref().and_then(|card| card.read(addr)) {
                 Some(value) => value,
@@ -404,6 +449,12 @@ impl Bus for Apple2 {
                 self.draw();
             }
             self.reset_key();
+            self.save_disk(false);
+            // The window closed: the disk saved, and off.
+            if self.display.as_ref().is_some_and(|display| display.closed()) {
+                self.save_disk(true);
+                std::process::exit(0);
+            }
         }
     }
 
@@ -428,23 +479,9 @@ pub fn run(rom_path: &str, disk: Option<&str>, text: bool) {
         let beside = |name: &str| read(&rom_path.with_file_name(name));
         let mut card = disk2::Disk2::new(beside("disk2-p5-341-0027.bin"), &beside("disk2-p6-341-0028.bin"))
             .unwrap_or_else(|e| panic!("the Disk II's ROMs: {e}"));
-        let image = read(Path::new(disk));
-        let lower = disk.to_lowercase();
-        card.disk = Some(
-            if lower.ends_with(".nib") {
-                disk_image::Disk::from_nib(&image)
-            } else if lower.ends_with(".dsk") || lower.ends_with(".do") {
-                disk_image::Disk::from_dsk(&image)
-            } else if lower.ends_with(".po") {
-                disk_image::Disk::from_po(&image)
-            } else if lower.ends_with(".woz") {
-                disk_image::Disk::from_woz(&image)
-            } else {
-                Err("a .dsk, .do, .po, .nib or .woz".to_string())
-            }
-            .unwrap_or_else(|e| panic!("{disk}: {e}")),
-        );
+        card.disk = Some(disk_image::Disk::open(Path::new(disk)).unwrap_or_else(|e| panic!("{disk}: {e}")));
         apple.disk2 = Some(card);
+        apple.disk_file = Some(PathBuf::from(disk));
     }
     if text {
         apple.terminal = Some(Terminal::new());

@@ -39,7 +39,62 @@ mod tests {
         assert_eq!(apple.read(0xFFFF), 0x22, "ROM at $FFFF");
         apple.write(0xD000, 0x00);
         assert_eq!(apple.read(0xD000), 0x11, "ROM written");
-        assert_eq!(apple.read(0xC600), 0, "a card where there is none");
+    }
+
+    #[test]
+    fn the_scanner_reads_what_each_line_draws() {
+        // Each column of each line seen, in its cycle (from 25, after the
+        // 25 blanked): what the line is drawn from.
+        for page2 in [false, true] {
+            let text = Switches { page2, ..Switches::default() };
+            let hires = Switches { graphics: true, hires: true, page2, ..Switches::default() };
+            let mixed = Switches { mixed: true, ..hires };
+            for y in 0..HEIGHT {
+                for x in 0..40 {
+                    let (row, line) = (video::text_address(page2, y / 8) + x, video::hires_address(page2, y) + x);
+                    assert_eq!(video::scanner_address(text, y, 25 + x), row, "text, page2 {page2}, line {y}, column {x}");
+                    assert_eq!(video::scanner_address(hires, y, 25 + x), line, "high-res, page2 {page2}, line {y}, column {x}");
+                    let mixed_want = if y < 160 { line } else { row };
+                    assert_eq!(video::scanner_address(mixed, y, 25 + x), mixed_want, "mixed, page2 {page2}, line {y}, column {x}");
+                }
+            }
+        }
+        // Blanked, text is read $1000 up on the II+: line 0's 25 cycles,
+        // the counter's preset then $40 to $57, $1468 to $147F, the 24
+        // before row 0's in the interleave. High-res isn't.
+        let text = Switches::default();
+        let blanked: Vec<usize> = (0..25).map(|cycle| video::scanner_address(text, 0, cycle)).collect();
+        let want: Vec<usize> = [0x1468].into_iter().chain(0x1468..=0x147F).collect();
+        assert_eq!(blanked, want, "line 0, blanked");
+        let hires = Switches { graphics: true, hires: true, ..Switches::default() };
+        assert_eq!(video::scanner_address(hires, 0, 1), 0x2068, "high-res, line 0, blanked");
+    }
+
+    #[test]
+    fn an_address_nothing_answers_reads_the_floating_bus() {
+        let mut apple = machine();
+        apple.disk2 = Some(Disk2::new(vec![0; 256], &[0; 256]).unwrap());
+        for (addr, byte) in apple.ram.iter_mut().enumerate() {
+            *byte = (addr ^ addr >> 8 ^ 0x5A) as u8;
+        }
+        let ram = apple.ram.clone();
+        // Ticked to line 0's column 0, cycle 25, and a tick more: the bus
+        // is ticked before a read, as the CPU does it.
+        for _ in 0..26 {
+            apple.tick();
+        }
+        for addr in [0xC010, 0xC020, 0xC030, 0xC040, 0xC070, 0xC080, 0xC0E1, 0xC0F0, 0xC100, 0xC7FF, 0xCFFF] {
+            assert_eq!(apple.read(addr), ram[0x0400], "${addr:04X}: not the floating bus, $0400's");
+        }
+        assert_eq!(apple.read(0xC061), ram[0x0400] & 0x7F, "the button up: bit 7 clear, the rest floating");
+        assert_eq!(apple.read(0xC0EC), 0, "the Disk II's data register, at an even address");
+        assert_eq!(apple.read(0xC000) & 0x7F, 0, "the keyboard, its own");
+        apple.tick();
+        assert_eq!(apple.read(0xC0F0), ram[0x0401], "column 1: $0401's");
+        for _ in 0..39 {
+            apple.tick();
+        }
+        assert_eq!(apple.read(0xC0F0), ram[0x1468], "line 1, blanked: $1468's");
     }
 
     #[test]

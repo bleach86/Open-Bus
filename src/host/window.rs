@@ -2,8 +2,8 @@
 //! typed in it; and a joystick, a gamepad's (its left stick or D-pad, A and
 //! B its buttons) or the numeric keypad's (8, 2, 4 and 6 and the corners;
 //! 0 and . its buttons), the Alt keys buttons too; F12, the machine's
-//! Reset key; and the machine's sound, through an audio queue. Closing it
-//! turns the machine off.
+//! Reset key; and the machine's sound, through an audio queue. Closed, it
+//! tells the machine, to turn itself off.
 
 use crate::host::display::{Display, Joystick, Key, SAMPLE_RATE};
 use sdl2::EventPump;
@@ -32,6 +32,8 @@ pub struct Window {
     alt_held: [bool; 2],
     /// F12, the Reset key.
     reset_held: bool,
+    /// The window closed.
+    closed: bool,
     /// A keypad key's own text, which it would type too: not typed.
     keypad_text: Option<char>,
 }
@@ -89,16 +91,17 @@ impl Window {
             keypad_held: HashSet::new(),
             alt_held: [false; 2],
             reset_held: false,
+            closed: false,
             keypad_text: None,
         }
     }
 
     /// The window's events since the last frame: its keys queued, the
-    /// joystick's state kept; closed, the machine off.
+    /// joystick's state kept; closed, kept for the machine to see.
     fn take_events(&mut self) {
         for event in self.events.poll_iter() {
             match event {
-                Event::Quit { .. } => std::process::exit(0),
+                Event::Quit { .. } => self.closed = true,
                 Event::TextInput { text, .. } => {
                     if self.keypad_text.take().is_some_and(|c| text == c.to_string()) {
                         continue;
@@ -256,5 +259,9 @@ impl Display for Window {
 
     fn reset_held(&self) -> bool {
         self.reset_held
+    }
+
+    fn closed(&self) -> bool {
+        self.closed
     }
 }

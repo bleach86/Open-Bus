@@ -24,6 +24,12 @@ pub trait Display {
         false
     }
 
+    /// Whether the window has been closed: the machine to put itself away
+    /// and turn off.
+    fn closed(&self) -> bool {
+        false
+    }
+
     /// Sound to play: samples at SAMPLE_RATE, -1 to 1, following on from
     /// the last.
     fn play(&mut self, _samples: &[f32]) {}

@@ -95,9 +95,10 @@ mod tests {
     }
 
     /// A .woz of `version` with `tracks`, mapped by `tmap`: its header and
-    /// CRC; INFO, a 5.25" disk; TMAP; and TRKS, in WOZ1 6,656 bytes a
-    /// track, in WOZ2 a list of where they are, the bits from block 3.
-    fn woz(version: u8, tracks: &[Vec<u8>], tmap: &[u8; 160]) -> Vec<u8> {
+    /// CRC; INFO, a 5.25" disk, `protected` or not; TMAP; and TRKS, in WOZ1
+    /// 6,656 bytes a track, in WOZ2 a list of where they are, the bits from
+    /// block 3.
+    fn woz(version: u8, tracks: &[Vec<u8>], tmap: &[u8; 160], protected: bool) -> Vec<u8> {
         let packed = |bits: &Vec<u8>| -> Vec<u8> {
             bits.chunks(8).map(|byte| byte.iter().enumerate().map(|(i, &bit)| bit << (7 - i)).sum()).collect()
         };
@@ -105,6 +106,7 @@ mod tests {
         let mut info = vec![0; 60];
         info[0] = version;
         info[1] = 1; // 5.25"
+        info[2] = protected as u8;
         let mut trks = Vec::new();
         if version == 1 {
             for bits in tracks {
@@ -150,7 +152,7 @@ mod tests {
         }
         tmap[6] = 2;
         for version in [1, 2] {
-            let disk = Disk::from_woz(&woz(version, &tracks, &tmap)).unwrap();
+            let disk = Disk::from_woz(&woz(version, &tracks, &tmap, false)).unwrap();
             // WOZ2 has room for 160: the rest none.
             assert!(disk.tracks[..35] == tracks[..], "WOZ{version}'s tracks");
             assert!(disk.tracks[35..].iter().all(Vec::is_empty), "WOZ{version}'s tracks past 35");
@@ -158,10 +160,70 @@ mod tests {
                 let want = if half % 2 == 0 { Some(half / 2) } else if half == 3 { Some(2) } else { None };
                 assert_eq!(disk.half_tracks[half], want, "WOZ{version}'s half-track {half}");
             }
-            let mut broken = woz(version, &tracks, &tmap);
+            let mut broken = woz(version, &tracks, &tmap, false);
             broken[100] ^= 1;
             assert!(Disk::from_woz(&broken).is_err(), "WOZ{version} with a wrong CRC");
         }
+    }
+
+    #[test]
+    fn each_image_saves_as_it_was_read() {
+        let dsk: Vec<u8> = (0..143_360).map(|at| (at / 256 * 7 ^ at) as u8).collect();
+        assert!(Disk::from_dsk(&dsk).unwrap().to_image().unwrap() == dsk, "the .dsk");
+        assert!(Disk::from_po(&dsk).unwrap().to_image().unwrap() == dsk, "the .po");
+
+        // A .nib: on each track, a sector's fields among FFs.
+        let mut nib = vec![0xFF; 6656 * 35];
+        for track in 0..35 {
+            let at = track * 6656 + 100;
+            nib[at..at + 14].copy_from_slice(&disk_image::address_field(254, track as u8, 0));
+            let data = disk_image::data_field(&[track as u8; 256]);
+            nib[at + 20..at + 20 + data.len()].copy_from_slice(&data);
+        }
+        assert!(Disk::from_nib(&nib).unwrap().to_image().unwrap() == nib, "the .nib");
+
+        // A .woz, either version: a WOZ2 of the same tracks, its map the
+        // same at every quarter-track, write protected as it was.
+        let tracks = Disk::from_dsk(&dsk).unwrap().tracks;
+        let mut tmap = [0xFF; 160];
+        for track in 0..35usize {
+            for quarter in (4 * track).saturating_sub(1)..=4 * track + 1 {
+                tmap[quarter] = track as u8;
+            }
+        }
+        for (version, protected) in [(1, false), (2, true)] {
+            let saved = Disk::from_woz(&woz(version, &tracks, &tmap, protected)).unwrap().to_image().unwrap();
+            assert_eq!(&saved[..4], b"WOZ2", "WOZ{version} saved");
+            assert_eq!(&saved[88..248], &tmap[..], "WOZ{version}'s map, saved"); // TMAP's, after INFO's 60
+            let disk = Disk::from_woz(&saved).unwrap();
+            assert!(disk.tracks[..35] == tracks[..], "WOZ{version}'s tracks, saved");
+            assert_eq!(disk.write_protected, protected, "WOZ{version}'s write protect, saved");
+        }
+    }
+
+    #[test]
+    fn a_read_only_image_is_write_protected() {
+        let file = std::env::temp_dir().join(format!("cpu_emu_read_only_{}.dsk", std::process::id()));
+        std::fs::write(&file, vec![0; 143_360]).unwrap();
+        assert!(!Disk::open(&file).unwrap().write_protected, "a file that can be written, write protected");
+        let mut permissions = std::fs::metadata(&file).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&file, permissions).unwrap();
+        let protected = Disk::open(&file).unwrap().write_protected;
+        std::fs::remove_file(&file).unwrap();
+        assert!(protected, "a read only file not write protected");
+    }
+
+    #[test]
+    fn writing_where_there_is_no_track_begins_one() {
+        let mut disk = Disk::from_dsk(&vec![0; 143_360]).unwrap();
+        assert!(disk.track(1).is_none());
+        disk.write_bit(1, 7, 1);
+        let track = disk.track(1).expect("no track at half-track 1, written");
+        assert_eq!(track.len(), disk_image::REVOLUTION_BITS);
+        assert_eq!(track.iter().filter(|&&bit| bit == 1).count(), 1, "the bit written, and only it");
+        assert_eq!(track[7], 1);
+        assert!(disk.written);
     }
 
     fn card() -> Disk2 {

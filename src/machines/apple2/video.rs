@@ -57,6 +57,37 @@ pub fn hires_address(page2: bool, y: usize) -> usize {
     base + (y % 8) * 0x400 + ((y / 8) % 8) * 0x80 + (y / 64) * 0x28
 }
 
+/// The address the video circuit reads from RAM in cycle `cycle` (0 to
+/// 64) of line `line` (0 to 261), by the switches: what its counters make
+/// it, as they count, seen or not (Sather's Understanding the Apple II).
+/// The horizontal one is $00 then $40 to $7F, a step a cycle, the line
+/// blanked to $57 and seen from $58; the vertical one $100 to $1FF, the
+/// picture to $1BF, then $FA to $FF. Text and low-res read their page,
+/// and on the II+, while the line's blanked, $1000 up from it; high-res
+/// its page, but text's below line 160, mixed.
+pub fn scanner_address(switches: Switches, line: usize, cycle: usize) -> usize {
+    let h = if cycle == 0 { 0x00 } else { 0x3F + cycle };
+    let v = if line < 256 { 0x100 + line } else { line - 6 };
+    let bit = |n: usize, at: usize| (n >> at) & 1;
+    let (h3, h4, h5) = (bit(h, 3), bit(h, 4), bit(h, 5));
+    let (v3, v4) = (bit(v, 6), bit(v, 7));
+    let hires = switches.graphics && switches.hires && !(switches.mixed && v4 == 1 && bit(v, 5) == 1);
+
+    // Bits 3 to 6: a sum of the counters' bits, interleaving the rows.
+    let sum = (0b1101 + (h5 << 2 | h4 << 1 | h3) + (v4 << 3 | v3 << 2 | v4 << 1 | v3)) & 0x0F;
+    let mut address = (h & 7) | sum << 3 | bit(v, 3) << 7 | bit(v, 4) << 8 | bit(v, 5) << 9;
+    let page = if switches.page2 { 2 } else { 1 };
+    if hires {
+        address |= (v & 7) << 10 | page << 13;
+    } else {
+        address |= page << 10;
+        if h5 == 0 && (h4 == 0 || h3 == 0) {
+            address |= 0x1000; // blanked, on the II+
+        }
+    }
+    address
+}
+
 /// Line `y` of the picture into `out`, 280 pixels: from `ram` by
 /// `switches`, the flashing characters inverse while `flash_on`. In mixed
 /// mode the last 32 lines are text.
