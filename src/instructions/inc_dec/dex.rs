@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn dex(&mut self) {
         self.x = self.x.wrapping_sub(1);
         self.status.zero = self.x == 0;

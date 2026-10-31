@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::{CPU, StatusFlag};
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn mod_flag(&mut self, flag: StatusFlag, value: bool) {
         self.read_byte(self.pc); // the next byte, read and thrown away
 

@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn bit_zero_page(&mut self) {
         let addr = self.fetch_byte() as u16;
         let value = self.read_byte(addr);

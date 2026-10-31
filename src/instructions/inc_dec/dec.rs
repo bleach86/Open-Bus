@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     fn dec_set_flags(&mut self, value: u8) {
         self.status.zero = value == 0;
         self.status.negative = (value & 0x80) != 0;

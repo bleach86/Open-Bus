@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     fn sbc_binary(&mut self, operand: u8) {
         let carry_in = u16::from(self.status.carry);
         let result = (self.a as u16)

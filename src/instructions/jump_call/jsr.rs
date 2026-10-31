@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn jsr_absolute(&mut self) {
         // The 6502 pushes the return address (its last byte's) before it
         // reads the target's high byte.

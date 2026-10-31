@@ -1,10 +1,7 @@
+use crate::bus::Bus;
 use crate::instructions::op_codes::Opcode;
 use crate::ram::Memory;
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, OnceLock};
-use std::thread;
 use std::{
-    io::{IsTerminal, Read, stdin},
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -70,15 +67,17 @@ impl StatusRegister {
 const DEFAULT_CLOCK_HZ: u32 = 8_000_000; // 8 MHz
 const PACES_PER_SECOND: u64 = 2_000; // check every 0.5 ms of emulated time
 
-#[derive(Default, Clone)]
-pub struct CPU {
+/// The 6502, wired to its bus: the machine around it. Plain CPU is this
+/// machine's, its Memory.
+#[derive(Clone)]
+pub struct CPU<B: Bus = Memory> {
     pub pc: u16,                // Program Counter
     pub sp: u8,                 // Stack Pointer (8-bit, page $0100)
     pub a: u8,                  // Accumulator
     pub x: u8,                  // X Register
     pub y: u8,                  // Y Register
     pub status: StatusRegister, // Status Register
-    pub memory: Memory,         // Memory
+    pub memory: B,              // Memory: what it's wired to
     pub irq: bool,              // IRQ line: held by a device until it's served
     pub nmi: bool,              // NMI: an edge, taken once
     pub clock: u32,             // CPU clock counter
@@ -87,9 +86,25 @@ pub struct CPU {
 
 impl CPU {
     pub fn new() -> Self {
+        CPU::with_bus(Memory::default())
+    }
+}
+
+impl<B: Bus> CPU<B> {
+    /// The CPU wired to `memory`, any machine's bus; at power-on.
+    pub fn with_bus(memory: B) -> Self {
         CPU {
+            pc: 0,
+            sp: 0,
+            a: 0,
+            x: 0,
+            y: 0,
+            status: StatusRegister::default(),
+            memory,
+            irq: false,
+            nmi: false,
+            clock: 0,
             clock_hz: DEFAULT_CLOCK_HZ,
-            ..CPU::default()
         }
     }
 
@@ -113,29 +128,25 @@ impl CPU {
     }
 
     pub fn execute_forever(&mut self) {
-        let terminal = &mut Terminal::new();
-
         println!("PC set to {:04X}", self.pc);
         //std::process::exit(0);
 
         let cycles = u32::MAX;
 
-        self.execute_inner(cycles, terminal, true);
+        self.execute_inner(cycles, true);
     }
 
     pub fn execute(&mut self, cycles: u32) {
-        let terminal = &mut Terminal::new();
-
         println!("PC set to {:04X}", self.pc);
         //std::process::exit(0);
 
-        self.execute_inner(cycles, terminal, false);
+        self.execute_inner(cycles, false);
     }
 
     /// The run loop: an instruction at a time, for `cycles` cycles. As on
     /// the 6502, an instruction once fetched runs all its cycles: the last
     /// one can end past `cycles`.
-    fn execute_inner(&mut self, cycles: u32, terminal: &mut Terminal, run_forever: bool) {
+    fn execute_inner(&mut self, cycles: u32, run_forever: bool) {
         let mut total_cycles: u64 = 0;
         let pace_interval = (self.clock_hz as u64 / PACES_PER_SECOND).max(1);
         let mut next_pace: u64 = pace_interval;
@@ -155,7 +166,6 @@ impl CPU {
                 }
             }
 
-            terminal.poll_input(self);
 
             // The 6502 looks at IRQ before an instruction's last cycle: the I
             // that CLI, SEI and PLP set on that cycle counts from the next.
@@ -660,6 +670,7 @@ impl CPU {
 
     pub fn advance_clock(&mut self) {
         self.clock = self.clock.wrapping_add(1);
+        self.memory.tick();
     }
 
     pub fn read_byte(&mut self, addr: u16) -> u8 {
@@ -742,80 +753,5 @@ impl CPU {
         let low = self.pop_byte() as u16;
         let high = self.pop_byte() as u16;
         (high << 8) | low
-    }
-}
-
-#[derive(Default, Clone)]
-struct Terminal {
-    rx_buffer: Arc<Mutex<VecDeque<u8>>>,
-    /// The first Terminal: it set up the host terminal, and puts it back.
-    first: bool,
-}
-
-impl Terminal {
-    fn new() -> Self {
-        // One reader of stdin for the process: another Terminal's thread
-        // would take this one's keys.
-        static RX_BUFFER: OnceLock<Arc<Mutex<VecDeque<u8>>>> = OnceLock::new();
-
-        let mut first = false;
-        let rx_buffer = RX_BUFFER
-            .get_or_init(|| {
-                first = true;
-
-                // A key at a time and not echoed: the machine echoes what it
-                // reads. Ctrl-C comes in as a key too, for the machine;
-                // Ctrl-D turns it off.
-                stty(&["-icanon", "-echo", "-isig"]);
-
-                let rx_buffer = Arc::new(Mutex::new(VecDeque::new()));
-                let rx_clone = Arc::clone(&rx_buffer);
-
-                // Spawn a thread to read stdin asynchronously
-                thread::spawn(move || {
-                    let stdin = stdin();
-                    for byte in stdin.bytes() {
-                        if let Ok(b) = byte {
-                            if b == 0x04 {
-                                // Ctrl-D: off
-                                stty(&["icanon", "echo", "isig"]);
-                                std::process::exit(0);
-                            }
-                            rx_clone.lock().unwrap().push_back(b);
-                        }
-                    }
-                });
-
-                rx_buffer
-            })
-            .clone();
-
-        Self { rx_buffer, first }
-    }
-
-    fn poll_input(&mut self, cpu: &mut CPU) {
-        if cpu.memory.read(0xFFF9) != 0 {
-            return; // Input not requested
-        }
-
-        if let Some(ascii) = self.rx_buffer.lock().unwrap().pop_front() {
-            cpu.memory.write(0xFFF9, ascii);
-            //println!("Emulator input (ASCII): {}", ascii);
-        }
-    }
-}
-
-impl Drop for Terminal {
-    fn drop(&mut self) {
-        if self.first {
-            stty(&["icanon", "echo", "isig"]);
-        }
-    }
-}
-
-/// Set the host terminal's modes; nothing to set when stdin isn't one.
-fn stty(settings: &[&str]) {
-    if stdin().is_terminal() {
-        let _ = std::process::Command::new("stty").args(settings).status();
     }
 }

@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::{CPU, Registers};
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn transfer_register(&mut self, source: Registers, destination: Registers) {
         let value = match source {
             Registers::A => self.a,

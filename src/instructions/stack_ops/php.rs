@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn php(&mut self) {
         // PHP always pushes with the B flag (bit 4) set.
         let status = self.status.to_byte() | 0x10;

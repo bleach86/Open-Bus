@@ -1,3 +1,5 @@
+use crate::bus::Bus;
+use crate::terminal::Terminal;
 use std::fmt;
 use std::io::Write;
 
@@ -11,6 +13,9 @@ pub struct Memory {
     // Every read and write, in order, while there is a log: the address, the
     // value and whether it was a write. A logic analyzer on the bus.
     pub bus_log: Option<Vec<(u16, u8, bool)>>,
+    // The terminal on 0xFFF8 and 0xFFF9, if one is attached: without, 0xFFF9
+    // is RAM like the rest.
+    pub terminal: Option<Terminal>,
 }
 
 impl Default for Memory {
@@ -19,12 +24,20 @@ impl Default for Memory {
             data: [0; 65536],
             rom_start: None,
             bus_log: None,
+            terminal: None,
         }
     }
 }
 
-impl Memory {
-    pub fn read(&mut self, addr: u16) -> u8 {
+impl Bus for Memory {
+    fn read(&mut self, addr: u16) -> u8 {
+        // The terminal's key: the next typed, once the last has been taken
+        // (written back 0).
+        if addr == 0xFFF9 && self.data[0xFFF9] == 0 {
+            if let Some(key) = self.terminal.as_ref().and_then(|terminal| terminal.key()) {
+                self.data[0xFFF9] = key;
+            }
+        }
         let value = self.data[addr as usize];
         if let Some(log) = &mut self.bus_log {
             log.push((addr, value, false));
@@ -32,7 +45,7 @@ impl Memory {
         value
     }
 
-    pub fn write(&mut self, addr: u16, value: u8) {
+    fn write(&mut self, addr: u16, value: u8) {
         if let Some(log) = &mut self.bus_log {
             log.push((addr, value, true));
         }

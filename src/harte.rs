@@ -162,8 +162,6 @@ mod tests {
             return Some(wrong_cycles());
         }
 
-        // The instruction's own cycles come first in the log: the terminal
-        // looks at its key after it.
         let log = cpu.memory.bus_log.as_ref().unwrap();
         let access = |(addr, value, write): (u16, u8, bool)| {
             format!("{} ${addr:04X} {value:02X}", if write { "write" } else { "read" })
@@ -178,6 +176,9 @@ mod tests {
                     return Some(format!("cycle {}: {got}, want {}", i + 1, access((addr, value, write))));
                 }
             }
+        }
+        if log.len() > case.cycles.len() {
+            return Some(format!("cycle {}: {}, want nothing", case.cycles.len() + 1, access(log[case.cycles.len()])));
         }
         None
     }

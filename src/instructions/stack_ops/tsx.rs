@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn tsx(&mut self) {
         self.x = self.sp;
         self.status.zero = self.x == 0;

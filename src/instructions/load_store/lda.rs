@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn lda_set_status(&mut self) {
         self.status.zero = self.a == 0;
         self.status.negative = (self.a & 0x80) != 0;

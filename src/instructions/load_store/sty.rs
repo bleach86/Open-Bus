@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn sty_zero_page(&mut self) {
         let addr = self.fetch_byte() as u16;
         self.write_byte(addr, self.y);

@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     fn rol_set_flags(&mut self, original: u8, result: u8) {
         self.status.carry = (original & 0x80) != 0; // the bit rotated out
         self.status.zero = result == 0;

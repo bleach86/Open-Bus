@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     fn cpx_set_flags(&mut self, result: u8, operand: u8) {
         self.status.carry = self.x >= operand;
         self.status.zero = self.x == operand;

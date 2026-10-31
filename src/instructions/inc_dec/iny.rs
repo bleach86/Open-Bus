@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn iny(&mut self) {
         self.y = self.y.wrapping_add(1);
         self.status.zero = self.y == 0;

@@ -1,9 +1,10 @@
+use crate::bus::Bus;
 use crate::cpu::{CPU, StatusFlag};
 use crate::instructions::op_codes::Opcode;
 
 const CHECK_SET: [Opcode; 4] = [Opcode::BCS, Opcode::BEQ, Opcode::BMI, Opcode::BVS];
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn branch(&mut self, status_flag: StatusFlag, op_code: Opcode) {
         let offset: i8 = self.fetch_byte() as i8;
         let original_pc: u16 = self.pc;

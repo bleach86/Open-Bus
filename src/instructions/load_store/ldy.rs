@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn ldy_set_status(&mut self) {
         self.status.zero = self.y == 0;
         self.status.negative = (self.y & 0x80) != 0;

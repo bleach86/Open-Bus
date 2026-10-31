@@ -6,6 +6,7 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::bus::Bus;
     use crate::cpu::CPU;
     use std::path::Path;
 

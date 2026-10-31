@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     pub fn brk(&mut self) {
         self.fetch_byte(); // the byte after BRK, read and passed over
         self.push_word(self.pc);

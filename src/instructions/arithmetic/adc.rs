@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     fn adc_set_flags(&mut self, result: u16, operand: u8) {
         self.status.carry = result > 0xFF;
 

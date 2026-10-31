@@ -1,6 +1,7 @@
+use crate::bus::Bus;
 use crate::cpu::CPU;
 
-impl CPU {
+impl<B: Bus> CPU<B> {
     /// An IRQ or NMI, taken between instructions: as BRK, but the PC pushed
     /// is the next instruction's and the status is pushed with B clear.
     pub fn interrupt(&mut self, vector: u16) {
