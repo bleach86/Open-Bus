@@ -38,8 +38,9 @@ pub trait Display {
         false
     }
 
-    /// The next function key pressed, by its number, F1 to F11, for the
-    /// machine's own uses (F12 is its Reset key, held).
+    /// The next function key pressed, by its number, F1 to F10, for the
+    /// machine's own uses (F11 is the window's fullscreen, F12 the
+    /// machine's Reset key, held).
     fn function_key(&mut self) -> Option<u8> {
         None
     }

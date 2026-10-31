@@ -132,6 +132,26 @@ pub fn picture_line(source: &Source, switches: Switches, flash_on: bool, y: usiz
     }
 }
 
+/// A notice across the picture's foot, over what's there: a black band 12
+/// lines high, `text` centred in it in white, in the II+'s characters,
+/// capitals, each dot two wide; as much of it as 40 fit.
+pub fn notice(picture: &mut [u32], text: &str) {
+    let text: Vec<u8> = text.to_uppercase().bytes().map(|b| if (0x20..0x60).contains(&b) { b } else { b'?' }).take(40).collect();
+    let top = HEIGHT - 12;
+    picture[top * PICTURE_WIDTH..].fill(BLACK);
+    let left = (40 - text.len()) * 7;
+    for (place, &char) in text.iter().enumerate() {
+        for row in 0..8 {
+            let dots = glyph_dots(char & 0x3F, row);
+            let line = (top + 2 + row) * PICTURE_WIDTH;
+            for dot in (0..7).filter(|dot| (dots >> dot) & 1 != 0) {
+                let x = left + place * 14 + dot * 2;
+                picture[line + x..line + x + 2].fill(WHITE);
+            }
+        }
+    }
+}
+
 /// A character's row `row` of dots, the lowest bit leftmost, 1 a dot shown:
 /// the II+'s own, inverse below $40, and flashing (below $80) inverse
 /// while the flash is on; or from a IIe's video ROM, the alternate set by

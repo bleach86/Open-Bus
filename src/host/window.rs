@@ -1,10 +1,11 @@
 //! The host's window, by SDL2: a machine's frames, scaled up; the keys
 //! typed in it; and a joystick, a gamepad's (its left stick or D-pad, A and
 //! B its buttons) or the numeric keypad's (8, 2, 4 and 6 and the corners;
-//! 0 and . its buttons), the Alt keys buttons too; F1 to F11, for the
+//! 0 and . its buttons), the Alt keys buttons too; F1 to F10, for the
 //! machine's own uses, and F12, its Reset key; and the machine's sound, in
-//! stereo, through an audio queue. Closed, it tells the machine, to turn itself
-//! off.
+//! stereo, through an audio queue. F11 or a double click switches it to
+//! fullscreen and back, the picture its shape still, bars at its sides if
+//! the screen is wider. Closed, it tells the machine, to turn itself off.
 
 use crate::host::display::{Display, Joystick, Key, CHANNELS, SAMPLE_RATE};
 use sdl2::EventPump;
@@ -12,6 +13,8 @@ use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::controller::{Axis, Button, GameController};
 use sdl2::event::Event;
 use sdl2::keyboard::{Keycode, Mod};
+use sdl2::mouse::{MouseButton, MouseUtil};
+use sdl2::video::FullscreenType;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::{Canvas, Texture};
 use sdl2::GameControllerSubsystem;
@@ -19,10 +22,12 @@ use std::collections::{HashSet, VecDeque};
 
 pub struct Window {
     canvas: Canvas<sdl2::video::Window>,
+    /// The mouse: its pointer hidden in fullscreen.
+    mouse: MouseUtil,
     texture: Texture,
     events: EventPump,
     keys: VecDeque<Key>,
-    /// F1 to F11 pressed, by number, not yet taken.
+    /// F1 to F10 pressed, by number, not yet taken.
     function_keys: VecDeque<u8>,
     audio: Option<AudioQueue<f32>>,
     controllers: GameControllerSubsystem,
@@ -54,8 +59,9 @@ const AUDIO_MOST: f32 = 0.1;
 
 impl Window {
     /// A window `title`d, for frames `width` by `height` pixels, shown at
-    /// `size`, the window's width and height.
-    pub fn new(title: &str, width: usize, height: usize, size: (u32, u32)) -> Window {
+    /// `size`, the window's width and height, its shape kept in
+    /// fullscreen; `fullscreen` to start with.
+    pub fn new(title: &str, width: usize, height: usize, size: (u32, u32), fullscreen: bool) -> Window {
         let sdl = sdl2::init().expect("SDL");
         let video = sdl.video().expect("SDL's video");
         let window = video
@@ -63,7 +69,8 @@ impl Window {
             .position_centered()
             .build()
             .expect("a window");
-        let canvas = window.into_canvas().accelerated().build().expect("a canvas");
+        let mut canvas = window.into_canvas().accelerated().build().expect("a canvas");
+        canvas.set_logical_size(size.0, size.1).expect("the picture's shape");
         let texture = canvas
             .texture_creator()
             .create_texture_streaming(PixelFormatEnum::RGB888, width as u32, height as u32)
@@ -83,8 +90,9 @@ impl Window {
             .filter(|&n| controllers.is_game_controller(n))
             .find_map(|n| controllers.open(n).ok());
         let events = sdl.event_pump().expect("SDL's events");
-        Window {
+        let mut window = Window {
             canvas,
+            mouse: sdl.mouse(),
             texture,
             events,
             keys: VecDeque::new(),
@@ -100,12 +108,26 @@ impl Window {
             keys_held: HashSet::new(),
             closed: false,
             keypad_text: None,
+        };
+        if fullscreen {
+            window.toggle_fullscreen();
         }
+        window
+    }
+
+    /// Fullscreen, at the screen's own size, the pointer hidden; or back to
+    /// the window.
+    fn toggle_fullscreen(&mut self) {
+        let fullscreen = self.canvas.window().fullscreen_state() == FullscreenType::Off;
+        let state = if fullscreen { FullscreenType::Desktop } else { FullscreenType::Off };
+        let _ = self.canvas.window_mut().set_fullscreen(state);
+        self.mouse.show_cursor(!fullscreen);
     }
 
     /// The window's events since the last frame: its keys queued, the
     /// joystick's state kept; closed, kept for the machine to see.
     fn take_events(&mut self) {
+        let mut toggle = false; // fullscreen, once the events are taken
         for event in self.events.poll_iter() {
             match event {
                 Event::Quit { .. } => self.closed = true,
@@ -115,9 +137,9 @@ impl Window {
                     }
                     self.keys.extend(text.bytes().filter(u8::is_ascii).map(Key::Char));
                 }
-                Event::KeyDown { keycode: Some(keycode), keymod, .. } => {
+                Event::KeyDown { keycode: Some(keycode), keymod, repeat, .. } => {
                     self.keypad_text = None;
-                    if !is_modifier(keycode) && function_key(keycode).is_none() && keycode != Keycode::F12 {
+                    if !is_modifier(keycode) && function_key(keycode).is_none() && !matches!(keycode, Keycode::F11 | Keycode::F12) {
                         self.keys_held.insert(keycode);
                     }
                     if let Some(text) = keypad(keycode) {
@@ -131,8 +153,16 @@ impl Window {
                         Keycode::F12 => self.reset_held = true,
                         _ => {}
                     }
+                    // F11 and the function keys, a press each, not repeating
+                    // while held.
+                    if keycode == Keycode::F11 {
+                        toggle ^= !repeat;
+                        continue;
+                    }
                     if let Some(n) = function_key(keycode) {
-                        self.function_keys.push_back(n);
+                        if !repeat {
+                            self.function_keys.push_back(n);
+                        }
                         continue;
                     }
                     let ctrl = keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
@@ -170,6 +200,7 @@ impl Window {
                         _ => {}
                     }
                 }
+                Event::MouseButtonDown { mouse_btn: MouseButton::Left, clicks: 2, .. } => toggle = !toggle,
                 Event::ControllerDeviceAdded { which, .. } if self.gamepad.is_none() => {
                     self.gamepad = self.controllers.open(which).ok();
                 }
@@ -196,6 +227,9 @@ impl Window {
                 _ => {}
             }
         }
+        if toggle {
+            self.toggle_fullscreen();
+        }
     }
 }
 
@@ -208,11 +242,11 @@ fn is_modifier(keycode: Keycode) -> bool {
     )
 }
 
-/// F1 to F11's numbers.
+/// F1 to F10's numbers.
 fn function_key(keycode: Keycode) -> Option<u8> {
     let keys = [
-        Keycode::F1, Keycode::F2, Keycode::F3, Keycode::F4, Keycode::F5, Keycode::F6,
-        Keycode::F7, Keycode::F8, Keycode::F9, Keycode::F10, Keycode::F11,
+        Keycode::F1, Keycode::F2, Keycode::F3, Keycode::F4, Keycode::F5,
+        Keycode::F6, Keycode::F7, Keycode::F8, Keycode::F9, Keycode::F10,
     ];
     keys.iter().position(|&key| key == keycode).map(|n| n as u8 + 1)
 }

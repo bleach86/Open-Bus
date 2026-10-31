@@ -12,6 +12,7 @@ mod tests {
     use crate::host::display::{Display, Key};
     use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::disk_image::Disk;
+    use crate::machines::apple2::video::{HEIGHT, PICTURE_WIDTH};
     use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME};
     use std::cell::RefCell;
     use std::path::{Path, PathBuf};
@@ -94,6 +95,15 @@ mod tests {
             press(&mut apple, 10);
             assert_eq!(in_drives(&apple), [Some(0), want], "drive 2, F10");
         }
+        // The disk put in, said over the picture's foot, for 3 seconds.
+        let band = |apple: &Apple2| apple.picture[(HEIGHT - 12) * PICTURE_WIDTH..].to_vec();
+        assert!(band(&apple)[..PICTURE_WIDTH].iter().all(|&dot| dot == 0), "no notice's band");
+        assert!(band(&apple).iter().any(|&dot| dot == 0xFFFFFF), "no notice's text");
+        for _ in 0..180 * CYCLES_PER_FRAME {
+            apple.tick();
+        }
+        assert!(apple.notice.is_none(), "the notice still there after 3 seconds");
+
         // Drive 1 skips the one in drive 2.
         press(&mut apple, 9);
         assert_eq!(in_drives(&apple), [Some(2), Some(1)], "drive 1, past drive 2's");

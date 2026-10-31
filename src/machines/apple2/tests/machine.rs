@@ -9,7 +9,7 @@ mod tests {
     use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::language_card::LanguageCard;
     use crate::machines::apple2::video::{self, Source, LORES, Switches, HEIGHT, PICTURE_WIDTH, WIDTH};
-    use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME, CYCLES_PER_LINE};
+    use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME, CYCLES_PER_LINE, VOLUME};
     use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
     use crate::host::display::{Display, Joystick, Key};
@@ -457,7 +457,10 @@ mod tests {
         let seconds = 60.0 * CYCLES_PER_FRAME as f32 / CLOCK_HZ as f32;
         let per_second = crossings as f32 / seconds;
         assert!((990.0..=1010.0).contains(&per_second), "{per_second} crossings a second");
-        assert!(samples.iter().any(|&s| s > 0.2) && samples.iter().any(|&s| s < -0.2), "too quiet");
+        // Its swing nearly the speaker's volume either way, the settling
+        // taking a little of it in a half wave.
+        let loud = VOLUME * 2.0 / 3.0;
+        assert!(samples.iter().any(|&s| s > loud) && samples.iter().any(|&s| s < -loud), "too quiet");
     }
 
     #[test]
@@ -472,7 +475,7 @@ mod tests {
             apple.tick();
         }
         let samples = heard.take();
-        assert!(samples[0].abs() > 0.2, "no click");
+        assert!(samples[0].abs() > VOLUME, "no click: the cone in to out, twice the volume");
         assert!(samples[samples.len() - 100..].iter().all(|s| s.abs() < 0.001), "still sounding");
     }
 }

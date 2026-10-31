@@ -55,8 +55,8 @@ const CYCLES_PER_PADDLE_STEP: u64 = 11;
 
 /// How loud the speaker is, of the host's full volume; and each of the
 /// Mockingboard's voices, at its loudest.
-const VOLUME: f32 = 0.3;
-const VOICE_VOLUME: f32 = 0.15;
+pub const VOLUME: f32 = 0.15;
+const VOICE_VOLUME: f32 = 0.25;
 /// How fast the speaker's cone settles back, left still: a sample's share.
 const SETTLE: f32 = 0.995;
 
@@ -66,6 +66,9 @@ const FLASH_FRAMES: u32 = 16;
 /// The Reset key pressed in the terminal, which has no key let go: held 6
 /// frames, a tenth of a second.
 const RESET_FRAMES: u32 = 6;
+
+/// How long a notice is shown over the picture: 3 seconds.
+const NOTICE_FRAMES: u32 = 180;
 
 pub struct Apple2 {
     pub ram: Vec<u8>,
@@ -85,8 +88,11 @@ pub struct Apple2 {
     /// and F10; and which is in each drive.
     pub disks: Vec<PathBuf>,
     pub in_drive: [Option<usize>; 2],
-    /// What's in the drives, said under the terminal's screen.
+    /// What's in the drives, said under the terminal's screen; and a
+    /// notice over the window's picture, a disk put in, and the frames
+    /// more it's shown.
     status: String,
+    notice: Option<(String, u32)>,
     /// The window the picture is shown in, and the keys come from.
     pub display: Option<Box<dyn Display>>,
     /// The picture, as far as this frame has drawn it.
@@ -136,6 +142,7 @@ impl Apple2 {
             disks: Vec::new(),
             in_drive: [None, None],
             status: String::new(),
+            notice: None,
             display: None,
             picture: vec![0; video::PICTURE_WIDTH * video::HEIGHT],
             graphics: false,
@@ -350,16 +357,21 @@ impl Apple2 {
         self.in_drive[drive] = choices[at].filter(|_| disk.is_some());
         self.disk2.as_mut().unwrap().drives[drive].disk = disk;
         self.show_disks();
+        self.notice = Some((format!("Drive {}: {}", drive + 1, self.disk_name(drive)), NOTICE_FRAMES));
+    }
+
+    /// The name of drive `drive`'s disk, its image's; or empty.
+    fn disk_name(&self, drive: usize) -> String {
+        match self.in_drive[drive] {
+            Some(n) => self.disks[n].file_stem().map_or(String::new(), |name| name.to_string_lossy().into_owned()),
+            None => "empty".to_string(),
+        }
     }
 
     /// What's in the drives, by their images' names: in the window's
     /// title, or under the terminal's screen.
     fn show_disks(&mut self) {
-        let name = |drive: usize| match self.in_drive[drive] {
-            Some(n) => self.disks[n].file_stem().map_or(String::new(), |name| name.to_string_lossy().into_owned()),
-            None => "empty".to_string(),
-        };
-        self.status = format!("Drive 1: {}   Drive 2: {}", name(0), name(1));
+        self.status = format!("Drive 1: {}   Drive 2: {}", self.disk_name(0), self.disk_name(1));
         if let Some(display) = &mut self.display {
             let name = if self.iie.is_some() { "Apple //e" } else { "Apple ][" };
             display.title(&format!("{name}   {}", self.status));
@@ -726,6 +738,15 @@ impl Bus for Apple2 {
         if self.cycle == CYCLES_PER_FRAME {
             self.cycle = 0;
             self.frames += 1;
+            // A notice over the picture, the next frame's lines drawing
+            // over it again.
+            if let Some((text, frames)) = &mut self.notice {
+                video::notice(&mut self.picture, text);
+                *frames -= 1;
+                if *frames == 0 {
+                    self.notice = None;
+                }
+            }
             if let Some(display) = &mut self.display {
                 display.show(&self.picture, video::PICTURE_WIDTH, video::HEIGHT);
                 display.play(&self.sound);
@@ -770,8 +791,9 @@ pub enum Model {
 /// 12K, $D000 up), for a IIe the folder its ROMs are in, by their names;
 /// `disks` .dsk, .do, .po, .nib or .woz images, for a Disk II, whose ROMs
 /// are found beside the II+'s or in the IIe's folder, the first in drive 1;
-/// in a window, or `text`, its text screen in the terminal.
-pub fn run(model: Model, roms: &str, disks: &[&str], mockingboards: usize, variant: Option<Variant>, text: bool) {
+/// in a window, `fullscreen` or not, or `text`, its text screen in the
+/// terminal.
+pub fn run(model: Model, roms: &str, disks: &[&str], mockingboards: usize, variant: Option<Variant>, text: bool, fullscreen: bool) {
     let read = |path: &Path| std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let roms = Path::new(roms);
     let (mut apple, folder, title, size, own_variant) = match model {
@@ -800,7 +822,7 @@ pub fn run(model: Model, roms: &str, disks: &[&str], mockingboards: usize, varia
         apple.terminal = Some(Terminal::new());
         print!("\x1B[2J"); // the screen cleared, for the Apple's
     } else {
-        apple.display = Some(Box::new(Window::new(title, video::PICTURE_WIDTH, video::HEIGHT, size)));
+        apple.display = Some(Box::new(Window::new(title, video::PICTURE_WIDTH, video::HEIGHT, size, fullscreen)));
     }
     if !disks.is_empty() {
         let beside = |name: &str| read(&folder.join(name));
