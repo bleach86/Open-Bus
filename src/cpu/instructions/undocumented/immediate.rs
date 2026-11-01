@@ -1,5 +1,5 @@
-use crate::cpu::CPU;
 use crate::cpu::bus::Bus;
+use crate::cpu::{Variant, CPU};
 
 /// What ANE and LXA OR into A first: it varies from chip to chip, and with
 /// its temperature; $EE is the usual.
@@ -68,10 +68,12 @@ impl<B: Bus> CPU<B> {
         self.lda_set_status();
     }
 
-    /// LXA: A and X = (A OR MAGIC) AND the byte.
+    /// LXA: A and X = (A OR MAGIC) AND the byte; on the NES's 2A03, as
+    /// blargg's NES has it, $FF ORed in, the byte itself.
     pub fn lxa_immediate(&mut self) {
         let value = self.fetch_byte();
-        self.a = (self.a | MAGIC) & value;
+        let magic = if self.variant == Variant::Ricoh2A03 { 0xFF } else { MAGIC };
+        self.a = (self.a | magic) & value;
         self.x = self.a;
         self.lda_set_status();
     }

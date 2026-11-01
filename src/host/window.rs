@@ -1,13 +1,16 @@
 //! The host's window, by SDL2: a machine's frames, scaled up; the keys
 //! typed in it; and a joystick, a gamepad's (its left stick or D-pad, A and
 //! B its buttons) or the numeric keypad's (8, 2, 4 and 6 and the corners;
-//! 0 and . its buttons), the Alt keys buttons too; F1 to F10, for the
+//! 0 and . its buttons), the Alt keys buttons too; a console's gamepad,
+//! the host's gamepad (its D-pad or left stick; its east button A, its
+//! south B; Back and Start) or the keyboard's (the arrows; X and Z, A and
+//! B; Right Shift or Tab, Select; Return, Start); F1 to F10, for the
 //! machine's own uses, and F12, its Reset key; and the machine's sound, in
 //! stereo, through an audio queue. F11 or a double click switches it to
 //! fullscreen and back, the picture its shape still, bars at its sides if
 //! the screen is wider. Closed, it tells the machine, to turn itself off.
 
-use crate::host::display::{Display, Joystick, Key, CHANNELS, SAMPLE_RATE};
+use crate::host::display::{Display, Gamepad, Joystick, Key, CHANNELS, SAMPLE_RATE};
 use sdl2::EventPump;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::controller::{Axis, Button, GameController};
@@ -38,6 +41,7 @@ pub struct Window {
     pad_held: HashSet<Button>,
     keypad_held: HashSet<Keycode>,
     alt_held: [bool; 2],
+    right_shift_held: bool,
     /// F12, the Reset key; and the other keys held, but the modifiers and
     /// the function keys.
     reset_held: bool,
@@ -104,6 +108,7 @@ impl Window {
             pad_held: HashSet::new(),
             keypad_held: HashSet::new(),
             alt_held: [false; 2],
+            right_shift_held: false,
             reset_held: false,
             keys_held: HashSet::new(),
             closed: false,
@@ -150,6 +155,7 @@ impl Window {
                     match keycode {
                         Keycode::LAlt => self.alt_held[0] = true,
                         Keycode::RAlt => self.alt_held[1] = true,
+                        Keycode::RShift => self.right_shift_held = true,
                         Keycode::F12 => self.reset_held = true,
                         _ => {}
                     }
@@ -196,6 +202,7 @@ impl Window {
                     match keycode {
                         Keycode::LAlt => self.alt_held[0] = false,
                         Keycode::RAlt => self.alt_held[1] = false,
+                        Keycode::RShift => self.right_shift_held = false,
                         Keycode::F12 => self.reset_held = false,
                         _ => {}
                     }
@@ -321,6 +328,24 @@ impl Display for Window {
                 pad(Button::B) || keys(&[Keycode::KpPeriod]) || self.alt_held[1],
                 false,
             ],
+        }
+    }
+
+    /// The gamepad's D-pad, or its stick pushed well over; or the
+    /// keyboard's.
+    fn gamepad(&self) -> Gamepad {
+        let pad = |button| self.pad_held.contains(&button);
+        let key = |keycode| self.keys_held.contains(&keycode);
+        let pushed = 0.5;
+        Gamepad {
+            up: pad(Button::DPadUp) || self.stick.1 < -pushed || key(Keycode::Up),
+            down: pad(Button::DPadDown) || self.stick.1 > pushed || key(Keycode::Down),
+            left: pad(Button::DPadLeft) || self.stick.0 < -pushed || key(Keycode::Left),
+            right: pad(Button::DPadRight) || self.stick.0 > pushed || key(Keycode::Right),
+            a: pad(Button::B) || key(Keycode::X),
+            b: pad(Button::A) || key(Keycode::Z),
+            select: pad(Button::Back) || self.right_shift_held || key(Keycode::Tab),
+            start: pad(Button::Start) || key(Keycode::Return),
         }
     }
 

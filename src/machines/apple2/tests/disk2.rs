@@ -10,7 +10,8 @@
 #[cfg(test)]
 mod tests {
     use crate::machines::apple2::disk2::Disk2;
-    use crate::machines::apple2::disk_image::{self, crc32, Disk, DOS_ORDER, TRANSLATE};
+    use crate::host::zip::crc32;
+    use crate::machines::apple2::disk_image::{self, Disk, DOS_ORDER, TRANSLATE};
     use crate::machines::apple2::{Apple2, CLOCK_HZ};
     use crate::cpu::CPU;
     use std::path::{Path, PathBuf};

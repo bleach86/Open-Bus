@@ -18,10 +18,12 @@ mod host {
     pub mod display;
     pub mod terminal;
     pub mod window;
+    pub mod zip;
 
     #[cfg(test)]
     mod tests {
         mod clock;
+        mod zip;
     }
 }
 
@@ -29,6 +31,7 @@ mod host {
 mod machines {
     pub mod apple2;
     pub mod basic;
+    pub mod nes;
     pub mod save_state;
 }
 
@@ -51,12 +54,18 @@ mod machines {
 /// `--monitor=white`, `green` or `amber` monochrome (F8 switching); or
 /// with `--text` its text screen in the terminal. F2 saves its state, F4
 /// loads it back: beside the first DISK, or the ROM, its name and .state.
+/// `cpu_emu nes ROM [--fullscreen]` for the NES, ROM an iNES image or a
+/// zip of one.
 use machines::apple2::video::Monitor;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text]";
+    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen]";
     match args.get(1).map(String::as_str) {
+        Some("nes") => {
+            let rom = args[2..].iter().find(|arg| !arg.starts_with("--")).expect(usage);
+            machines::nes::run(rom, args.iter().any(|arg| arg == "--fullscreen"));
+        }
         Some(machine @ ("apple2" | "apple2e")) => {
             let files: Vec<&String> = args[2..].iter().filter(|arg| !arg.starts_with("--")).collect();
             let rom = files.first().expect(usage);

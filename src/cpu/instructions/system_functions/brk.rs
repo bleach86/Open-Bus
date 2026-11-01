@@ -16,6 +16,8 @@ impl<B: Bus> CPU<B> {
             self.status.decimal_mode = false;
         }
 
-        self.pc = self.read_word(0xFFFE);
+        // An NMI come by now: BRK's push made, B set, but NMI's handler.
+        let vector = self.hijacked(0xFFFE);
+        self.pc = self.read_word(vector);
     }
 }

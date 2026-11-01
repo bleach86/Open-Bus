@@ -19,6 +19,7 @@
 //! sectors, read back off its tracks, every one of which must read; a .nib
 //! by its tracks' bytes; a .woz by its bits, as a WOZ2.
 
+use crate::host::zip::crc32;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::path::{Path, PathBuf};
@@ -484,18 +485,6 @@ fn data_from_field(field: &[u8]) -> Option<[u8; 256]> {
 /// if it hasn't as many.
 fn bits(bytes: &[u8], count: usize) -> Option<Vec<u8>> {
     (count <= bytes.len() * 8).then(|| (0..count).map(|i| (bytes[i / 8] >> (7 - i % 8)) & 1).collect())
-}
-
-/// The CRC-32 a .woz has for all after its header: the one zip has.
-pub fn crc32(bytes: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for &byte in bytes {
-        crc ^= byte as u32;
-        for _ in 0..8 {
-            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
-        }
-    }
-    !crc
 }
 
 /// Which of a .nib track's bytes are in a field: from an address field's

@@ -21,6 +21,12 @@ pub trait Display {
         Joystick::CENTRED
     }
 
+    /// The gamepad as it is now, a console's; none of it held, if there is
+    /// none.
+    fn gamepad(&self) -> Gamepad {
+        Gamepad::default()
+    }
+
     /// Whether a key is held down, any but the modifiers and the function
     /// keys.
     fn key_down(&self) -> bool {
@@ -64,6 +70,20 @@ pub struct Joystick {
 
 impl Joystick {
     pub const CENTRED: Joystick = Joystick { x: 0.0, y: 0.0, buttons: [false; 3] };
+}
+
+/// A gamepad as a console has it: its D-pad, its A and B, its Select and
+/// Start, each held or not.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Gamepad {
+    pub up: bool,
+    pub down: bool,
+    pub left: bool,
+    pub right: bool,
+    pub a: bool,
+    pub b: bool,
+    pub select: bool,
+    pub start: bool,
 }
 
 /// A key as the host has it.

@@ -19,3 +19,7 @@
 apple2/disks/
 # Save states, beside the disk or ROM they're of
 *.state
+# NES ROMs, games' and the test ROMs' (roms/nes/tests/, their own
+# collections)
+*.nes
+nes/tests/

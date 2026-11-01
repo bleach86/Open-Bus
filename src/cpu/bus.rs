@@ -17,8 +17,24 @@ pub trait Bus {
     }
 
     /// The IRQ line, held by the machine's devices until they're served:
-    /// taken between instructions, unless I is set.
+    /// taken between instructions, unless I is set. As it was at the end
+    /// of the cycle before the one just ticked, if the machine is as
+    /// exact; as it is, if not.
     fn irq(&self) -> bool {
+        false
+    }
+
+    /// The NMI line, held by the machine's devices: an NMI taken on its
+    /// edge, as it's pulled. As the IRQ line, at the end of the cycle
+    /// before.
+    fn nmi(&self) -> bool {
+        false
+    }
+
+    /// The RDY line, held by the machine for a DMA of its own: the CPU
+    /// halted on its read, a cycle at a time, for as long as it is; the
+    /// machine's DMA has those cycles, its own work done in their ticks.
+    fn halt(&mut self) -> bool {
         false
     }
 

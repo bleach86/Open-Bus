@@ -105,6 +105,8 @@ pub struct CPU<B: Bus = Memory> {
     pub memory: B,              // Memory: what it's wired to
     pub irq: bool,              // IRQ line: held by a device until it's served
     pub nmi: bool,              // NMI: an edge, taken once
+    nmi_line: bool,             // the machine's NMI line, as last sampled
+    irq_seen: bool,             // its IRQ line, as last sampled: what's polled
     in_reset: bool,             // held in reset: resets when RESET is let go
     jammed: Option<u8>,         // stopped by a JAM: its cycles since, up to 3
     waiting: bool,              // a WDC 65C02 at WAI, for an interrupt
@@ -133,6 +135,8 @@ impl<B: Bus> CPU<B> {
             memory,
             irq: false,
             nmi: false,
+            nmi_line: false,
+            irq_seen: false,
             in_reset: false,
             jammed: None,
             waiting: false,
@@ -248,8 +252,8 @@ impl<B: Bus> CPU<B> {
         let irq = self.irq || self.memory.irq();
         if self.nmi {
             self.waiting = false;
-            self.interrupt(0xFFFA);
             self.nmi = false;
+            self.interrupt(0xFFFA);
         } else if irq {
             self.waiting = false;
             if !self.status.interrupt_disable {
@@ -280,11 +284,12 @@ impl<B: Bus> CPU<B> {
             _ => self.status.interrupt_disable,
         };
 
-        // Interrupts are taken between instructions; NMI first.
+        // Interrupts are taken between instructions, as the lines were
+        // the cycle before the last; NMI first.
         if self.nmi {
-            self.interrupt(0xFFFA);
             self.nmi = false;
-        } else if (self.irq || self.memory.irq()) && !masked {
+            self.interrupt(0xFFFA);
+        } else if self.irq_seen && !masked {
             self.interrupt(0xFFFE);
         }
     }
@@ -1071,13 +1076,32 @@ impl<B: Bus> CPU<B> {
         0x0100 | self.sp as u16
     }
 
+    /// A cycle: the clock, the machine's chips; and the interrupt lines
+    /// sampled, NMI for its edge and IRQ for its level, as the machine has
+    /// them at the end of the cycle before: the 6502 samples them at each
+    /// cycle's end, and what an instruction's end polls is what they were
+    /// the cycle before its last.
     pub fn advance_clock(&mut self) {
         self.clock = self.clock.wrapping_add(1);
         self.memory.tick();
+        let nmi_line = self.memory.nmi();
+        self.nmi |= nmi_line && !self.nmi_line;
+        self.nmi_line = nmi_line;
+        self.irq_seen = self.irq || self.memory.irq();
     }
 
+    /// A read, a cycle. Unless the machine holds RDY, for a DMA of its own:
+    /// then this cycle's read is thrown away, the DMA has its cycles, and
+    /// the read is made again on one of its own.
     pub fn read_byte(&mut self, addr: u16) -> u8 {
         self.advance_clock();
+        if self.memory.halt() {
+            self.memory.read(addr);
+            while self.memory.halt() {
+                self.advance_clock();
+            }
+            self.advance_clock();
+        }
         self.memory.read(addr)
     }
 
@@ -1188,9 +1212,8 @@ impl<B: Bus> CPU<B> {
     }
 
     pub fn fetch_byte(&mut self) -> u8 {
-        let byte = self.memory.read(self.pc);
+        let byte = self.read_byte(self.pc);
         self.pc = self.pc.wrapping_add(1);
-        self.advance_clock();
 
         byte
     }
@@ -1203,17 +1226,14 @@ impl<B: Bus> CPU<B> {
 
     pub fn push_byte(&mut self, value: u8) {
         let addr = self.sp_to_addr();
-        self.memory.write(addr, value);
+        self.write_byte(addr, value);
         self.sp = self.sp.wrapping_sub(1); // decrement SP after push
-        self.advance_clock();
     }
 
     pub fn pop_byte(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1); // increment SP before pop
         let addr = self.sp_to_addr();
-        let value = self.memory.read(addr);
-        self.advance_clock();
-        value
+        self.read_byte(addr)
     }
 
     pub fn push_word(&mut self, value: u16) {
