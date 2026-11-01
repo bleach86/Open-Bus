@@ -54,17 +54,22 @@ mod machines {
 /// `--monitor=white`, `green` or `amber` monochrome (F8 switching); or
 /// with `--text` its text screen in the terminal. F2 saves its state, F4
 /// loads it back: beside the first DISK, or the ROM, its name and .state.
-/// `cpu_emu nes ROM [--fullscreen]` for the NES, ROM an iNES image or a
-/// zip of one.
+/// `cpu_emu nes ROM [--fullscreen] [--overscan=N]` for the NES, ROM an
+/// iNES image or a zip of one, its picture's edges hidden as a TV hides
+/// them, N dots or lines each (8, or 0 to see it all).
 use machines::apple2::video::Monitor;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen]";
+    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32]";
     match args.get(1).map(String::as_str) {
         Some("nes") => {
             let rom = args[2..].iter().find(|arg| !arg.starts_with("--")).expect(usage);
-            machines::nes::run(rom, args.iter().any(|arg| arg == "--fullscreen"));
+            let overscan = match args.iter().find_map(|arg| arg.strip_prefix("--overscan=")) {
+                Some(dots) => dots.parse().ok().filter(|&dots| dots <= 32).expect(usage),
+                None => 8,
+            };
+            machines::nes::run(rom, args.iter().any(|arg| arg == "--fullscreen"), overscan);
         }
         Some(machine @ ("apple2" | "apple2e")) => {
             let files: Vec<&String> = args[2..].iter().filter(|arg| !arg.starts_with("--")).collect();

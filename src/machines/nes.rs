@@ -31,6 +31,11 @@
 //! Select, Start, Up, Down, Left, Right; then 1s. The first is the
 //! window's gamepad; the second, none.
 //!
+//! Its picture is shown as a TV shows it, its edges hidden behind the
+//! screen's bezel, 8 dots or lines each by default: where games leave
+//! what's not to be seen, sprites put out of the way and tiles being
+//! scrolled in.
+//!
 //! F2 saves its state, F4 loads it back, beside its image, its name with
 //! .state after; F12 is its Reset button, held.
 
@@ -126,9 +131,12 @@ pub struct Nes {
     pub display: Option<Box<dyn Display>>,
     #[serde(skip)]
     pub gamepad: Gamepad,
-    /// The PPU's colours, and the frame made of them.
+    /// The PPU's colours; the dots or lines hidden at each edge, as a TV's
+    /// overscan hides them; and the frame made of them, what's seen of it.
     #[serde(skip)]
     colours: Vec<u32>,
+    #[serde(skip)]
+    pub overscan: usize,
     #[serde(skip)]
     picture: Vec<u32>,
     /// The sound: the output summed over the sample being made, and its
@@ -169,7 +177,8 @@ impl Nes {
             display: None,
             gamepad: Gamepad::default(),
             colours: palette::palette(),
-            picture: vec![0; ppu::WIDTH * ppu::HEIGHT],
+            overscan: 0,
+            picture: Vec::new(),
             sample_sum: 0.0,
             sample_cycles: 0,
             sample_phase: 0,
@@ -268,10 +277,13 @@ impl Nes {
     fn frame(&mut self) {
         self.frames += 1;
         if let Some(display) = &mut self.display {
-            for (dot, &colour) in self.picture.iter_mut().zip(&self.ppu.frame) {
-                *dot = self.colours[colour as usize];
+            let (width, height) = seen(self.overscan);
+            self.picture.clear();
+            for line in self.ppu.frame.chunks(ppu::WIDTH).skip(self.overscan).take(height) {
+                let dots = &line[self.overscan..self.overscan + width];
+                self.picture.extend(dots.iter().map(|&colour| self.colours[colour as usize]));
             }
-            display.show(&self.picture, ppu::WIDTH, ppu::HEIGHT);
+            display.show(&self.picture, width, height);
             while let Some(key) = display.function_key() {
                 match key {
                     2 => self.state_wanted = Some(Wanted::Save),
@@ -334,6 +346,7 @@ impl Nes {
         self.display = running.display.take();
         self.gamepad = running.gamepad;
         self.colours = std::mem::take(&mut running.colours);
+        self.overscan = running.overscan;
         self.picture = std::mem::take(&mut running.picture);
         self.ppu.frame = std::mem::take(&mut running.ppu.frame);
     }
@@ -465,16 +478,27 @@ fn wanted(cpu: &mut CPU<Nes>, path: &Path) {
     }
 }
 
+/// What's seen of the picture, `overscan` hidden at each edge: its width
+/// and height.
+fn seen(overscan: usize) -> (usize, usize) {
+    (ppu::WIDTH - 2 * overscan, ppu::HEIGHT - 2 * overscan)
+}
+
 /// The NES run, with the game at `rom` (an iNES image, or a zip of one),
-/// in a window, `fullscreen` or not.
-pub fn run(rom: &str, fullscreen: bool) {
+/// in a window, `fullscreen` or not, `overscan` dots or lines hidden at
+/// each edge of its picture.
+pub fn run(rom: &str, fullscreen: bool, overscan: usize) {
     let path = Path::new(rom);
     let image = image(path).unwrap_or_else(|e| panic!("{rom}: {e}"));
     let cartridge = Cartridge::new(&image).unwrap_or_else(|e| panic!("{rom}: {e}"));
     let mut nes = Nes::new(cartridge);
     let name = path.file_stem().map_or(String::new(), |name| name.to_string_lossy().into_owned());
-    // Its 256 dots by 240 lines, each dot 8:7 as a TV shows it: 878 by 720.
-    nes.display = Some(Box::new(Window::new(&format!("NES   {name}"), ppu::WIDTH, ppu::HEIGHT, (878, 720), fullscreen)));
+    // Its dots and lines seen, each dot 8:7 as a TV shows it, 3 times over:
+    // 823 by 672, of 240 by 224.
+    nes.overscan = overscan;
+    let (width, height) = seen(overscan);
+    let size = ((width as f32 * 8.0 / 7.0 * 3.0).round() as u32, height as u32 * 3);
+    nes.display = Some(Box::new(Window::new(&format!("NES   {name}"), width, height, size, fullscreen)));
     let state: PathBuf = path.with_file_name(format!("{}.state", path.file_name().unwrap().to_string_lossy()));
 
     let mut cpu = CPU::with_bus(nes);
