@@ -215,6 +215,29 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_or_a_playlist_is_its_images() {
+        let folder = std::env::temp_dir().join(format!("cpu_emu_images_{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        for name in ["Game disk 10A.dsk", "Game disk 2A.dsk", "game disk 1B.WOZ", "Game disk 1A.woz", "notes.txt"] {
+            std::fs::write(folder.join(name), b"").unwrap();
+        }
+        let names = |images: Vec<PathBuf>| -> Vec<String> {
+            images.iter().map(|image| image.file_name().unwrap().to_string_lossy().into_owned()).collect()
+        };
+        let images = disk_image::images(&folder).unwrap();
+        assert_eq!(names(images), ["Game disk 1A.woz", "game disk 1B.WOZ", "Game disk 2A.dsk", "Game disk 10A.dsk"], "the folder's images, in order");
+
+        let playlist = folder.join("game.m3u");
+        std::fs::write(&playlist, "# the game's disks\nGame disk 2A.dsk\n\nGame disk 1A.woz\n").unwrap();
+        let images = disk_image::images(&playlist).unwrap();
+        assert_eq!(images, [folder.join("Game disk 2A.dsk"), folder.join("Game disk 1A.woz")], "the playlist's, in its order");
+
+        let one = folder.join("Game disk 1A.woz");
+        assert_eq!(disk_image::images(&one).unwrap(), [one.clone()], "an image, itself");
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
     fn writing_where_there_is_no_track_begins_one() {
         let mut disk = Disk::from_dsk(&vec![0; 143_360]).unwrap();
         assert!(disk.track(1).is_none());

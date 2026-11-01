@@ -789,8 +789,9 @@ pub enum Model {
 /// 2) in slots 4 and 5, its CPU `variant` (or its own: the 6502, the
 /// enhanced IIe's 65C02): `roms`, for the II+ a dump of its ROM (its last
 /// 12K, $D000 up), for a IIe the folder its ROMs are in, by their names;
-/// `disks` .dsk, .do, .po, .nib or .woz images, for a Disk II, whose ROMs
-/// are found beside the II+'s or in the IIe's folder, the first in drive 1;
+/// `disks` .dsk, .do, .po, .nib or .woz images, or folders or .m3u
+/// playlists of them, for a Disk II, whose ROMs are found beside the II+'s
+/// or in the IIe's folder, the first in drive 1;
 /// in a window, `fullscreen` or not, or `text`, its text screen in the
 /// terminal.
 pub fn run(model: Model, roms: &str, disks: &[&str], mockingboards: usize, variant: Option<Variant>, text: bool, fullscreen: bool) {
@@ -831,9 +832,13 @@ pub fn run(model: Model, roms: &str, disks: &[&str], mockingboards: usize, varia
         apple.disk2 = Some(card);
         // Each image opened, to know it can be; the first put in drive 1.
         for disk in disks {
-            Disk::open(Path::new(disk)).unwrap_or_else(|e| panic!("{disk}: {e}"));
+            let images = disk_image::images(Path::new(disk)).unwrap_or_else(|e| panic!("{disk}: {e}"));
+            for image in &images {
+                Disk::open(image).unwrap_or_else(|e| panic!("{}: {e}", image.display()));
+            }
+            apple.disks.extend(images);
         }
-        apple.disks = disks.iter().map(PathBuf::from).collect();
+        assert!(!apple.disks.is_empty(), "no disk images in {disks:?}");
         apple.change_disk(0);
     }
 

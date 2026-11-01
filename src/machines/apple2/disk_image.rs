@@ -81,6 +81,49 @@ pub const PRODOS_ORDER: [usize; 16] = [0x0, 0x8, 0x1, 0x9, 0x2, 0xA, 0x3, 0xB, 0
 /// The volume a rebuilt disk's address fields have: DOS 3.3's own.
 const VOLUME: u8 = 254;
 
+/// The kinds of image a disk is read from, by their files' extensions.
+const KINDS: [&str; 5] = ["dsk", "do", "po", "nib", "woz"];
+
+/// The disk images `path` means: an image; a folder's images, in their
+/// names' order (their numbers as numbers: disk 2 before disk 10), its
+/// other files left out; or an .m3u playlist's, an image a line, from the
+/// playlist's folder, lines starting # left out.
+pub fn images(path: &Path) -> Result<Vec<PathBuf>, String> {
+    let extension = path.extension().map_or(String::new(), |kind| kind.to_string_lossy().to_lowercase());
+    if path.is_dir() {
+        let entries = std::fs::read_dir(path).map_err(|e| e.to_string())?;
+        let mut images: Vec<PathBuf> = entries
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|file| file.extension().is_some_and(|kind| KINDS.contains(&kind.to_string_lossy().to_lowercase().as_str())))
+            .collect();
+        images.sort_by_key(|file| name_order(&file.file_name().unwrap_or_default().to_string_lossy()));
+        Ok(images)
+    } else if extension == "m3u" {
+        let list = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let folder = path.parent().unwrap_or(Path::new(""));
+        Ok(list.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')).map(|line| folder.join(line)).collect())
+    } else {
+        Ok(vec![path.to_path_buf()])
+    }
+}
+
+/// A name's order: its runs of digits as numbers, the rest as letters,
+/// case aside.
+fn name_order(name: &str) -> Vec<(u64, String)> {
+    let mut order = Vec::new();
+    let mut chars = name.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        let digits = c.is_ascii_digit();
+        let mut run = String::new();
+        while let Some(&c) = chars.peek().filter(|c| c.is_ascii_digit() == digits) {
+            run.push(c);
+            chars.next();
+        }
+        order.push(if digits { (run.parse().unwrap_or(u64::MAX), String::new()) } else { (0, run.to_lowercase()) });
+    }
+    order
+}
+
 impl Disk {
     /// The disk in the image at `path`, by its kind: a .dsk or .do, .po,
     /// .nib or .woz; write protected if the file is read only.

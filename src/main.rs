@@ -31,7 +31,8 @@ mod machines {
 /// disk2-p6-341-0028.bin) beside it; `cpu_emu apple2e ROMS [DISK...]` for
 /// an enhanced Apple IIe, or with `--unenhanced` the first, ROMS the folder
 /// its ROMs are in, by their names, and the Disk II's. The DISKs are .dsk,
-/// .do, .po, .nib or .woz images, the first in drive 1, F9 and F10
+/// .do, .po, .nib or .woz images, or folders of them (in their names'
+/// order) or .m3u playlists, the first in drive 1, F9 and F10
 /// changing drive 1's and drive 2's; a Mockingboard in slot 4, or with
 /// `--mockingboards=N` none, or two (4 and 5); its CPU its own (the 6502,
 /// the enhanced IIe's 65C02), or with `--cpu=` a 6502 or a 65C02
