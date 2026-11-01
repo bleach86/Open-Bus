@@ -28,6 +28,46 @@ pub struct Switches {
     pub dhires: bool,
 }
 
+/// What the picture's shown on: a composite colour monitor; or a
+/// monochrome one, its phosphor white, green or amber, each dot of the
+/// video signal lit, no colour made of them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Monitor {
+    #[default]
+    Colour,
+    White,
+    Green,
+    Amber,
+}
+
+impl Monitor {
+    pub const ALL: [Monitor; 4] = [Monitor::Colour, Monitor::White, Monitor::Green, Monitor::Amber];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Monitor::Colour => "colour",
+            Monitor::White => "white",
+            Monitor::Green => "green",
+            Monitor::Amber => "amber",
+        }
+    }
+
+    /// The one after it, round again.
+    pub fn next(self) -> Monitor {
+        let at = Monitor::ALL.iter().position(|&monitor| monitor == self).unwrap();
+        Monitor::ALL[(at + 1) % Monitor::ALL.len()]
+    }
+
+    /// Its phosphor's colour, lit.
+    fn phosphor(self) -> u32 {
+        match self {
+            Monitor::Colour | Monitor::White => WHITE,
+            Monitor::Green => 0x33FF33,
+            Monitor::Amber => 0xFFB000,
+        }
+    }
+}
+
 /// What a line is drawn from: main RAM; and a IIe's auxiliary RAM and its
 /// video ROM's characters (the II+'s, none: its own are built in).
 pub struct Source<'a> {
@@ -111,9 +151,17 @@ pub fn scanner_address(switches: Switches, line: usize, cycle: usize) -> usize {
 
 /// Line `y` of the picture as it's shown, 560 dots, into `out`: from
 /// `source` by `switches`, the flashing characters inverse while
-/// `flash_on`. With 80COL, text is 80 columns, and with double high-res
-/// on, graphics double; the 40 column modes as on the II+, each dot twice.
-pub fn picture_line(source: &Source, switches: Switches, flash_on: bool, y: usize, out: &mut [u32]) {
+/// `flash_on`, on `monitor`. With 80COL, text is 80 columns, and with
+/// double high-res on, graphics double; the 40 column modes as on the II+,
+/// each dot twice. On a monochrome monitor, the signal's dots, lit.
+pub fn picture_line(source: &Source, switches: Switches, monitor: Monitor, flash_on: bool, y: usize, out: &mut [u32]) {
+    if monitor != Monitor::Colour {
+        let lit = monitor.phosphor();
+        for (dot, colour) in signal_line(source, switches, flash_on, y).iter().zip(out.iter_mut()) {
+            *colour = if *dot { lit } else { BLACK };
+        }
+        return;
+    }
     let text = !switches.graphics || (switches.mixed && y >= 160);
     let double = switches.col80 && (text || switches.dhires);
     if double && text {
@@ -130,6 +178,93 @@ pub fn picture_line(source: &Source, switches: Switches, flash_on: bool, y: usiz
             out[2 * x + 1] = colour;
         }
     }
+}
+
+/// Line `y`'s video signal: 560 dots, lit or not, as a monochrome monitor
+/// shows them. Text, its characters' dots; high-res, each dot two, a byte
+/// with its top bit set a dot later, the dot before held over the gap;
+/// low-res, each block its colour's 4 bits over and over, each dot's place
+/// in the colour signal's cycle its bit (dot 4n bit 0), as colour's made
+/// of them; double graphics, their dots.
+fn signal_line(source: &Source, switches: Switches, flash_on: bool, y: usize) -> [bool; PICTURE_WIDTH] {
+    let mut signal = [false; PICTURE_WIDTH];
+    let text = !switches.graphics || (switches.mixed && y >= 160);
+    let double = switches.col80 && (text || switches.dhires);
+    if text {
+        let start = text_address(switches.page2, y / 8);
+        for place in 0..40 {
+            for (half, memory) in [source.aux, source.main].into_iter().enumerate() {
+                if !double && half == 0 {
+                    continue;
+                }
+                let dots = character_row(source.characters, switches.altcharset, flash_on, memory[start + place], y % 8);
+                for dot in 0..7 {
+                    let on = (dots >> dot) & 1 != 0;
+                    match double {
+                        true => signal[(2 * place + half) * 7 + dot] = on,
+                        false => signal[place * 14 + 2 * dot..place * 14 + 2 * dot + 2].fill(on),
+                    }
+                }
+            }
+        }
+    } else if switches.hires && double {
+        let dots = double_dots(source, switches.page2, y);
+        for (lit, &dot) in signal.iter_mut().zip(&dots) {
+            *lit = dot != 0;
+        }
+    } else if switches.hires {
+        let start = hires_address(switches.page2, y);
+        for place in 0..40 {
+            let byte = source.main[start + place];
+            let shift = (byte >> 7) as usize;
+            let x = place * 14;
+            if shift == 1 && x > 0 {
+                signal[x] = signal[x - 1]; // held over the gap
+            }
+            for bit in 0..7 {
+                let on = (byte >> bit) & 1 != 0;
+                for at in x + 2 * bit + shift..(x + 2 * bit + shift + 2).min(PICTURE_WIDTH) {
+                    signal[at] = on;
+                }
+            }
+        }
+    } else {
+        let start = text_address(switches.page2, y / 8);
+        let nibble = |byte: u8| if y % 8 < 4 { byte & 0x0F } else { byte >> 4 };
+        for place in 0..40 {
+            let blocks = match double {
+                // The auxiliary's colour its nibble rotated, as double
+                // low-res's is.
+                true => {
+                    let aux = nibble(source.aux[start + place]);
+                    [(place * 14, 7, ((aux << 1) | (aux >> 3)) & 0x0F), (place * 14 + 7, 7, nibble(source.main[start + place]))]
+                }
+                false => [(place * 14, 14, nibble(source.main[start + place])), (0, 0, 0)],
+            };
+            for (x, width, colour) in blocks {
+                for at in x..x + width {
+                    signal[at] = (colour >> (at % 4)) & 1 != 0;
+                }
+            }
+        }
+    }
+    signal
+}
+
+/// A double high-res line's 560 dots, 0 or 1: 7 of each byte, an
+/// auxiliary byte's then a main's, the lowest bit first.
+fn double_dots(source: &Source, page2: bool, y: usize) -> [u8; PICTURE_WIDTH] {
+    let start = hires_address(page2, y);
+    let mut dots = [0u8; PICTURE_WIDTH];
+    for place in 0..40 {
+        for (half, memory) in [source.aux, source.main].into_iter().enumerate() {
+            let byte = memory[start + place];
+            for bit in 0..7 {
+                dots[(2 * place + half) * 7 + bit] = (byte >> bit) & 1;
+            }
+        }
+    }
+    dots
 }
 
 /// A notice across the picture's foot, over what's there: a black band 12
@@ -223,16 +358,7 @@ fn dlores_line(source: &Source, page2: bool, y: usize, out: &mut [u32]) {
 /// low-res's their bits make, each its place in the cycle's bit (dot 4n
 /// bit 0). Solid colour as low-res's, edges fringed as on the screen.
 fn dhires_line(source: &Source, page2: bool, y: usize, out: &mut [u32]) {
-    let start = hires_address(page2, y);
-    let mut dots = [0u8; PICTURE_WIDTH];
-    for place in 0..40 {
-        for (half, memory) in [source.aux, source.main].into_iter().enumerate() {
-            let byte = memory[start + place];
-            for bit in 0..7 {
-                dots[(2 * place + half) * 7 + bit] = (byte >> bit) & 1;
-            }
-        }
-    }
+    let dots = double_dots(source, page2, y);
     for (x, colour_out) in out.iter_mut().enumerate().take(PICTURE_WIDTH) {
         let around = (x.saturating_sub(1)..(x + 3).min(PICTURE_WIDTH)).filter(|&at| dots[at] != 0);
         let colour = around.fold(0, |colour, at| colour | 1 << (at % 4));

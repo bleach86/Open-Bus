@@ -1,7 +1,8 @@
 //! The Apple II (the II+, or the IIe): a 6502 at 1.02 MHz; 48K of RAM; the keyboard,
 //! the speaker, the soft switches and the joystick at $C000; a language
-//! card in slot 0, Mockingboards in slots 4 and 5, a Disk II card in
-//! slot 6 and a hard disk card in slot 7, if there are; and 12K of
+//! card in slot 0, a clock card in slot 1, Mockingboards in slots 4 and
+//! 5, a Disk II card in slot 6 and a hard disk card in slot 7, if there
+//! are; and 12K of
 //! ROM at $D000, the monitor and BASIC, from a dump of the machine's own
 //! (not part of this repository). Its picture is drawn a line at a time, as
 //! the video circuit draws it, and shown in a window once a frame; or its
@@ -15,6 +16,7 @@
 //! with lower case and four arrows, its Open-Apple and Solid-Apple keys
 //! the joystick's buttons.
 
+pub mod clock_card;
 pub mod disk2;
 pub mod disk_image;
 pub mod hard_disk;
@@ -25,6 +27,7 @@ pub mod video;
 
 #[cfg(test)]
 mod tests {
+    mod clock_card;
     mod disk2;
     mod disk_writing;
     mod drives;
@@ -82,6 +85,8 @@ pub struct Apple2 {
     pub iie: Option<iie::Iie>,
     /// The language card, in slot 0; the IIe's built in.
     pub language_card: Option<language_card::LanguageCard>,
+    /// The clock card, in slot 1.
+    pub clock: Option<clock_card::ClockCard>,
     /// The Mockingboards, in slots 4 and 5.
     pub mockingboards: [Option<mockingboard::Mockingboard>; 2],
     /// The Disk II card, in slot 6; the hard disk card, in slot 7.
@@ -98,8 +103,10 @@ pub struct Apple2 {
     notice: Option<(String, u32)>,
     /// The window the picture is shown in, and the keys come from.
     pub display: Option<Box<dyn Display>>,
-    /// The picture, as far as this frame has drawn it.
+    /// The picture, as far as this frame has drawn it; and the monitor
+    /// it's shown on, colour or monochrome.
     pub picture: Vec<u32>,
+    pub monitor: video::Monitor,
     // The soft switches.
     pub graphics: bool,
     pub mixed: bool,
@@ -140,6 +147,7 @@ impl Apple2 {
             terminal: None,
             iie: None,
             language_card: None,
+            clock: None,
             mockingboards: [None, None],
             disk2: None,
             hard_disk: None,
@@ -149,6 +157,7 @@ impl Apple2 {
             notice: None,
             display: None,
             picture: vec![0; video::PICTURE_WIDTH * video::HEIGHT],
+            monitor: video::Monitor::Colour,
             graphics: false,
             mixed: false,
             page2: false,
@@ -313,8 +322,9 @@ impl Apple2 {
     }
 
     /// The function keys pressed, as a frame ends, in the window or the
-    /// terminal: F9, the next disk in drive 1; F10, the next in drive 2, or
-    /// none; F12, in the terminal, the Reset key.
+    /// terminal: F8, the next monitor, colour or monochrome; F9, the next
+    /// disk in drive 1; F10, the next in drive 2, or none; F12, in the
+    /// terminal, the Reset key.
     fn function_keys(&mut self) {
         let mut keys = Vec::new();
         if let Some(terminal) = &self.terminal {
@@ -325,6 +335,10 @@ impl Apple2 {
         }
         for key in keys {
             match key {
+                8 => {
+                    self.monitor = self.monitor.next();
+                    self.notice = Some((format!("Monitor: {}", self.monitor.name()), NOTICE_FRAMES));
+                }
                 9 => self.change_disk(0),
                 10 => self.change_disk(1),
                 12 => self.reset_frames = RESET_FRAMES,
@@ -440,7 +454,7 @@ impl Apple2 {
             characters: self.iie.as_ref().map(|iie| &iie.characters[..]),
         };
         let out = &mut self.picture[y * video::PICTURE_WIDTH..(y + 1) * video::PICTURE_WIDTH];
-        video::picture_line(&source, switches, flash_on, y, out);
+        video::picture_line(&source, switches, self.monitor, flash_on, y, out);
     }
 
     /// The soft switches at $C050 to $C057, read or written alike.
@@ -582,6 +596,7 @@ impl Apple2 {
                 }
                 floating
             }
+            0xC090 => self.clock.as_mut().and_then(|card| card.io(addr, written)).unwrap_or(floating),
             0xC0E0 => self.disk2.as_mut().and_then(|card| card.io(addr, written)).unwrap_or(floating),
             0xC0F0 => self.hard_disk.as_mut().and_then(|card| card.io(addr, written)).unwrap_or(floating),
             _ => floating,
@@ -666,9 +681,9 @@ impl Bus for Apple2 {
         match addr {
             0x0000..=0xBFFF => self.ram_read(addr),
             0xC000..=0xC0FF => self.io(addr, None),
-            // A IIe's own ROM, as its MMU says; the Mockingboards' 6522s, in
-            // slots 4 and 5; the Disk II's ROM, in slot 6; the hard disk's,
-            // in 7; no other cards.
+            // A IIe's own ROM, as its MMU says; the clock's, in slot 1; the
+            // Mockingboards' 6522s, in slots 4 and 5; the Disk II's ROM, in
+            // slot 6; the hard disk's, in 7; no other cards.
             0xC100..=0xCFFF => {
                 if let Some(iie) = &mut self.iie {
                     if iie.internal(addr) {
@@ -678,9 +693,10 @@ impl Bus for Apple2 {
                 if let Some(card) = self.mockingboard(addr) {
                     return card.read(addr);
                 }
-                match (addr >> 8, &self.disk2, &self.hard_disk) {
-                    (0xC6, Some(card), _) => card.rom(addr),
-                    (0xC7, _, Some(card)) => card.rom(addr),
+                match (addr >> 8, &self.clock, &self.disk2, &self.hard_disk) {
+                    (0xC1, Some(card), _, _) => card.rom(addr),
+                    (0xC6, _, Some(card), _) => card.rom(addr),
+                    (0xC7, _, _, Some(card)) => card.rom(addr),
                     _ => self.floating_bus(),
                 }
             }
@@ -800,8 +816,8 @@ pub enum Model {
     IIeEnhanced,
 }
 
-/// An Apple run, `model`, with a language card and `mockingboards` (0 to
-/// 2) in slots 4 and 5, its CPU `variant` (or its own: the 6502, the
+/// An Apple run, `model`, with a language card, a clock card in slot 1
+/// and `mockingboards` (0 to 2) in slots 4 and 5, its CPU `variant` (or its own: the 6502, the
 /// enhanced IIe's 65C02): `roms`, for the II+ a dump of its ROM (its last
 /// 12K, $D000 up), for a IIe the folder its ROMs are in, by their names;
 /// `disks` .dsk, .do, .po, .nib or .woz images, or folders or .m3u
@@ -809,9 +825,18 @@ pub enum Model {
 /// or in the IIe's folder, the first in drive 1; and hard disk volumes,
 /// .hdv, .2mg and .po bigger than a floppy, the first two the hard disk's
 /// drives;
-/// in a window, `fullscreen` or not, or `text`, its text screen in the
-/// terminal.
-pub fn run(model: Model, roms: &str, disks: &[&str], mockingboards: usize, variant: Option<Variant>, text: bool, fullscreen: bool) {
+/// in a window, `fullscreen` or not, on `monitor`, or `text`, its text
+/// screen in the terminal.
+pub fn run(
+    model: Model,
+    roms: &str,
+    disks: &[&str],
+    mockingboards: usize,
+    variant: Option<Variant>,
+    monitor: video::Monitor,
+    text: bool,
+    fullscreen: bool,
+) {
     let read = |path: &Path| std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let roms = Path::new(roms);
     let (mut apple, folder, title, size, own_variant) = match model {
@@ -832,6 +857,8 @@ pub fn run(model: Model, roms: &str, disks: &[&str], mockingboards: usize, varia
             (apple, roms.to_path_buf(), "Apple //e", (1120, 768), variant)
         }
     };
+    apple.monitor = monitor;
+    apple.clock = Some(clock_card::ClockCard::new());
     for card in apple.mockingboards.iter_mut().take(mockingboards) {
         *card = Some(mockingboard::Mockingboard::new());
     }

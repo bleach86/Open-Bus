@@ -1,5 +1,5 @@
 //! The hard disk card: its firmware built in, the source's own when cc65
-//! is here to check; its registers, a block read, written (to its image
+//! is here to check (the clock card's too); its registers, a block read, written (to its image
 //! as well) and its errors; its driver, called by the CPU as ProDOS calls
 //! it, roms/hard_disk_test.s (`make -C roms` builds it; without it the
 //! test says so and passes); and ProDOS booting from it, on a II+, a
@@ -19,28 +19,33 @@ mod tests {
     }
 
     #[test]
-    fn its_firmware_is_its_sources() {
+    fn the_cards_firmware_is_its_sources() {
         let cc65 = std::env::var("HOME").map(|home| Path::new(&home).join("cc65/bin")).unwrap_or_default();
         let tool = |name: &str| if cc65.join(name).exists() { cc65.join(name) } else { PathBuf::from(name) };
         let out = std::env::temp_dir().join(format!("cpu_emu_firmware_{}", std::process::id()));
         std::fs::create_dir_all(&out).unwrap();
-        let assembled = std::process::Command::new(tool("ca65"))
-            .args(["-o", out.join("hard_disk.o").to_str().unwrap(), roms().join("hard_disk.s").to_str().unwrap()])
-            .status();
-        if !assembled.is_ok_and(|status| status.success()) {
-            eprintln!("hard disk test: no cc65, to check the firmware against its source");
-            return;
+        for (name, firmware) in [("hard_disk", FIRMWARE), ("clock", crate::machines::apple2::clock_card::FIRMWARE)] {
+            let object = out.join(format!("{name}.o"));
+            let assembled = std::process::Command::new(tool("ca65"))
+                .args(["-o", object.to_str().unwrap(), roms().join(format!("{name}.s")).to_str().unwrap()])
+                .status();
+            if !assembled.is_ok_and(|status| status.success()) {
+                eprintln!("hard disk test: no cc65, to check the firmware against its source");
+                return;
+            }
+            let binary = out.join(format!("{name}.bin"));
+            let linked = std::process::Command::new(tool("ld65"))
+                .args(["-C", roms().join(format!("{name}.cfg")).to_str().unwrap()])
+                .args(["-o", binary.to_str().unwrap(), object.to_str().unwrap()])
+                .status()
+                .unwrap();
+            assert!(linked.success(), "ld65, {name}");
+            let fresh = std::fs::read(&binary).unwrap();
+            assert_eq!(&fresh[..], &firmware[..], "roms/{name}.bin not {name}.s's: run make -C roms and commit it");
         }
-        let linked = std::process::Command::new(tool("ld65"))
-            .args(["-C", roms().join("hard_disk.cfg").to_str().unwrap()])
-            .args(["-o", out.join("hard_disk.bin").to_str().unwrap(), out.join("hard_disk.o").to_str().unwrap()])
-            .status()
-            .unwrap();
-        assert!(linked.success(), "ld65");
-        let fresh = std::fs::read(out.join("hard_disk.bin")).unwrap();
         std::fs::remove_dir_all(&out).unwrap();
-        assert_eq!(fresh, FIRMWARE, "roms/hard_disk.bin not hard_disk.s's: run make -C roms and commit it");
-        // The signature, and its last bytes: two volumes, the driver's place.
+        // The hard disk's signature, and its last bytes: two volumes, the
+        // driver's place.
         assert_eq!([FIRMWARE[1], FIRMWARE[3], FIRMWARE[5], FIRMWARE[7]], [0x20, 0x00, 0x03, 0x3C]);
         assert_eq!(FIRMWARE[0xFE], 0x1F);
     }

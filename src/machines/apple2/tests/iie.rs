@@ -16,7 +16,7 @@ mod tests {
     use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::disk_image::Disk;
     use crate::machines::apple2::iie::{ENHANCED_ROMS, ROMS};
-    use crate::machines::apple2::video::{self, Source, Switches, LORES, PICTURE_WIDTH};
+    use crate::machines::apple2::video::{self, Monitor, Source, Switches, LORES, PICTURE_WIDTH};
     use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME, CYCLES_PER_LINE};
     use std::cell::Cell;
     use std::path::{Path, PathBuf};
@@ -195,7 +195,7 @@ mod tests {
         let chars = characters();
         let source = Source { main, aux, characters: Some(&chars) };
         let mut out = vec![0x123456; PICTURE_WIDTH];
-        video::picture_line(&source, switches, flash_on, y, &mut out);
+        video::picture_line(&source, switches, Monitor::Colour, flash_on, y, &mut out);
         out
     }
 

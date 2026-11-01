@@ -8,7 +8,7 @@
 mod tests {
     use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::language_card::LanguageCard;
-    use crate::machines::apple2::video::{self, Source, LORES, Switches, HEIGHT, PICTURE_WIDTH, WIDTH};
+    use crate::machines::apple2::video::{self, Monitor, Source, LORES, Switches, HEIGHT, PICTURE_WIDTH, WIDTH};
     use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME, CYCLES_PER_LINE, VOLUME};
     use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
@@ -477,5 +477,75 @@ mod tests {
         let samples = heard.take();
         assert!(samples[0].abs() > VOLUME, "no click: the cone in to out, twice the volume");
         assert!(samples[samples.len() - 100..].iter().all(|s| s.abs() < 0.001), "still sounding");
+    }
+
+    /// Line `y` of the picture as shown on `monitor`, 560 dots.
+    fn shown(ram: &[u8], switches: Switches, monitor: Monitor, y: usize) -> Vec<u32> {
+        let mut out = vec![0x123456; PICTURE_WIDTH];
+        video::picture_line(&Source { main: ram, aux: &[], characters: None }, switches, monitor, false, y, &mut out);
+        out
+    }
+
+    #[test]
+    fn a_monochrome_monitor_shows_the_signals_dots() {
+        let green = 0x33FF33;
+        let mut ram = vec![0; 0xC000];
+        // High-res: each dot two of the signal's; a byte with its top bit
+        // set a dot later, the dot before held over the gap.
+        ram[0x2000] = 0x01; // dot 0: 0 and 1
+        ram[0x2001] = 0x81; // shifted: 15 and 16, 14 held (13's, off)
+        ram[0x2002] = 0x40; // dot 6: 40 and 41
+        ram[0x2003] = 0x81; // shifted: 42 held (41's, on), 43 and 44
+        let hires = Switches { graphics: true, hires: true, ..Switches::default() };
+        let line = shown(&ram, hires, Monitor::Green, 0);
+        let lit: Vec<usize> = (0..60).filter(|&x| line[x] == green).collect();
+        assert_eq!(lit, [0, 1, 15, 16, 40, 41, 42, 43, 44], "high-res's dots lit");
+        assert!(line.iter().all(|&dot| dot == green || dot == BLACK), "a colour on a monochrome monitor");
+
+        // Low-res: a block its colour's bits, over and over, each dot's
+        // place in the cycle its bit: 5, %0101, dots 0 and 2 of each 4.
+        ram[0x0400] = 0x05;
+        let lores = Switches { graphics: true, ..Switches::default() };
+        let line = shown(&ram, lores, Monitor::Amber, 0);
+        let lit: Vec<bool> = line[..14].iter().map(|&dot| dot == 0xFFB000).collect();
+        assert_eq!(lit, [true, false, true, false, true, false, true, false, true, false, true, false, true, false]);
+
+        // Text, in the phosphor; and colour as it was.
+        ram[0x0400] = 0x20; // an inverse space: all lit
+        let text = Switches::default();
+        assert!(shown(&ram, text, Monitor::Green, 0)[..14].iter().all(|&dot| dot == green), "text not green");
+        ram[0x2000] = 0x01; // a dot alone: violet, in colour
+        assert_eq!(shown(&ram, hires, Monitor::Colour, 0)[0], LORES[3], "colour not as it was");
+    }
+
+    /// A window of the test's: function keys pressed, as the test says.
+    struct FunctionKeys(Rc<RefCell<Vec<u8>>>);
+
+    impl Display for FunctionKeys {
+        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
+
+        fn key(&mut self) -> Option<Key> {
+            None
+        }
+
+        fn function_key(&mut self) -> Option<u8> {
+            let keys = &mut self.0.borrow_mut();
+            (!keys.is_empty()).then(|| keys.remove(0))
+        }
+    }
+
+    #[test]
+    fn f8_switches_the_monitor() {
+        let mut apple = machine();
+        let keys = Rc::new(RefCell::new(Vec::new()));
+        apple.display = Some(Box::new(FunctionKeys(keys.clone())));
+        for want in [Monitor::White, Monitor::Green, Monitor::Amber, Monitor::Colour] {
+            keys.borrow_mut().push(8);
+            for _ in 0..CYCLES_PER_FRAME {
+                apple.tick();
+            }
+            assert_eq!(apple.monitor, want, "F8");
+            assert!(apple.picture[(HEIGHT - 12) * PICTURE_WIDTH..].iter().any(|&dot| dot == WHITE), "no notice of it");
+        }
     }
 }

@@ -14,9 +14,15 @@ mod chips {
 
 /// The host's side: its window, sound and controls, and its terminal.
 mod host {
+    pub mod clock;
     pub mod display;
     pub mod terminal;
     pub mod window;
+
+    #[cfg(test)]
+    mod tests {
+        mod clock;
+    }
 }
 
 /// The machines the CPU runs in.
@@ -40,11 +46,14 @@ mod machines {
 /// the enhanced IIe's 65C02), or with `--cpu=` a 6502 or a 65C02
 /// (`65c02`, the base one, as the enhanced IIe's; `r65c02`, Rockwell's;
 /// `w65c02`, WDC's); in a window, with `--fullscreen` fullscreen (F11 or a
-/// double click switching), or with `--text` its text screen in the
-/// terminal.
+/// double click switching), its picture in colour or with
+/// `--monitor=white`, `green` or `amber` monochrome (F8 switching); or
+/// with `--text` its text screen in the terminal.
+use machines::apple2::video::Monitor;
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--fullscreen | --text]";
+    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text]";
     match args.get(1).map(String::as_str) {
         Some(machine @ ("apple2" | "apple2e")) => {
             let files: Vec<&String> = args[2..].iter().filter(|arg| !arg.starts_with("--")).collect();
@@ -69,7 +78,11 @@ fn main() {
             };
             let disks: Vec<&str> = files[1..].iter().map(|disk| disk.as_str()).collect();
             let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
-            machines::apple2::run(model, rom, &disks, mockingboards, variant, text, fullscreen);
+            let monitor = match args.iter().find_map(|arg| arg.strip_prefix("--monitor=")) {
+                Some(name) => *Monitor::ALL.iter().find(|monitor| monitor.name() == name).expect(usage),
+                None => Monitor::Colour,
+            };
+            machines::apple2::run(model, rom, &disks, mockingboards, variant, monitor, text, fullscreen);
         }
         _ => machines::basic::run(),
     }
