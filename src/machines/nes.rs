@@ -22,9 +22,12 @@
 //! end. On a halted cycle neither does anything with, the CPU's read is
 //! made again.
 //!
-//! Its sound, the APU's, sampled at the host's rate, through the filters
-//! the NES's own output has: high-passes at 90 Hz and 440 Hz, a low-pass
-//! at 14 kHz.
+//! Its sound, the APU's, through the filters the NES's own output has: a
+//! low-pass at 14 kHz, on the signal as it is, a cycle at a time, with
+//! two more at 20 kHz so that nothing above half the host's rate folds
+//! back in to be heard when it's sampled (a triangle's ultrasonic note,
+//! as games silence it); then sampled at the host's rate, and high-passed
+//! at 90 Hz and 440 Hz.
 //!
 //! A controller, its 8 buttons latched while $4016's bit 0 is written 1,
 //! read a bit at a time (bit 0 of $4016 or $4017) once it's 0: A, B,
@@ -35,6 +38,11 @@
 //! screen's bezel, 8 dots or lines each by default: where games leave
 //! what's not to be seen, sprites put out of the way and tiles being
 //! scrolled in.
+//!
+//! A cartridge's battery-backed RAM, a game's saves, is kept beside its
+//! image, its name with .srm for its extension (as RetroArch keeps it, the
+//! RAM as it is): read at power-on, saved a second after the game writes
+//! it, and as the window closes.
 //!
 //! F2 saves its state, F4 loads it back, beside its image, its name with
 //! .state after; F12 is its Reset button, held.
@@ -47,6 +55,7 @@ pub mod ppu;
 #[cfg(test)]
 mod tests {
     mod cartridge;
+    mod sound;
     mod test_roms;
 }
 
@@ -67,8 +76,10 @@ pub const CLOCK_HZ: u32 = 1_789_773;
 /// How loud it is, of the host's full volume.
 const VOLUME: f32 = 0.6;
 
-/// The output's filters' corners: its two high-passes', its low-pass's.
-const FILTERS: [f32; 3] = [90.0, 440.0, 14_000.0];
+/// The output's filters' corners: its low-passes', a cycle at a time; its
+/// high-passes', a sample at a time.
+const LOW_PASSES: [f32; 3] = [14_000.0, 20_000.0, 20_000.0];
+const HIGH_PASSES: [f32; 2] = [90.0, 440.0];
 
 /// A save state to be saved, or loaded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,11 +148,17 @@ pub struct Nes {
     colours: Vec<u32>,
     #[serde(skip)]
     pub overscan: usize,
+    /// Where the cartridge's battery-backed RAM is kept, if it has any.
+    #[serde(skip)]
+    pub battery_file: Option<PathBuf>,
     #[serde(skip)]
     picture: Vec<u32>,
-    /// The sound: the output summed over the sample being made, and its
-    /// cycles; how far into it, in parts of CLOCK_HZ; the filters' last
-    /// input and output each; the samples made this frame.
+    /// The sound: the low-passes' last outputs; the output summed over the
+    /// sample being made, and its cycles; how far into it, in parts of
+    /// CLOCK_HZ; the high-passes' last input and output each; the samples
+    /// made this frame.
+    #[serde(skip)]
+    low_passes: [f32; 3],
     #[serde(skip)]
     sample_sum: f32,
     #[serde(skip)]
@@ -149,7 +166,7 @@ pub struct Nes {
     #[serde(skip)]
     sample_phase: u32,
     #[serde(skip)]
-    filters: [(f32, f32); 3],
+    high_passes: [(f32, f32); 2],
     #[serde(skip)]
     sound: Vec<f32>,
 }
@@ -178,11 +195,13 @@ impl Nes {
             gamepad: Gamepad::default(),
             colours: palette::palette(),
             overscan: 0,
+            battery_file: None,
             picture: Vec::new(),
+            low_passes: [0.0; 3],
             sample_sum: 0.0,
             sample_cycles: 0,
             sample_phase: 0,
-            filters: [(0.0, 0.0); 3],
+            high_passes: [(0.0, 0.0); 2],
             sound: Vec::new(),
         }
     }
@@ -272,6 +291,22 @@ impl Nes {
         self.halted = self.dma.is_some() || self.dmc_dma.is_some();
     }
 
+    /// The cartridge's battery-backed RAM saved to its file, if it's been
+    /// written: to a file beside it, then put in its place, so it's never
+    /// half saved.
+    fn save_battery(&mut self) {
+        let Some(path) = &self.battery_file else { return };
+        if !self.cartridge.written {
+            return;
+        }
+        self.cartridge.written = false;
+        let saving = path.with_extension("srm.saving");
+        let saved = std::fs::write(&saving, &self.cartridge.prg_ram).and_then(|_| std::fs::rename(&saving, path));
+        if let Err(e) = saved {
+            eprintln!("{}: not saved: {e}", path.display());
+        }
+    }
+
     /// A frame done: shown; the function keys taken, and the Reset button,
     /// the PPU reset while it's held.
     fn frame(&mut self) {
@@ -293,8 +328,12 @@ impl Nes {
             }
             self.reset_held = display.reset_held();
             if display.closed() {
+                self.save_battery();
                 std::process::exit(0);
             }
+        }
+        if self.frames % 60 == 0 {
+            self.save_battery();
         }
         if let Some(display) = &mut self.display {
             display.play(&self.sound);
@@ -306,10 +345,18 @@ impl Nes {
         }
     }
 
-    /// A cycle of sound: the output summed; a sample made when one is due,
-    /// the sum's average through the filters, in both channels.
+    /// A cycle of sound: the output through the low-passes, summed; a
+    /// sample made when one is due, the sum's average through the
+    /// high-passes, in both channels.
     fn sound_cycle(&mut self) {
-        self.sample_sum += self.apu.output();
+        let dt = 1.0 / CLOCK_HZ as f32;
+        let mut output = self.apu.output();
+        for (n, last) in self.low_passes.iter_mut().enumerate() {
+            let rc = 1.0 / (2.0 * std::f32::consts::PI * LOW_PASSES[n]);
+            *last += dt / (rc + dt) * (output - *last);
+            output = *last;
+        }
+        self.sample_sum += output;
         self.sample_cycles += 1;
         self.sample_phase += SAMPLE_RATE;
         if self.sample_phase < CLOCK_HZ {
@@ -319,13 +366,9 @@ impl Nes {
         let mut sample = self.sample_sum / self.sample_cycles as f32;
         (self.sample_sum, self.sample_cycles) = (0.0, 0);
         let dt = 1.0 / SAMPLE_RATE as f32;
-        for (n, (last_in, last_out)) in self.filters.iter_mut().enumerate() {
-            let rc = 1.0 / (2.0 * std::f32::consts::PI * FILTERS[n]);
-            let out = if n < 2 {
-                rc / (rc + dt) * (*last_out + sample - *last_in)
-            } else {
-                *last_out + dt / (rc + dt) * (sample - *last_out)
-            };
+        for (n, (last_in, last_out)) in self.high_passes.iter_mut().enumerate() {
+            let rc = 1.0 / (2.0 * std::f32::consts::PI * HIGH_PASSES[n]);
+            let out = rc / (rc + dt) * (*last_out + sample - *last_in);
             (*last_in, *last_out) = (sample, out);
             sample = out;
         }
@@ -347,6 +390,7 @@ impl Nes {
         self.gamepad = running.gamepad;
         self.colours = std::mem::take(&mut running.colours);
         self.overscan = running.overscan;
+        self.battery_file = running.battery_file.take();
         self.picture = std::mem::take(&mut running.picture);
         self.ppu.frame = std::mem::take(&mut running.ppu.frame);
     }
@@ -375,7 +419,7 @@ impl Bus for Nes {
             }
             0x4000..=0x4017 => self.apu.write(addr, value, self.cycles % 2 == 1),
             0x4018..=0x401F => {}
-            _ => self.cartridge.cpu_write(addr, value),
+            _ => self.cartridge.cpu_write(addr, value, self.cycles),
         }
     }
 
@@ -492,6 +536,15 @@ pub fn run(rom: &str, fullscreen: bool, overscan: usize) {
     let image = image(path).unwrap_or_else(|e| panic!("{rom}: {e}"));
     let cartridge = Cartridge::new(&image).unwrap_or_else(|e| panic!("{rom}: {e}"));
     let mut nes = Nes::new(cartridge);
+    if nes.cartridge.battery {
+        let file = path.with_extension("srm");
+        if let Ok(saved) = std::fs::read(&file) {
+            let ram = &mut nes.cartridge.prg_ram;
+            let len = saved.len().min(ram.len());
+            ram[..len].copy_from_slice(&saved[..len]);
+        }
+        nes.battery_file = Some(file);
+    }
     let name = path.file_stem().map_or(String::new(), |name| name.to_string_lossy().into_owned());
     // Its dots and lines seen, each dot 8:7 as a TV shows it, 3 times over:
     // 823 by 672, of 240 by 224.

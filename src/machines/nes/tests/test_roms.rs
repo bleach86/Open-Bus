@@ -255,4 +255,36 @@ mod tests {
         roms.extend(named("sprdma_and_dmc_dma", &["sprdma_and_dmc_dma", "sprdma_and_dmc_dma_512"]));
         run_all(&strs(&roms), newer_passes);
     }
+
+    #[test]
+    fn blargg_on_mmc1() {
+        run_all(
+            &[
+                "instr_test-v5/all_instrs.nes",
+                "instr_test-v5/official_only.nes",
+                "cpu_interrupts_v2/cpu_interrupts.nes",
+                "ppu_vbl_nmi/ppu_vbl_nmi.nes",
+                "apu_test/apu_test.nes",
+                "instr_misc/instr_misc.nes",
+                "instr_timing/instr_timing.nes",
+            ],
+            newer_passes,
+        );
+    }
+
+    #[test]
+    fn blargg_misc() {
+        let mut roms = named("instr_misc/rom_singles", &["01-abs_x_wrap", "02-branch_wrap", "03-dummy_reads", "04-dummy_reads_apu"]);
+        roms.extend(named("cpu_reset", &["ram_after_reset", "registers"]));
+        roms.push("ppu_read_buffer/test_ppu_read_buffer.nes".to_string());
+        run_all(&strs(&roms), newer_passes);
+    }
+
+    #[test]
+    fn blargg_mmc3() {
+        // The fifth for the MMC3 most boards have; the sixth, the older's
+        // IRQ, isn't.
+        let roms = named("mmc3_test_2/rom_singles", &["1-clocking", "2-details", "3-A12_clocking", "4-scanline_timing", "5-MMC3"]);
+        run_all(&strs(&roms), newer_passes);
+    }
 }

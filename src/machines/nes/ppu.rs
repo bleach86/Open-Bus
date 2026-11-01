@@ -83,9 +83,11 @@ pub struct Ppu {
     /// has; the palette.
     nametables: Vec<u8>,
     palette: [u8; 32],
-    /// The line and dot to come, and whether this frame is odd.
+    /// The line and dot to come, and whether this frame is odd; and the
+    /// dots since power-on.
     pub line: u16,
     pub dot: u16,
+    dots: u64,
     odd: bool,
     short_line: bool,
     /// PPUSTATUS read the dot before the vertical blank's: its flag not set
@@ -144,6 +146,7 @@ impl Ppu {
             palette: [0; 32],
             line: 0,
             dot: 0,
+            dots: 0,
             odd: false,
             short_line: false,
             suppress_vblank: false,
@@ -192,9 +195,13 @@ impl Ppu {
         if self.ctrl & 0x20 != 0 { 16 } else { 8 }
     }
 
-    /// Its own bus, read.
+    /// Its own bus, read: the address on it the cartridge's to see, but the
+    /// palette's, inside the PPU.
     fn read(&mut self, addr: u16, cart: &mut Cartridge) -> u8 {
         let addr = addr & 0x3FFF;
+        if addr < 0x3F00 {
+            cart.ppu_bus(addr, self.dots);
+        }
         match addr {
             0x0000..=0x1FFF => cart.chr_read(addr),
             0x2000..=0x3EFF => self.nametables[cart.mirroring.page(addr) * 0x400 + (addr as usize & 0x3FF)],
@@ -204,6 +211,9 @@ impl Ppu {
 
     fn write(&mut self, addr: u16, value: u8, cart: &mut Cartridge) {
         let addr = addr & 0x3FFF;
+        if addr < 0x3F00 {
+            cart.ppu_bus(addr, self.dots);
+        }
         match addr {
             0x0000..=0x1FFF => cart.chr_write(addr, value),
             0x2000..=0x3EFF => self.nametables[cart.mirroring.page(addr) * 0x400 + (addr as usize & 0x3FF)] = value,
@@ -241,7 +251,7 @@ impl Ppu {
                     self.buffer = self.read(addr, cart);
                     self.drive(value, 0xFF)
                 };
-                self.next_address();
+                self.next_address(cart);
                 value
             }
             _ => self.latch,
@@ -290,12 +300,13 @@ impl Ppu {
                 } else {
                     self.t = (self.t & 0xFF00) | value as u16;
                     self.v = self.t;
+                    cart.ppu_bus(self.v & 0x3FFF, self.dots);
                 }
                 self.w = !self.w;
             }
             7 => {
                 self.write(self.v, value, cart);
-                self.next_address();
+                self.next_address(cart);
             }
             _ => {}
         }
@@ -308,14 +319,16 @@ impl Ppu {
     }
 
     /// PPUDATA's address moved on after an access: by 1, or 32 a line
-    /// down; or, while it renders, as rendering moves it, a tile across
-    /// and a line down at once.
-    fn next_address(&mut self) {
+    /// down, the new address on its bus, as it is while it's idle; or,
+    /// while it renders, as rendering moves it, a tile across and a line
+    /// down at once.
+    fn next_address(&mut self, cart: &mut Cartridge) {
         if self.rendering() && (self.line < 240 || self.line == PRE_RENDER) {
             self.next_tile();
             self.next_line();
         } else {
             self.v = (self.v + if self.ctrl & 0x04 != 0 { 32 } else { 1 }) & 0x7FFF;
+            cart.ppu_bus(self.v & 0x3FFF, self.dots);
         }
     }
 
@@ -397,6 +410,7 @@ impl Ppu {
             self.dot = 340;
         }
         self.dot += 1;
+        self.dots += 1;
         if self.dot == DOTS {
             self.dot = 0;
             self.line += 1;
@@ -497,9 +511,10 @@ impl Ppu {
         self.found = found;
     }
 
-    /// The next line's sprites fetched, dots 257 to 320, a sprite each 8:
-    /// OAMADDR held at 0 meanwhile. Each of the 8 has its pattern fetched,
-    /// those not found tile $FF's.
+    /// The next line's sprites fetched, dots 257 to 320, a sprite each 8,
+    /// its pattern's planes on its fifth and seventh: OAMADDR held at 0
+    /// meanwhile. Each of the 8 has its pattern fetched, those not found
+    /// tile $FF's.
     fn sprite_fetches(&mut self, cart: &mut Cartridge) {
         let dot = self.dot;
         if !(257..=320).contains(&dot) {
@@ -512,7 +527,7 @@ impl Ppu {
             self.zero_on_line = self.zero_found && found > 0;
         }
         let (slot, step) = ((dot - 257) as usize / 8, (dot - 257) % 8);
-        if step != 5 && step != 7 {
+        if step != 4 && step != 6 {
             return;
         }
         let entry = &self.secondary[slot * 4..slot * 4 + 4];
@@ -529,7 +544,7 @@ impl Ppu {
             let table = if self.ctrl & 0x08 != 0 { 0x1000 } else { 0 };
             table | (tile as u16) << 4 | row
         };
-        let mut plane = self.read(addr + if step == 7 { 8 } else { 0 }, cart);
+        let mut plane = self.read(addr + if step == 6 { 8 } else { 0 }, cart);
         if slot >= self.sprite_count {
             return;
         }
@@ -537,7 +552,7 @@ impl Ppu {
             plane = plane.reverse_bits();
         }
         let sprite = &mut self.sprites[slot];
-        if step == 5 {
+        if step == 4 {
             *sprite = Sprite { x, low: plane, high: 0, attributes };
         } else {
             sprite.high = plane;

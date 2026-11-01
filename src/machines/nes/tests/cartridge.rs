@@ -37,7 +37,7 @@ mod tests {
         let mut cart = Cartridge::new(&image(2, 1, [0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0])).unwrap();
         assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000)), (Some(0), Some(1)), "32K, past the trainer");
         assert_eq!((cart.mirroring, cart.battery), (Mirroring::Horizontal, true));
-        cart.cpu_write(0x6123, 0x77);
+        cart.cpu_write(0x6123, 0x77, 0);
         assert_eq!(cart.cpu_read(0x6123), Some(0x77), "its PRG RAM");
         assert_eq!(cart.cpu_read(0x5000), None, "nothing at $5000");
 
