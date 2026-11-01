@@ -1,8 +1,9 @@
-# The ROMs, and the interrupt, bus, WAI and STP, Apple II and Mockingboard
-# tests' programs, built with cc65 (from ~/cc65 if it is there).
+# The ROMs, the hard disk card's firmware, and the interrupt, bus, WAI and
+# STP, Apple II, Mockingboard and hard disk tests' programs, built with
+# cc65 (from ~/cc65 if it is there).
 CC65 ?= $(if $(wildcard $(HOME)/cc65/bin/cl65),$(HOME)/cc65/bin/)
 
-all: monitor.bin interrupt_test.bin bus_test.bin wai_stp_test.bin apple2_test.bin mockingboard_test.bin
+all: monitor.bin interrupt_test.bin bus_test.bin wai_stp_test.bin apple2_test.bin mockingboard_test.bin hard_disk.bin hard_disk_test.bin
 
 monitor.bin: monitor.c crt0.s monitor.cfg
 	$(CC65)cl65 -t none -O -C monitor.cfg -m monitor.map -o $@ crt0.s monitor.c
@@ -30,5 +31,16 @@ mockingboard_test.bin: mockingboard_test.s apple2_test.cfg
 	$(CC65)ca65 -g -o mockingboard_test.o mockingboard_test.s
 	$(CC65)ld65 -C apple2_test.cfg -Ln mockingboard_test.lbl -o $@ mockingboard_test.o
 
+# The same layout as the Apple II test's.
+hard_disk_test.bin: hard_disk_test.s apple2_test.cfg
+	$(CC65)ca65 -g -o hard_disk_test.o hard_disk_test.s
+	$(CC65)ld65 -C apple2_test.cfg -Ln hard_disk_test.lbl -o $@ hard_disk_test.o
+
+# The hard disk card's firmware: committed, as the emulator has it built
+# in (its test checks it's this source's).
+hard_disk.bin: hard_disk.s hard_disk.cfg
+	$(CC65)ca65 -g -o hard_disk.o hard_disk.s
+	$(CC65)ld65 -C hard_disk.cfg -Ln hard_disk.lbl -o $@ hard_disk.o
+
 clean:
-	rm -f monitor.bin monitor.map interrupt_test.bin interrupt_test.lbl bus_test.bin bus_test.lbl wai_stp_test.bin wai_stp_test.lbl apple2_test.bin apple2_test.lbl mockingboard_test.bin mockingboard_test.lbl *.o
+	rm -f monitor.bin monitor.map interrupt_test.bin interrupt_test.lbl bus_test.bin bus_test.lbl wai_stp_test.bin wai_stp_test.lbl apple2_test.bin apple2_test.lbl mockingboard_test.bin mockingboard_test.lbl hard_disk.lbl hard_disk_test.bin hard_disk_test.lbl *.o

@@ -1,7 +1,7 @@
 //! The Apple II (the II+, or the IIe): a 6502 at 1.02 MHz; 48K of RAM; the keyboard,
 //! the speaker, the soft switches and the joystick at $C000; a language
-//! card in slot 0, Mockingboards in slots 4 and 5 and a Disk II card in
-//! slot 6, if there are; and 12K of
+//! card in slot 0, Mockingboards in slots 4 and 5, a Disk II card in
+//! slot 6 and a hard disk card in slot 7, if there are; and 12K of
 //! ROM at $D000, the monitor and BASIC, from a dump of the machine's own
 //! (not part of this repository). Its picture is drawn a line at a time, as
 //! the video circuit draws it, and shown in a window once a frame; or its
@@ -17,6 +17,7 @@
 
 pub mod disk2;
 pub mod disk_image;
+pub mod hard_disk;
 pub mod iie;
 pub mod mockingboard;
 pub mod language_card;
@@ -27,6 +28,7 @@ mod tests {
     mod disk2;
     mod disk_writing;
     mod drives;
+    mod hard_disk;
     mod iie;
     mod language_card;
     mod machine;
@@ -82,8 +84,9 @@ pub struct Apple2 {
     pub language_card: Option<language_card::LanguageCard>,
     /// The Mockingboards, in slots 4 and 5.
     pub mockingboards: [Option<mockingboard::Mockingboard>; 2],
-    /// The Disk II card, in slot 6.
+    /// The Disk II card, in slot 6; the hard disk card, in slot 7.
     pub disk2: Option<disk2::Disk2>,
+    pub hard_disk: Option<hard_disk::HardDisk>,
     /// The disks to hand, their images: put in the drives in turn, by F9
     /// and F10; and which is in each drive.
     pub disks: Vec<PathBuf>,
@@ -139,6 +142,7 @@ impl Apple2 {
             language_card: None,
             mockingboards: [None, None],
             disk2: None,
+            hard_disk: None,
             disks: Vec::new(),
             in_drive: [None, None],
             status: String::new(),
@@ -579,6 +583,7 @@ impl Apple2 {
                 floating
             }
             0xC0E0 => self.disk2.as_mut().and_then(|card| card.io(addr, written)).unwrap_or(floating),
+            0xC0F0 => self.hard_disk.as_mut().and_then(|card| card.io(addr, written)).unwrap_or(floating),
             _ => floating,
         }
     }
@@ -662,7 +667,8 @@ impl Bus for Apple2 {
             0x0000..=0xBFFF => self.ram_read(addr),
             0xC000..=0xC0FF => self.io(addr, None),
             // A IIe's own ROM, as its MMU says; the Mockingboards' 6522s, in
-            // slots 4 and 5; the Disk II's ROM, in slot 6; no other cards.
+            // slots 4 and 5; the Disk II's ROM, in slot 6; the hard disk's,
+            // in 7; no other cards.
             0xC100..=0xCFFF => {
                 if let Some(iie) = &mut self.iie {
                     if iie.internal(addr) {
@@ -672,8 +678,9 @@ impl Bus for Apple2 {
                 if let Some(card) = self.mockingboard(addr) {
                     return card.read(addr);
                 }
-                match &self.disk2 {
-                    Some(card) if addr >> 8 == 0xC6 => card.rom(addr),
+                match (addr >> 8, &self.disk2, &self.hard_disk) {
+                    (0xC6, Some(card), _) => card.rom(addr),
+                    (0xC7, _, Some(card)) => card.rom(addr),
                     _ => self.floating_bus(),
                 }
             }
@@ -777,6 +784,14 @@ impl Bus for Apple2 {
     }
 }
 
+/// Whether the image at `path` is a hard disk's volume, not a floppy: a
+/// .hdv or .2mg, or a .po bigger than a floppy's 140K.
+fn is_volume(path: &Path) -> bool {
+    let kind = path.extension().map_or(String::new(), |kind| kind.to_string_lossy().to_lowercase());
+    let size = std::fs::metadata(path).map_or(0, |file| file.len());
+    matches!(kind.as_str(), "hdv" | "2mg") || (kind == "po" && size > 143_360)
+}
+
 /// Which Apple: the II+; or a IIe, the first or the enhanced.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Model {
@@ -791,7 +806,9 @@ pub enum Model {
 /// 12K, $D000 up), for a IIe the folder its ROMs are in, by their names;
 /// `disks` .dsk, .do, .po, .nib or .woz images, or folders or .m3u
 /// playlists of them, for a Disk II, whose ROMs are found beside the II+'s
-/// or in the IIe's folder, the first in drive 1;
+/// or in the IIe's folder, the first in drive 1; and hard disk volumes,
+/// .hdv, .2mg and .po bigger than a floppy, the first two the hard disk's
+/// drives;
 /// in a window, `fullscreen` or not, or `text`, its text screen in the
 /// terminal.
 pub fn run(model: Model, roms: &str, disks: &[&str], mockingboards: usize, variant: Option<Variant>, text: bool, fullscreen: bool) {
@@ -825,20 +842,30 @@ pub fn run(model: Model, roms: &str, disks: &[&str], mockingboards: usize, varia
     } else {
         apple.display = Some(Box::new(Window::new(title, video::PICTURE_WIDTH, video::HEIGHT, size, fullscreen)));
     }
-    if !disks.is_empty() {
+    // The images, the hard disk's volumes from the Disk II's.
+    let mut images = Vec::new();
+    for disk in disks {
+        images.extend(disk_image::images(Path::new(disk)).unwrap_or_else(|e| panic!("{disk}: {e}")));
+    }
+    let (volumes, floppies): (Vec<PathBuf>, Vec<PathBuf>) = images.into_iter().partition(|image| is_volume(image));
+    if !volumes.is_empty() {
+        assert!(volumes.len() <= 2, "the hard disk has two drives, not {}", volumes.len());
+        let mut card = hard_disk::HardDisk::new();
+        for (unit, volume) in card.units.iter_mut().zip(&volumes) {
+            *unit = Some(hard_disk::Volume::open(volume).unwrap_or_else(|e| panic!("{}: {e}", volume.display())));
+        }
+        apple.hard_disk = Some(card);
+    }
+    if !floppies.is_empty() {
         let beside = |name: &str| read(&folder.join(name));
         let card = disk2::Disk2::new(beside("disk2-p5-341-0027.bin"), &beside("disk2-p6-341-0028.bin"))
             .unwrap_or_else(|e| panic!("the Disk II's ROMs: {e}"));
         apple.disk2 = Some(card);
         // Each image opened, to know it can be; the first put in drive 1.
-        for disk in disks {
-            let images = disk_image::images(Path::new(disk)).unwrap_or_else(|e| panic!("{disk}: {e}"));
-            for image in &images {
-                Disk::open(image).unwrap_or_else(|e| panic!("{}: {e}", image.display()));
-            }
-            apple.disks.extend(images);
+        for image in &floppies {
+            Disk::open(image).unwrap_or_else(|e| panic!("{}: {e}", image.display()));
         }
-        assert!(!apple.disks.is_empty(), "no disk images in {disks:?}");
+        apple.disks = floppies;
         apple.change_disk(0);
     }
 

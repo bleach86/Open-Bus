@@ -1,5 +1,7 @@
-# Built by make
+# Built by make; but the hard disk card's firmware, which the emulator
+# has built in
 *.bin
+!hard_disk.bin
 *.o
 *.map
 *.lbl

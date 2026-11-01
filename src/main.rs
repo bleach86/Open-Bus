@@ -33,7 +33,9 @@ mod machines {
 /// its ROMs are in, by their names, and the Disk II's. The DISKs are .dsk,
 /// .do, .po, .nib or .woz images, or folders of them (in their names'
 /// order) or .m3u playlists, the first in drive 1, F9 and F10
-/// changing drive 1's and drive 2's; a Mockingboard in slot 4, or with
+/// changing drive 1's and drive 2's; hard disk volumes among them (.hdv,
+/// .2mg, and .po bigger than a floppy), up to two, the hard disk card's,
+/// in slot 7, booted first; a Mockingboard in slot 4, or with
 /// `--mockingboards=N` none, or two (4 and 5); its CPU its own (the 6502,
 /// the enhanced IIe's 65C02), or with `--cpu=` a 6502 or a 65C02
 /// (`65c02`, the base one, as the enhanced IIe's; `r65c02`, Rockwell's;
