@@ -11,6 +11,8 @@
 
 use std::fs::OpenOptions;
 use std::io::{Seek, SeekFrom, Write};
+use crate::machines::save_state;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// The firmware, assembled (`make -C roms`) and committed.
@@ -61,8 +63,12 @@ impl Volume {
     }
 }
 
+/// Its volumes aren't in a save state, but where it's at with them: the
+/// machine it's loaded into has them, the same.
+#[derive(Serialize, Deserialize)]
 pub struct HardDisk {
     /// Drives 1 and 2's volumes.
+    #[serde(skip)]
     pub units: [Option<Volume>; 2],
     // The registers: the command, the unit, the block; the last
     // command's error.
@@ -71,6 +77,7 @@ pub struct HardDisk {
     block: u16,
     error: u8,
     /// A block, read or to be written, and the data register's place in it.
+    #[serde(with = "save_state::bytes")]
     buffer: [u8; BLOCK],
     at: usize,
 }

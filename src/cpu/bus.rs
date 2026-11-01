@@ -21,4 +21,11 @@ pub trait Bus {
     fn irq(&self) -> bool {
         false
     }
+
+    /// Whether the machine wants the CPU's run loop handed back to it,
+    /// between instructions: for the machine's state to be saved, say, or
+    /// another put in its place.
+    fn hand_back(&self) -> bool {
+        false
+    }
 }

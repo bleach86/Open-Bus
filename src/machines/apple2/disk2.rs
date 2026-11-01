@@ -32,10 +32,15 @@
 
 use super::CLOCK_HZ;
 use super::disk_image::{Disk, REVOLUTION_BITS, TRACKS};
+use serde::{Deserialize, Serialize};
 
+/// Its PROMs aren't in a save state: the machine it's loaded into has them.
+#[derive(Serialize, Deserialize)]
 pub struct Disk2 {
+    #[serde(skip)]
     boot_rom: Vec<u8>,
     /// P6, rewired into its logical order.
+    #[serde(skip, default = "no_sequencer")]
     sequencer: [u8; 256],
     // The switches.
     phases: u8,
@@ -63,7 +68,7 @@ pub struct Disk2 {
 /// A drive: the disk in it; its head over half-track `half_track`, at bit
 /// `bit` of the track, `step` sequencer steps into the bit; and its read
 /// amplifier's last 4 bits, the latest lowest.
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Drive {
     pub disk: Option<Disk>,
     pub half_track: usize,
@@ -101,6 +106,18 @@ impl Disk2 {
             write_signal: false,
             flux_change: false,
         })
+    }
+
+    /// Its PROMs: P5, and P6 as the sequencer has it.
+    pub fn roms(&self) -> [&[u8]; 2] {
+        [&self.boot_rom, &self.sequencer]
+    }
+
+    /// The PROMs taken from `card`, the card a save state's is loaded
+    /// into.
+    pub fn take_roms(&mut self, card: &mut Disk2) {
+        self.boot_rom = std::mem::take(&mut card.boot_rom);
+        self.sequencer = card.sequencer;
     }
 
     /// The boot ROM, at $C600 to $C6FF.
@@ -316,4 +333,10 @@ fn logical_order(p6: &[u8]) -> [u8; 256] {
         table[logical] = entry;
     }
     table
+}
+
+/// A save state's sequencer, until its card's PROMs are taken from the
+/// card it's loaded into.
+fn no_sequencer() -> [u8; 256] {
+    [0; 256]
 }

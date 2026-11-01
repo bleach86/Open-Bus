@@ -22,6 +22,8 @@
 //! written to them, and that's all. Timer 2 set to count PB6's pulses
 //! holds, none coming.
 
+use serde::{Deserialize, Serialize};
+
 /// The IFR's and IER's bits for the timers, and the IFR's for any.
 const T1: u8 = 0x40;
 const T2: u8 = 0x20;
@@ -45,7 +47,7 @@ const IFR: u8 = 0xD;
 // $E, the IER: the rest.
 const ORA_NO_HANDSHAKE: u8 = 0xF;
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Via6522 {
     // The ports: their output registers, data directions (1, an output),
     // and what drives their pins from outside.

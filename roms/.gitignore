@@ -17,3 +17,5 @@
 *.d13
 # The disks folder: images, and what comes with them
 apple2/disks/
+# Save states, beside the disk or ROM they're of
+*.state

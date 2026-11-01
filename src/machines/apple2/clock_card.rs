@@ -8,12 +8,16 @@
 //! from the day of the week, as a Thunderclock hasn't one.
 
 use crate::host::clock::{self, DateTime};
+use serde::{Deserialize, Serialize};
 
 /// The firmware, assembled (`make -C roms`) and committed.
 pub const FIRMWARE: &[u8; 256] = include_bytes!("../../../roms/clock.bin");
 
+#[derive(Serialize, Deserialize)]
 pub struct ClockCard {
-    /// The time it gives: the host's, now; or, for a test, this.
+    /// The time it gives: the host's, now; or, for a test, this (the
+    /// test's own, not in a save state).
+    #[serde(skip)]
     pub fixed: Option<DateTime>,
     /// The time taken, as its text, and the place read to in it.
     text: Vec<u8>,

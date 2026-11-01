@@ -18,6 +18,8 @@
 //! annunciator 3, its $C05E switching double high-res on, $C05F off. Each
 //! switch is read back at $C011 to $C01F, in bit 7.
 
+use serde::{Deserialize, Serialize};
+
 /// The enhanced IIe's ROMs, by the names they're dumped under: its CD
 /// ROM ($C000 to $DFFF), its EF ROM ($E000 to $FFFF), its video ROM.
 pub const ENHANCED_ROMS: [&str; 3] = [
@@ -33,14 +35,18 @@ pub const ROMS: [&str; 3] = [
     "Apple IIe Video ROM - 342-0133-A - US 1982.bin",
 ];
 
+/// Its ROMs aren't in a save state: the machine it's loaded into has them.
+#[derive(Serialize, Deserialize)]
 pub struct Iie {
     /// The auxiliary 48K, $0000 to $BFFF; its 16K more is the language
     /// card's.
     pub aux: Vec<u8>,
     /// The ROM's $C000 to $CFFF: its own firmware, $C100 up.
+    #[serde(skip)]
     pub internal_rom: Vec<u8>,
     /// The video ROM: each character's 8 rows of dots, the lowest bit the
     /// leftmost, a dot shown where its bit is 0.
+    #[serde(skip)]
     pub characters: Vec<u8>,
     // The MMU's switches.
     pub store80: bool,

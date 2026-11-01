@@ -23,6 +23,7 @@ pub mod hard_disk;
 pub mod iie;
 pub mod mockingboard;
 pub mod language_card;
+pub mod save_state;
 pub mod video;
 
 #[cfg(test)]
@@ -36,6 +37,7 @@ mod tests {
     mod language_card;
     mod machine;
     mod mockingboard;
+    mod save_state;
 }
 
 use crate::cpu::{Variant, CPU};
@@ -44,6 +46,7 @@ use crate::host::display::{Display, Joystick, Key, SAMPLE_RATE};
 use crate::host::terminal::Terminal;
 use crate::host::window::Window;
 use disk_image::Disk;
+use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -75,11 +78,17 @@ const RESET_FRAMES: u32 = 6;
 /// How long a notice is shown over the picture: 3 seconds.
 const NOTICE_FRAMES: u32 = 180;
 
+/// In a save state, all but its ROMs and the host's side (its window or
+/// terminal, the picture and sound, what's shown), which the machine it's
+/// loaded into has.
+#[derive(Serialize, Deserialize)]
 pub struct Apple2 {
     pub ram: Vec<u8>,
+    #[serde(skip)]
     pub rom: Vec<u8>,
     /// The keyboard: the last key, bit 7 set until $C010 clears it.
     pub keyboard: u8,
+    #[serde(skip)]
     pub terminal: Option<Terminal>,
     /// The IIe's own, on a IIe.
     pub iie: Option<iie::Iie>,
@@ -99,13 +108,22 @@ pub struct Apple2 {
     /// What's in the drives, said under the terminal's screen; and a
     /// notice over the window's picture, a disk put in, and the frames
     /// more it's shown.
+    #[serde(skip)]
     status: String,
+    #[serde(skip)]
     notice: Option<(String, u32)>,
+    /// A save state to be saved or loaded, by F2 or F4, the CPU's run loop
+    /// handed back for it.
+    #[serde(skip)]
+    pub state_wanted: Option<save_state::Wanted>,
     /// The window the picture is shown in, and the keys come from.
+    #[serde(skip)]
     pub display: Option<Box<dyn Display>>,
     /// The picture, as far as this frame has drawn it; and the monitor
     /// it's shown on, colour or monochrome.
+    #[serde(skip)]
     pub picture: Vec<u32>,
+    #[serde(skip)]
     pub monitor: video::Monitor,
     // The soft switches.
     pub graphics: bool,
@@ -122,6 +140,7 @@ pub struct Apple2 {
     sample_voices: (f32, f32),
     sample_phase: u32,
     settle: [(f32, f32); 2],
+    #[serde(skip)]
     sound: Vec<f32>,
     /// When each paddle's timer runs out, started by $C070.
     paddle_until: [u64; 4],
@@ -133,6 +152,7 @@ pub struct Apple2 {
     cycle: u32,
     pub frames: u32,
     /// The screen as last drawn in the terminal.
+    #[serde(skip)]
     shown: String,
 }
 
@@ -155,6 +175,7 @@ impl Apple2 {
             in_drive: [None, None],
             status: String::new(),
             notice: None,
+            state_wanted: None,
             display: None,
             picture: vec![0; video::PICTURE_WIDTH * video::HEIGHT],
             monitor: video::Monitor::Colour,
@@ -322,9 +343,10 @@ impl Apple2 {
     }
 
     /// The function keys pressed, as a frame ends, in the window or the
-    /// terminal: F8, the next monitor, colour or monochrome; F9, the next
-    /// disk in drive 1; F10, the next in drive 2, or none; F12, in the
-    /// terminal, the Reset key.
+    /// terminal: F2, the machine's state saved; F4, loaded back; F8, the
+    /// next monitor, colour or monochrome; F9, the next disk in drive 1;
+    /// F10, the next in drive 2, or none; F12, in the terminal, the Reset
+    /// key.
     fn function_keys(&mut self) {
         let mut keys = Vec::new();
         if let Some(terminal) = &self.terminal {
@@ -335,6 +357,8 @@ impl Apple2 {
         }
         for key in keys {
             match key {
+                2 => self.state_wanted = Some(save_state::Wanted::Save),
+                4 => self.state_wanted = Some(save_state::Wanted::Load),
                 8 => {
                     self.monitor = self.monitor.next();
                     self.notice = Some((format!("Monitor: {}", self.monitor.name()), NOTICE_FRAMES));
@@ -798,6 +822,10 @@ impl Bus for Apple2 {
     fn irq(&self) -> bool {
         self.mockingboards.iter().flatten().any(mockingboard::Mockingboard::irq)
     }
+
+    fn hand_back(&self) -> bool {
+        self.state_wanted.is_some()
+    }
 }
 
 /// Whether the image at `path` is a hard disk's volume, not a floppy: a
@@ -826,7 +854,8 @@ pub enum Model {
 /// .hdv, .2mg and .po bigger than a floppy, the first two the hard disk's
 /// drives;
 /// in a window, `fullscreen` or not, on `monitor`, or `text`, its text
-/// screen in the terminal.
+/// screen in the terminal. Its save state is kept beside its first disk,
+/// or its ROM.
 pub fn run(
     model: Model,
     roms: &str,
@@ -839,6 +868,7 @@ pub fn run(
 ) {
     let read = |path: &Path| std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let roms = Path::new(roms);
+    let state = save_state::path(disks.first().map_or(roms, |disk| Path::new(disk)));
     let (mut apple, folder, title, size, own_variant) = match model {
         Model::IIPlus => {
             let rom = read(roms);
@@ -900,5 +930,9 @@ pub fn run(
     cpu.clock_hz = CLOCK_HZ;
     cpu.variant = variant.unwrap_or(own_variant);
     cpu.reset();
-    cpu.execute_forever();
+    // Run, handed back for a save state, saved or loaded, then on.
+    loop {
+        cpu.execute_forever();
+        save_state::wanted(&mut cpu, &state);
+    }
 }

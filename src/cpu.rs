@@ -14,6 +14,7 @@ mod tests {
 use crate::cpu::bus::Bus;
 use crate::cpu::instructions::op_codes::Opcode;
 use crate::machines::basic::Memory;
+use serde::{Deserialize, Serialize};
 use std::{
     thread::sleep,
     time::{Duration, Instant},
@@ -37,7 +38,7 @@ pub enum Registers {
     Y,
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 pub struct StatusRegister {
     pub carry: bool,
     pub zero: bool,
@@ -81,7 +82,7 @@ const PACES_PER_SECOND: u64 = 2_000; // check every 0.5 ms of emulated time
 /// enhanced Apple IIe), Rockwell's with its bit instructions, or WDC's with
 /// those and WAI and STP. The 65C02s fix the 6502's bugs, make its unused
 /// opcodes NOPs, and take their dummy cycles differently.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Variant {
     #[default]
     Nmos6502,
@@ -90,7 +91,7 @@ pub enum Variant {
     Wdc65C02,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CPU<B: Bus = Memory> {
     pub pc: u16,                // Program Counter
     pub sp: u8,                 // Stack Pointer (8-bit, page $0100)
@@ -166,6 +167,7 @@ impl<B: Bus> CPU<B> {
         self.stopped = false;
     }
 
+    /// Run, until the machine wants the run loop handed back.
     pub fn execute_forever(&mut self) {
         let cycles = u32::MAX;
 
@@ -205,6 +207,11 @@ impl<B: Bus> CPU<B> {
                 self.wait_cycle();
             } else {
                 self.step();
+            }
+
+            // The machine wants it back, between instructions.
+            if self.memory.hand_back() {
+                break;
             }
 
             let used = self.clock.wrapping_sub(cycle_start) as u64;

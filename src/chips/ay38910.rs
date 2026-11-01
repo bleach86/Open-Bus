@@ -14,6 +14,8 @@
 //! through (each enabled by a 0), or has either off: its volume, or the
 //! envelope's, the level of its DAC, 3 dB a step.
 
+use serde::{Deserialize, Serialize};
+
 /// Each register's bits.
 const MASKS: [u8; 16] = [
     0xFF, 0x0F, 0xFF, 0x0F, 0xFF, 0x0F, 0x1F, 0xFF, 0x1F, 0x1F, 0x1F, 0xFF, 0xFF, 0x0F, 0xFF, 0xFF,
@@ -29,6 +31,7 @@ pub const LEVELS: [f32; 16] = [
     0.176_777, 0.25, 0.353_553, 0.5, 0.707_107, 1.0,
 ];
 
+#[derive(Serialize, Deserialize)]
 pub struct Ay38910 {
     pub regs: [u8; 16],
     /// The register latched, for the bus's next write or read: over 15,

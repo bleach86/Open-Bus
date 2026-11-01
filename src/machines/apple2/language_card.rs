@@ -20,6 +20,9 @@
 //! The IIe has one built in, and with the auxiliary 64K a second 16K: the
 //! MMU's ALTZP picks which, the switches the same for both.
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
 pub struct LanguageCard {
     /// Bank 1, bank 2 ($D000 to $DFFF, each), then $E000 to $FFFF; and the
     /// IIe's auxiliary 16K, laid out the same (none on a II+'s card).

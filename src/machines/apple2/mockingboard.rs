@@ -10,7 +10,9 @@
 
 use crate::chips::ay38910::Ay38910;
 use crate::chips::via6522::Via6522;
+use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize)]
 pub struct Mockingboard {
     pub vias: [Via6522; 2],
     pub ays: [Ay38910; 2],

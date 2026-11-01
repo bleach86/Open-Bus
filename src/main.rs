@@ -29,6 +29,7 @@ mod host {
 mod machines {
     pub mod apple2;
     pub mod basic;
+    pub mod save_state;
 }
 
 /// The machine to run: `cpu_emu` for this one, with BASIC; `cpu_emu apple2
@@ -48,7 +49,8 @@ mod machines {
 /// `w65c02`, WDC's); in a window, with `--fullscreen` fullscreen (F11 or a
 /// double click switching), its picture in colour or with
 /// `--monitor=white`, `green` or `amber` monochrome (F8 switching); or
-/// with `--text` its text screen in the terminal.
+/// with `--text` its text screen in the terminal. F2 saves its state, F4
+/// loads it back: beside the first DISK, or the ROM, its name and .state.
 use machines::apple2::video::Monitor;
 
 fn main() {

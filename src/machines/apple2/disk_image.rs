@@ -19,6 +19,8 @@
 //! sectors, read back off its tracks, every one of which must read; a .nib
 //! by its tracks' bytes; a .woz by its bits, as a WOZ2.
 
+use serde::de::Error;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::path::{Path, PathBuf};
 
 pub const TRACKS: usize = 35;
@@ -37,6 +39,7 @@ pub const REVOLUTION_BITS: usize = 50_000;
 
 /// A disk: its tracks' bits, one a byte (0 or 1); and at each half-track,
 /// which track is under the head, if one is.
+#[derive(Serialize, Deserialize)]
 pub struct Disk {
     pub tracks: Vec<Vec<u8>>,
     pub half_tracks: Vec<Option<usize>>,
@@ -52,13 +55,45 @@ pub struct Disk {
 
 /// The kind of image a disk was read from, and what saving it needs that
 /// its tracks don't keep.
+#[derive(Serialize)]
 enum Format {
     Nib,
-    /// A .dsk or .po: its sectors' order, and which it is.
+    /// A .dsk or .po: its sectors' order, and which it is; in a save
+    /// state, which it is.
+    #[serde(serialize_with = "save_sectors")]
     Sectors(&'static [usize; 16], &'static str),
     /// A .woz: its map's quarter-tracks between the half-tracks, its INFO
     /// and its META, if it had one.
     Woz { quarters: Vec<u8>, info: Vec<u8>, meta: Option<Vec<u8>> },
+}
+
+/// A .dsk's or .po's format, saved: which it is.
+fn save_sectors<S: Serializer>(_order: &&'static [usize; 16], kind: &&'static str, serializer: S) -> Result<S::Ok, S::Error> {
+    kind.serialize(serializer)
+}
+
+/// A format as a save state has it, a .dsk's or .po's by which it is:
+/// loaded as this, then made the format, as serde would borrow a
+/// `&'static str` from the state.
+#[derive(Deserialize)]
+enum SavedFormat {
+    Nib,
+    Sectors(String),
+    Woz { quarters: Vec<u8>, info: Vec<u8>, meta: Option<Vec<u8>> },
+}
+
+impl<'de> Deserialize<'de> for Format {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Format, D::Error> {
+        Ok(match SavedFormat::deserialize(deserializer)? {
+            SavedFormat::Nib => Format::Nib,
+            SavedFormat::Sectors(kind) => match kind.as_str() {
+                ".dsk" => Format::Sectors(&DOS_ORDER, ".dsk"),
+                ".po" => Format::Sectors(&PRODOS_ORDER, ".po"),
+                _ => return Err(D::Error::custom(format!("{kind}: not a .dsk or .po"))),
+            },
+            SavedFormat::Woz { quarters, info, meta } => Format::Woz { quarters, info, meta },
+        })
+    }
 }
 
 /// DOS 3.3's 64 disk bytes, for 6 bits each: bytes with their top bit set
