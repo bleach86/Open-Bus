@@ -107,6 +107,7 @@ pub struct CPU<B: Bus = Memory> {
     pub nmi: bool,              // NMI: an edge, taken once
     nmi_line: bool,             // the machine's NMI line, as last sampled
     irq_seen: bool,             // its IRQ line, as last sampled: what's polled
+    irq_before: bool,           // and as sampled the cycle before that
     in_reset: bool,             // held in reset: resets when RESET is let go
     jammed: Option<u8>,         // stopped by a JAM: its cycles since, up to 3
     waiting: bool,              // a WDC 65C02 at WAI, for an interrupt
@@ -137,6 +138,7 @@ impl<B: Bus> CPU<B> {
             nmi: false,
             nmi_line: false,
             irq_seen: false,
+            irq_before: false,
             in_reset: false,
             jammed: None,
             waiting: false,
@@ -278,8 +280,11 @@ impl<B: Bus> CPU<B> {
         }
 
         // The 6502 looks at IRQ before an instruction's last cycle: the I
-        // that CLI, SEI and PLP set on that cycle counts from the next.
+        // that CLI, SEI and PLP set on that cycle counts from the next. BRK,
+        // an interrupt's sequence, looks at none: its handler's first
+        // instruction runs before another is taken.
         let masked = match Opcode::decode(opcode, self.variant) {
+            Opcode::BRK => return,
             Opcode::CLI | Opcode::SEI | Opcode::PLP => i_before,
             _ => self.status.interrupt_disable,
         };
@@ -1087,6 +1092,7 @@ impl<B: Bus> CPU<B> {
         let nmi_line = self.memory.nmi();
         self.nmi |= nmi_line && !self.nmi_line;
         self.nmi_line = nmi_line;
+        self.irq_before = self.irq_seen;
         self.irq_seen = self.irq || self.memory.irq();
     }
 
@@ -1095,9 +1101,9 @@ impl<B: Bus> CPU<B> {
     /// the read is made again on one of its own.
     pub fn read_byte(&mut self, addr: u16) -> u8 {
         self.advance_clock();
-        if self.memory.halt() {
+        if self.memory.halt(addr) {
             self.memory.read(addr);
-            while self.memory.halt() {
+            while self.memory.halt(addr) {
                 self.advance_clock();
             }
             self.advance_clock();

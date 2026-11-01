@@ -36,6 +36,10 @@ impl<B: Bus> CPU<B> {
         // Another page: the target is read first with the old high byte
         if (self.pc & 0xFF00) != (original_pc & 0xFF00) {
             self.read_byte((original_pc & 0xFF00) | (self.pc & 0x00FF));
+        } else if !self.cmos() {
+            // On the 6502, not: an IRQ come in its last cycle isn't seen
+            // till the next instruction's end.
+            self.irq_seen = self.irq_before;
         }
     }
 

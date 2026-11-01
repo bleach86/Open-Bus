@@ -56,7 +56,9 @@ mod tests {
     /// A blargg test of the newer kind run: its result, and its text.
     fn newer(cpu: &mut CPU<Nes>) -> (u8, String) {
         let ram = |cpu: &mut CPU<Nes>, addr: u16| cpu.memory.cartridge.cpu_read(addr).unwrap_or(0);
-        let mut reset_at = None;
+        // Its Reset button: when it was asked for, when it was pressed, and
+        // whether it's been let go, the status not yet written again.
+        let (mut asked_at, mut reset_at, mut let_go) = (None, None, false);
         while cpu.clock < 60 * CLOCK_HZ {
             cpu.execute(CLOCK_HZ / 100);
             let signed = [0x6001, 0x6002, 0x6003].map(|addr| ram(cpu, addr)) == [0xDE, 0xB0, 0x61];
@@ -64,21 +66,29 @@ mod tests {
             if !signed {
                 continue;
             }
-            // To be reset: its button held a little, then let go.
-            if status == 0x81 && reset_at.is_none() {
+            // To be reset: a couple of frames on, as the tests ask, its
+            // button held a little, then let go.
+            if status != 0x81 {
+                (asked_at, let_go) = (None, false);
+            }
+            if status == 0x81 && asked_at.is_none() && !let_go {
+                asked_at = Some(cpu.clock);
+            }
+            if asked_at.is_some_and(|at| cpu.clock - at > CLOCK_HZ / 20) && reset_at.is_none() && !let_go {
                 reset_at = Some(cpu.clock);
                 cpu.memory.reset_held = true;
             }
             if reset_at.is_some_and(|at| cpu.clock - at > CLOCK_HZ / 10) {
                 cpu.memory.reset_held = false;
-                reset_at = None;
+                (reset_at, let_go) = (None, true);
             }
             if status < 0x80 {
                 let text: Vec<u8> = (0x6004..0x7000).map(|addr| ram(cpu, addr)).take_while(|&byte| byte != 0).collect();
                 return (status, String::from_utf8_lossy(&text).trim().to_string());
             }
         }
-        (0xFF, "never finished".to_string())
+        let text: Vec<u8> = (0x6004..0x7000).map(|addr| ram(cpu, addr)).take_while(|&byte| byte != 0).collect();
+        (0xFF, format!("never finished: {}", String::from_utf8_lossy(&text).trim()))
     }
 
     /// A blargg test of 2005's run for `seconds`: its result, at `at`.
@@ -194,5 +204,55 @@ mod tests {
             .map(|name| format!("vbl_nmi_timing/{name}.nes"))
             .collect();
         run_all(&roms.iter().map(String::as_str).collect::<Vec<_>>(), old_passes(8, 0xF8));
+    }
+
+    /// The ROMs named `names` in `folder`, as `.nes` files.
+    fn named(folder: &str, names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| format!("{folder}/{name}.nes")).collect()
+    }
+
+    fn strs(roms: &[String]) -> Vec<&str> {
+        roms.iter().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn blargg_apu() {
+        let roms = named(
+            "apu_test/rom_singles",
+            &["1-len_ctr", "2-len_table", "3-irq_flag", "4-jitter", "5-len_timing", "6-irq_flag_timing", "7-dmc_basics", "8-dmc_rates"],
+        );
+        run_all(&strs(&roms), newer_passes);
+    }
+
+    #[test]
+    fn blargg_apu_2005() {
+        let roms = named(
+            "blargg_apu_2005.07.30",
+            &[
+                "01.len_ctr", "02.len_table", "03.irq_flag", "04.clock_jitter", "05.len_timing_mode0", "06.len_timing_mode1",
+                "07.irq_flag_timing", "08.irq_timing", "09.reset_timing", "10.len_halt_timing", "11.len_reload_timing",
+            ],
+        );
+        run_all(&strs(&roms), old_passes(10, 0xF0));
+    }
+
+    #[test]
+    fn blargg_apu_reset() {
+        let roms = named(
+            "apu_reset",
+            &["4015_cleared", "4017_timing", "4017_written", "irq_flag_cleared", "len_ctrs_enabled", "works_immediately"],
+        );
+        run_all(&strs(&roms), newer_passes);
+    }
+
+    #[test]
+    fn blargg_cpu_interrupts_and_timing() {
+        let mut roms = named(
+            "cpu_interrupts_v2/rom_singles",
+            &["1-cli_latency", "2-nmi_and_brk", "3-nmi_and_irq", "4-irq_and_dma", "5-branch_delays_irq"],
+        );
+        roms.extend(named("instr_timing/rom_singles", &["1-instr_timing", "2-branch_timing"]));
+        roms.extend(named("sprdma_and_dmc_dma", &["sprdma_and_dmc_dma", "sprdma_and_dmc_dma_512"]));
+        run_all(&strs(&roms), newer_passes);
     }
 }

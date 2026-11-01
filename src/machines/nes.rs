@@ -7,13 +7,24 @@
 //! PPU's 8 registers, $2000 to $2007, and again to $3FFF; the APU's and
 //! the I/O's, $4000 to $4017: OAM DMA ($4014), the controllers ($4016 and
 //! $4017); and the cartridge's, $4020 up. A read of what nothing answers
-//! is open bus: the last byte on the bus. The PPU's vertical blank pulls
-//! the CPU's NMI.
+//! is open bus: the last byte on the bus ($4015's read is the APU's own,
+//! not on it). The PPU's vertical blank pulls the CPU's NMI; the APU's
+//! frame counter and DMC, and the cartridge, its IRQ.
 //!
 //! OAM DMA, a write of a page's number to $4014: the 256 bytes of that
 //! page copied to OAMDATA, the CPU halted on its next read meanwhile, a
 //! cycle to halt it, a byte read on each "get" cycle and written on the
 //! "put" after, a cycle more first if the first is a put: 513 or 514.
+//! The DMC's DMA, a byte of its sample: a cycle halting the CPU, a dummy
+//! cycle, a cycle more to a get if need be, and the get. During OAM DMA,
+//! its cycles go on beside OAM DMA's, but for its get, which OAM DMA waits
+//! for, a cycle more to line up again: 2 more cycles; 1 or 3 at OAM DMA's
+//! end. On a halted cycle neither does anything with, the CPU's read is
+//! made again.
+//!
+//! Its sound, the APU's, sampled at the host's rate, through the filters
+//! the NES's own output has: high-passes at 90 Hz and 440 Hz, a low-pass
+//! at 14 kHz.
 //!
 //! A controller, its 8 buttons latched while $4016's bit 0 is written 1,
 //! read a bit at a time (bit 0 of $4016 or $4017) once it's 0: A, B,
@@ -23,6 +34,7 @@
 //! F2 saves its state, F4 loads it back, beside its image, its name with
 //! .state after; F12 is its Reset button, held.
 
+pub mod apu;
 pub mod cartridge;
 pub mod palette;
 pub mod ppu;
@@ -35,9 +47,10 @@ mod tests {
 
 use crate::cpu::{Variant, CPU};
 use crate::cpu::bus::Bus;
-use crate::host::display::{Display, Gamepad};
+use crate::host::display::{Display, Gamepad, SAMPLE_RATE};
 use crate::host::window::Window;
 use crate::machines::save_state;
+use apu::Apu;
 use cartridge::Cartridge;
 use ppu::Ppu;
 use serde::{Deserialize, Serialize};
@@ -46,6 +59,12 @@ use std::path::{Path, PathBuf};
 /// The NTSC NES's: the crystal's 21,477,272 Hz, a twelfth.
 pub const CLOCK_HZ: u32 = 1_789_773;
 
+/// How loud it is, of the host's full volume.
+const VOLUME: f32 = 0.6;
+
+/// The output's filters' corners: its two high-passes', its low-pass's.
+const FILTERS: [f32; 3] = [90.0, 440.0, 14_000.0];
+
 /// A save state to be saved, or loaded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Wanted {
@@ -53,12 +72,20 @@ pub enum Wanted {
     Load,
 }
 
-/// OAM DMA under way: the page; whether it has the CPU halted yet; the
-/// byte read, to be written; and how many have been.
+/// The DMC's DMA, a step at a time: its halt, its dummy cycle, then its
+/// get (on a get cycle, a cycle to line up first if need be).
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum DmcStep {
+    Halt,
+    Dummy,
+    Get,
+}
+
+/// OAM DMA under way: the page; the byte read, to be written; and how
+/// many have been.
 #[derive(Serialize, Deserialize)]
 struct Dma {
     page: u8,
-    halted: bool,
     value: Option<u8>,
     done: u16,
 }
@@ -69,13 +96,19 @@ struct Dma {
 pub struct Nes {
     pub ram: Vec<u8>,
     pub ppu: Ppu,
+    pub apu: Apu,
     pub cartridge: Cartridge,
     /// The controllers' shift registers, and whether they're latching.
     shifts: [u8; 2],
     strobe: bool,
     /// The last byte on the CPU's bus.
     open_bus: u8,
+    /// OAM DMA; the DMC's; whether the CPU's halted for them, and the
+    /// address of the read it's halted on.
     dma: Option<Dma>,
+    dmc_dma: Option<DmcStep>,
+    halted: bool,
+    halted_on: u16,
     /// The NMI and IRQ lines at the end of the last cycle, for the CPU.
     nmi_line: bool,
     irq_line: bool,
@@ -98,6 +131,19 @@ pub struct Nes {
     colours: Vec<u32>,
     #[serde(skip)]
     picture: Vec<u32>,
+    /// The sound: the output summed over the sample being made, and its
+    /// cycles; how far into it, in parts of CLOCK_HZ; the filters' last
+    /// input and output each; the samples made this frame.
+    #[serde(skip)]
+    sample_sum: f32,
+    #[serde(skip)]
+    sample_cycles: u32,
+    #[serde(skip)]
+    sample_phase: u32,
+    #[serde(skip)]
+    filters: [(f32, f32); 3],
+    #[serde(skip)]
+    sound: Vec<f32>,
 }
 
 impl Nes {
@@ -105,11 +151,15 @@ impl Nes {
         Nes {
             ram: vec![0; 0x800],
             ppu: Ppu::new(),
+            apu: Apu::new(),
             cartridge,
             shifts: [0; 2],
             strobe: false,
             open_bus: 0,
             dma: None,
+            dmc_dma: None,
+            halted: false,
+            halted_on: 0,
             nmi_line: false,
             irq_line: false,
             cycles: 0,
@@ -120,6 +170,11 @@ impl Nes {
             gamepad: Gamepad::default(),
             colours: palette::palette(),
             picture: vec![0; ppu::WIDTH * ppu::HEIGHT],
+            sample_sum: 0.0,
+            sample_cycles: 0,
+            sample_phase: 0,
+            filters: [(0.0, 0.0); 3],
+            sound: Vec::new(),
         }
     }
 
@@ -151,35 +206,61 @@ impl Nes {
         match addr {
             0x0000..=0x1FFF => self.ram[addr as usize & 0x7FF],
             0x2000..=0x3FFF => self.ppu.read_register(addr, &mut self.cartridge),
+            0x4015 => self.apu.status(self.open_bus),
             0x4016 | 0x4017 => self.controller(addr as usize - 0x4016) | (self.open_bus & 0xE0),
             0x4000..=0x401F => self.open_bus,
             _ => self.cartridge.cpu_read(addr).unwrap_or(self.open_bus),
         }
     }
 
-    /// A cycle of OAM DMA, the CPU halted: a byte read on a get cycle, the
-    /// even ones; written on the put after.
+    /// A cycle of DMA, the CPU halted, the odd cycles gets: the DMC's step,
+    /// its byte read on its get; OAM DMA's, a byte read on a get and
+    /// written on the put after, unless the DMC's get has the cycle. If
+    /// neither does anything, the CPU's read made again.
     fn dma_cycle(&mut self) {
-        let Some(dma) = &self.dma else { return };
-        let get = self.cycles % 2 == 0;
-        match dma.value {
-            None if get => {
-                let addr = (dma.page as u16) << 8 | dma.done;
-                let value = self.cpu_read(addr);
-                self.open_bus = value;
-                self.dma.as_mut().unwrap().value = Some(value);
-            }
-            Some(value) if !get => {
-                self.ppu.dma_write(value);
-                let dma = self.dma.as_mut().unwrap();
-                dma.value = None;
-                dma.done += 1;
-                if dma.done == 256 {
-                    self.dma = None;
+        let get = self.cycles % 2 == 1;
+        let mut busy = false;
+        match self.dmc_dma {
+            Some(DmcStep::Halt) => self.dmc_dma = Some(DmcStep::Dummy),
+            Some(DmcStep::Dummy) => self.dmc_dma = Some(DmcStep::Get),
+            Some(DmcStep::Get) if get => {
+                if let Some(addr) = self.apu.dmc_wants() {
+                    let byte = self.cpu_read(addr);
+                    self.open_bus = byte;
+                    self.apu.dmc_fill(byte);
                 }
+                self.dmc_dma = None;
+                busy = true;
             }
-            _ => {} // a cycle to line up with the gets and puts
+            _ => {}
         }
+        if let Some(dma) = self.dma.as_ref().filter(|_| !busy) {
+            match dma.value {
+                None if get => {
+                    let addr = (dma.page as u16) << 8 | dma.done;
+                    let value = self.cpu_read(addr);
+                    self.open_bus = value;
+                    self.dma.as_mut().unwrap().value = Some(value);
+                    busy = true;
+                }
+                Some(value) if !get => {
+                    self.ppu.dma_write(value);
+                    let dma = self.dma.as_mut().unwrap();
+                    dma.value = None;
+                    dma.done += 1;
+                    if dma.done == 256 {
+                        self.dma = None;
+                    }
+                    busy = true;
+                }
+                _ => {} // a cycle to line up with the gets and puts
+            }
+        }
+        if !busy {
+            let value = self.cpu_read(self.halted_on);
+            self.open_bus = value;
+        }
+        self.halted = self.dma.is_some() || self.dmc_dma.is_some();
     }
 
     /// A frame done: shown; the function keys taken, and the Reset button,
@@ -203,9 +284,40 @@ impl Nes {
                 std::process::exit(0);
             }
         }
+        if let Some(display) = &mut self.display {
+            display.play(&self.sound);
+            self.sound.clear();
+        }
         if self.reset_held {
             self.ppu.reset();
+            (self.dma, self.dmc_dma, self.halted) = (None, None, false);
         }
+    }
+
+    /// A cycle of sound: the output summed; a sample made when one is due,
+    /// the sum's average through the filters, in both channels.
+    fn sound_cycle(&mut self) {
+        self.sample_sum += self.apu.output();
+        self.sample_cycles += 1;
+        self.sample_phase += SAMPLE_RATE;
+        if self.sample_phase < CLOCK_HZ {
+            return;
+        }
+        self.sample_phase -= CLOCK_HZ;
+        let mut sample = self.sample_sum / self.sample_cycles as f32;
+        (self.sample_sum, self.sample_cycles) = (0.0, 0);
+        let dt = 1.0 / SAMPLE_RATE as f32;
+        for (n, (last_in, last_out)) in self.filters.iter_mut().enumerate() {
+            let rc = 1.0 / (2.0 * std::f32::consts::PI * FILTERS[n]);
+            let out = if n < 2 {
+                rc / (rc + dt) * (*last_out + sample - *last_in)
+            } else {
+                *last_out + dt / (rc + dt) * (sample - *last_out)
+            };
+            (*last_in, *last_out) = (sample, out);
+            sample = out;
+        }
+        self.sound.extend([sample * VOLUME; 2]);
     }
 
     /// The machine, as a state's header names it: the NES, its game (a
@@ -230,7 +342,9 @@ impl Nes {
 impl Bus for Nes {
     fn read(&mut self, addr: u16) -> u8 {
         let value = self.cpu_read(addr);
-        self.open_bus = value;
+        if addr != 0x4015 {
+            self.open_bus = value;
+        }
         value
     }
 
@@ -239,14 +353,15 @@ impl Bus for Nes {
         match addr {
             0x0000..=0x1FFF => self.ram[addr as usize & 0x7FF] = value,
             0x2000..=0x3FFF => self.ppu.write_register(addr, value, &mut self.cartridge),
-            0x4014 => self.dma = Some(Dma { page: value, halted: false, value: None, done: 0 }),
+            0x4014 => self.dma = Some(Dma { page: value, value: None, done: 0 }),
             0x4016 => {
                 self.strobe = value & 1 != 0;
                 if self.strobe {
                     self.shifts = [self.buttons(), 0];
                 }
             }
-            0x4000..=0x401F => {}
+            0x4000..=0x4017 => self.apu.write(addr, value, self.cycles % 2 == 1),
+            0x4018..=0x401F => {}
             _ => self.cartridge.cpu_write(addr, value),
         }
     }
@@ -258,11 +373,21 @@ impl Bus for Nes {
         self.cycles += 1;
         self.ppu.tick(&mut self.cartridge);
         self.nmi_line = self.ppu.nmi();
-        self.irq_line = self.cartridge.irq();
+        self.irq_line = self.cartridge.irq() || self.apu.irq();
+        if self.reset_held {
+            self.apu.reset();
+        }
+        self.apu.cycle();
         self.ppu.tick(&mut self.cartridge);
         self.ppu.tick(&mut self.cartridge);
-        if self.dma.as_ref().is_some_and(|dma| dma.halted) {
+        if self.halted {
             self.dma_cycle();
+        }
+        if self.dmc_dma.is_none() && self.apu.dmc_wants().is_some() {
+            self.dmc_dma = Some(DmcStep::Halt);
+        }
+        if self.display.is_some() {
+            self.sound_cycle();
         }
         if self.ppu.frame_ready {
             self.ppu.frame_ready = false;
@@ -282,14 +407,18 @@ impl Bus for Nes {
         self.nmi_line
     }
 
-    fn halt(&mut self) -> bool {
-        match &mut self.dma {
-            Some(dma) => {
-                dma.halted = true;
-                true
+    /// Halted on a read of `addr`: its cycle the DMC's halt, if it's
+    /// waiting for one, the CPU not halted already.
+    fn halt(&mut self, addr: u16) -> bool {
+        let wanted = self.dma.is_some() || self.dmc_dma.is_some();
+        if wanted && !self.halted {
+            self.halted_on = addr;
+            if self.dmc_dma == Some(DmcStep::Halt) {
+                self.dmc_dma = Some(DmcStep::Dummy);
             }
-            None => false,
         }
+        self.halted = wanted;
+        wanted
     }
 
     fn hand_back(&self) -> bool {

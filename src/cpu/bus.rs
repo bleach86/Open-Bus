@@ -32,9 +32,10 @@ pub trait Bus {
     }
 
     /// The RDY line, held by the machine for a DMA of its own: the CPU
-    /// halted on its read, a cycle at a time, for as long as it is; the
-    /// machine's DMA has those cycles, its own work done in their ticks.
-    fn halt(&mut self) -> bool {
+    /// halted on its read of `addr`, a cycle at a time, for as long as it
+    /// is; the machine's DMA has those cycles, its own work done in their
+    /// ticks.
+    fn halt(&mut self, _addr: u16) -> bool {
         false
     }
 
