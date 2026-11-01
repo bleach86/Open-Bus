@@ -81,7 +81,9 @@ const PACES_PER_SECOND: u64 = 2_000; // check every 0.5 ms of emulated time
 /// opcodes and all; or a CMOS 65C02, the base one (Synertek's, as in the
 /// enhanced Apple IIe), Rockwell's with its bit instructions, or WDC's with
 /// those and WAI and STP. The 65C02s fix the 6502's bugs, make its unused
-/// opcodes NOPs, and take their dummy cycles differently.
+/// opcodes NOPs, and take their dummy cycles differently. Or the NES's
+/// Ricoh 2A03: the NMOS 6502 with its decimal mode cut out, D set and
+/// cleared, pushed and pulled, but its adds and subtracts binary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Variant {
     #[default]
@@ -89,6 +91,7 @@ pub enum Variant {
     Synertek65C02,
     Rockwell65C02,
     Wdc65C02,
+    Ricoh2A03,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -142,7 +145,13 @@ impl<B: Bus> CPU<B> {
 
     /// Whether it's a 65C02, of any make.
     pub fn cmos(&self) -> bool {
-        self.variant != Variant::Nmos6502
+        matches!(self.variant, Variant::Synertek65C02 | Variant::Rockwell65C02 | Variant::Wdc65C02)
+    }
+
+    /// Whether its adds and subtracts are decimal: with D set, but not on
+    /// a 2A03, which hasn't the circuit.
+    pub fn decimal(&self) -> bool {
+        self.status.decimal_mode && self.variant != Variant::Ricoh2A03
     }
 
     /// Reset, in the 6502's 7 cycles: as an interrupt, but with its three

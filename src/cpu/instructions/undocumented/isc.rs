@@ -8,7 +8,7 @@ impl<B: Bus> CPU<B> {
         self.modify_cycle(addr, value);
         value = value.wrapping_add(1);
         self.write_byte(addr, value);
-        match self.status.decimal_mode {
+        match self.decimal() {
             false => self.sbc_binary(value),
             true => self.sbc_decimal(value),
         }

@@ -269,10 +269,11 @@ pub enum Opcode {
 }
 
 impl Opcode {
-    /// The opcode a byte is on `variant`: the 6502's, or a 65C02's.
+    /// The opcode a byte is on `variant`: the 6502's (the 2A03's the
+    /// same), or a 65C02's.
     pub fn decode(byte: u8, variant: Variant) -> Opcode {
         match variant {
-            Variant::Nmos6502 => Opcode::from_byte(byte),
+            Variant::Nmos6502 | Variant::Ricoh2A03 => Opcode::from_byte(byte),
             _ => Opcode::from_byte_65c02(byte, variant),
         }
     }

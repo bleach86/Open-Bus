@@ -6,7 +6,7 @@ impl<B: Bus> CPU<B> {
     /// left; in decimal mode, as ADC is.
     fn rra(&mut self, addr: u16) {
         let value = self.ror_memory(addr);
-        match self.status.decimal_mode {
+        match self.decimal() {
             false => self.adc_binary(value),
             true => self.adc_decimal(value),
         }

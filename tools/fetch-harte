@@ -1,7 +1,8 @@
 #!/bin/sh
 # Fetch Tom Harte's 6502 family tests (SingleStepTests, MIT, not part of
-# this repository): for the NMOS 6502 and the Synertek, Rockwell and WDC
-# 65C02s, or those named (6502 synertek65c02 rockwell65c02 wdc65c02), each
+# this repository): for the NMOS 6502, the Synertek, Rockwell and WDC
+# 65C02s and the NES's 2A03, or those named (6502 synertek65c02
+# rockwell65c02 wdc65c02 nes6502), each
 # opcode they have (WDC's WAI and STP they haven't), into target/harte/
 # and the set's name, where `cargo test --release harte` runs them against
 # the CPU. Each opcode's JSON (10,000 cases) becomes a line a case, so the
@@ -14,7 +15,7 @@
 # instruction's cycles).
 set -e
 cd "$(dirname "$0")/.."
-sets=${*:-6502 synertek65c02 rockwell65c02 wdc65c02}
+sets=${*:-6502 synertek65c02 rockwell65c02 wdc65c02 nes6502}
 for set in $sets; do
     mkdir -p target/harte/$set
     cd target/harte/$set

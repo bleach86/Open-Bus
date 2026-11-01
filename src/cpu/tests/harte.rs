@@ -1,5 +1,5 @@
-//! Tom Harte's 6502 family tests (SingleStepTests): for the NMOS 6502 and
-//! the Synertek, Rockwell and WDC 65C02s, each run on the CPU as that
+//! Tom Harte's 6502 family tests (SingleStepTests): for the NMOS 6502, the
+//! Synertek, Rockwell and WDC 65C02s, and the NES's 2A03, each run on the CPU as that
 //! variant; for each of their opcodes, documented or not, 10,000 cases of
 //! one instruction each, all run, the state before and after and its
 //! cycles. Each runs as the Dormann tests
@@ -7,7 +7,7 @@
 //! execute for the instruction's cycles; then the registers and memory are
 //! compared with the case's.
 //!
-//! On the 6502, the cycles are checked by the byte after the instruction,
+//! On the 6502 (and the 2A03), the cycles are checked by the byte after the instruction,
 //! whose value it doesn't use: it is made a JAM ($02), which stops the CPU
 //! dead, so that if any cycles are left over the CPU starts on it, and
 //! stops one past it. Run for its cycles, the instruction must leave none; run for one
@@ -97,7 +97,7 @@ mod tests {
         for &(addr, value) in &case.initial.ram {
             cpu.memory.data[addr as usize] = value;
         }
-        let jam = variant == Variant::Nmos6502 && can_jam(case);
+        let jam = matches!(variant, Variant::Nmos6502 | Variant::Ricoh2A03) && can_jam(case);
         if jam {
             cpu.memory.data[case.last.pc as usize] = JAM;
         }
@@ -222,6 +222,7 @@ mod tests {
             ("synertek65c02", Variant::Synertek65C02),
             ("rockwell65c02", Variant::Rockwell65C02),
             ("wdc65c02", Variant::Wdc65C02),
+            ("nes6502", Variant::Ricoh2A03),
         ];
         let mut files: Vec<(PathBuf, Variant)> = Vec::new();
         for (set, variant) in sets {

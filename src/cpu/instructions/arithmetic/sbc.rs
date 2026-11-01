@@ -48,7 +48,7 @@ impl<B: Bus> CPU<B> {
     /// SBC of `operand`, read from `addr` (none, immediate): binary, or
     /// decimal; a 65C02's decimal its own, and a cycle more.
     fn sbc(&mut self, operand: u8, addr: Option<u16>) {
-        match (self.status.decimal_mode, self.cmos()) {
+        match (self.decimal(), self.cmos()) {
             (false, _) => self.sbc_binary(operand),
             (true, false) => self.sbc_decimal(operand),
             (true, true) => {

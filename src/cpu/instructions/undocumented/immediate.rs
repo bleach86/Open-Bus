@@ -34,7 +34,7 @@ impl<B: Bus> CPU<B> {
         self.a = (and >> 1) | (carry_in << 7);
         self.status.zero = self.a == 0;
         self.status.negative = carry_in != 0;
-        if !self.status.decimal_mode {
+        if !self.decimal() {
             self.status.carry = (self.a & 0x40) != 0;
             self.status.overflow = ((self.a >> 6) ^ (self.a >> 5)) & 1 != 0;
             return;
