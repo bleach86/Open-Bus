@@ -463,7 +463,7 @@ async function stop() {
     letGo(page('handheld'));
     page('machine').hidden = true;
     page('library').hidden = false;
-    document.title = 'cpu_emu';
+    document.title = 'Open Bus';
     refresh();
 }
 
@@ -567,7 +567,7 @@ function show() {
     const title = emulator.title();
     if (title !== page('title').textContent) {
         page('title').textContent = title;
-        document.title = `${title} - cpu_emu`;
+        document.title = `${title} - Open Bus`;
     }
 }
 
