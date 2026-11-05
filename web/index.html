@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>cpu_emu</title>
 <link rel="stylesheet" href="style.css">
 </head>
@@ -55,15 +55,43 @@
   <div class="bar">
     <button id="back">Library</button>
     <span id="title"></span>
-    <span id="no-sound" class="quiet" hidden>No sound: it needs localhost or HTTPS</span>
+    <span id="no-sound" class="quiet" hidden>No sound<span class="wide">: it needs localhost or HTTPS</span></span>
     <span class="controls">
-      <button id="save">Save state</button>
-      <button id="load">Load state</button>
+      <button id="save">Save<span class="wide"> state</span></button>
+      <button id="load">Load<span class="wide"> state</span></button>
       <button id="reset">Reset</button>
-      <button id="full">Fullscreen</button>
+      <button id="full">Full<span class="wide">screen</span></button>
     </span>
   </div>
   <div id="frame"><canvas id="screen" tabindex="0"></canvas></div>
+  <div id="handheld" class="for-nes">
+    <p class="badge">cpu_emu</p>
+    <div id="dpad" data-pad="dpad" aria-label="D-pad">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <defs>
+          <linearGradient id="plastic" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#4a4560"/><stop offset="1" stop-color="#2b2740"/>
+          </linearGradient>
+          <radialGradient id="dish"><stop offset="0" stop-color="#262238"/><stop offset="1" stop-color="#3a3652"/></radialGradient>
+        </defs>
+        <path class="edge" d="M36 6h28a5 5 0 0 1 5 5v20a5 5 0 0 0 5 5h20a5 5 0 0 1 5 5v28a5 5 0 0 1-5 5H74a5 5 0 0 0-5 5v20a5 5 0 0 1-5 5H36a5 5 0 0 1-5-5V74a5 5 0 0 0-5-5H6a5 5 0 0 1-5-5V36a5 5 0 0 1 5-5h20a5 5 0 0 0 5-5V6a5 5 0 0 1 5-5z" transform="translate(0 3)"/>
+        <path fill="url(#plastic)" d="M36 1h28a5 5 0 0 1 5 5v21a5 5 0 0 0 5 5h20a5 5 0 0 1 5 5v26a5 5 0 0 1-5 5H74a5 5 0 0 0-5 5v21a5 5 0 0 1-5 5H36a5 5 0 0 1-5-5V73a5 5 0 0 0-5-5H6a5 5 0 0 1-5-5V37a5 5 0 0 1 5-5h20a5 5 0 0 0 5-5V6a5 5 0 0 1 5-5z"/>
+        <g data-shows="up"><rect x="33" y="3" width="34" height="30" rx="4"/><path d="M44 21l6-9 6 9z"/></g>
+        <g data-shows="down"><rect x="33" y="67" width="34" height="30" rx="4"/><path d="M44 79l6 9 6-9z"/></g>
+        <g data-shows="left"><rect x="3" y="33" width="30" height="34" rx="4"/><path d="M21 44l-9 6 9 6z"/></g>
+        <g data-shows="right"><rect x="67" y="33" width="30" height="34" rx="4"/><path d="M79 44l9 6-9 6z"/></g>
+        <circle cx="50" cy="50" r="11" fill="url(#dish)"/>
+      </svg>
+    </div>
+    <div id="buttons" data-pad="buttons">
+      <span class="round" data-shows="b">B</span><span class="round" data-shows="a">A</span>
+    </div>
+    <div id="pills">
+      <span class="pill" data-pad="select"><span data-shows="select"></span>Select</span>
+      <span class="pill" data-pad="start"><span data-shows="start"></span>Start</span>
+    </div>
+    <div class="grille" aria-hidden="true"></div>
+  </div>
   <p class="help">
     <kbd>F2</kbd> save state <kbd>F4</kbd> load state <kbd>F11</kbd> fullscreen <kbd>F12</kbd> Reset
     <span class="for-apple"><kbd>F8</kbd> monitor <kbd>F9</kbd> next disk, drive 1 <kbd>F10</kbd> drive 2

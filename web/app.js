@@ -3,6 +3,7 @@
 // to it. The emulator itself is the WebAssembly, src/web.rs its side.
 import init, { Emulator, put_file, read_file, read_part, written_files, changed_files, take_changed_parts } from './pkg/cpu_emu.js';
 import { keep, keepParts, forget, names, bytes } from './files.js';
+import { touch, attach, letGo } from './touch.js';
 
 const page = (id) => document.getElementById(id);
 const IIE_ROMS = {
@@ -309,7 +310,7 @@ async function start(make, machine, using) {
     page('machine').hidden = false;
     page('machine').dataset.machine = machine;
     const canvas = page('screen');
-    canvas.style.setProperty('--ratio', emulator.shown_width() / emulator.shown_height());
+    page('machine').style.setProperty('--ratio', emulator.shown_width() / emulator.shown_height());
     canvas.focus();
     pointerMoved();
     last = performance.now();
@@ -335,6 +336,7 @@ async function stop() {
     emulator = null;
     held.clear();
     clearTimeout(pointerTimer);
+    letGo(page('handheld'));
     page('machine').hidden = true;
     page('library').hidden = false;
     document.title = 'cpu_emu';
@@ -385,13 +387,13 @@ function controls() {
     const padDown = button(13) || hat(7, 1);
     const padLeft = button(14) || hat(6, -1);
     const padRight = button(15) || hat(6, 1);
-    const up = padUp || stickY < -0.5 || key('ArrowUp');
-    const down = padDown || stickY > 0.5 || key('ArrowDown');
-    const left = padLeft || stickX < -0.5 || key('ArrowLeft');
-    const right = padRight || stickX > 0.5 || key('ArrowRight');
+    const up = padUp || stickY < -0.5 || key('ArrowUp') || touch.up;
+    const down = padDown || stickY > 0.5 || key('ArrowDown') || touch.down;
+    const left = padLeft || stickX < -0.5 || key('ArrowLeft') || touch.left;
+    const right = padRight || stickX > 0.5 || key('ArrowRight') || touch.right;
     const gamepad = [up, down, left, right,
-        button(0) || key('KeyX'), button(west) || key('KeyZ'),
-        button(back) || key('ShiftRight', 'Tab'), button(start) || key('Enter')];
+        button(0) || key('KeyX') || touch.a, button(west) || key('KeyZ') || touch.b,
+        button(back) || key('ShiftRight', 'Tab') || touch.select, button(start) || key('Enter') || touch.start];
     // The joystick: the numeric keypad's too, and the Alt keys its buttons.
     const towards = (minus, plus, stick) => {
         if (minus !== plus) {
@@ -508,13 +510,20 @@ addEventListener('keyup', (event) => {
     }
 });
 
+/// Fullscreen: of the picture, or on a touch screen all of it, the picture
+/// alone having no controls.
+const touchScreen = matchMedia('(pointer: coarse)');
+
 function fullscreen() {
     if (document.fullscreenElement) {
         document.exitFullscreen();
     } else {
-        page('frame').requestFullscreen();
+        page(touchScreen.matches ? 'machine' : 'frame').requestFullscreen?.();
     }
 }
+
+attach(page('handheld'));
+page('full').hidden = !page('frame').requestFullscreen;
 
 page('screen').ondblclick = fullscreen;
 
