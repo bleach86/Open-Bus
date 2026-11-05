@@ -75,6 +75,11 @@
 //! at $C000. Fire Hawk's board has which 1K all four nametables are too,
 //! written at $9000: not at $8000, which games on the others write.
 //!
+//! 232, Camerica's Quattro multicarts: as 71, in one of four 64K blocks,
+//! bits 3 and 4 written at $8000 to $BFFF, its bank's 2 bits at $C000 up,
+//! the block's last 16K fixed at $C000. The Aladdin Deck Enhancer's (NES
+//! 2.0's submapper 1) has the block's two bits the other way round.
+//!
 //! 79, NINA-03 and 06: a register where the address is 010x xxx1 xxxx
 //! xxxx, $4100 and every other 256 bytes to $5FFF: a 32K bank (bit 3) and
 //! an 8K bank of CHR (bits 0 to 2).
@@ -288,6 +293,15 @@ pub struct Fme7 {
     irq: bool,
 }
 
+/// A Quattro's registers: its 64K block and 16K bank; and whether it's the
+/// Aladdin's, the block's bits swapped.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Quattro {
+    block: u8,
+    bank: u8,
+    aladdin: bool,
+}
+
 /// The boards MMC3's wired to differently.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Board {
@@ -355,6 +369,7 @@ pub enum Mapper {
     Mmc2(Mmc2),
     Rambo1(Rambo1),
     Fme7(Fme7),
+    Quattro(Quattro),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -469,6 +484,7 @@ impl Cartridge {
             69 => Mapper::Fme7(Fme7::default()),
             66 => Mapper::Gxrom(Banks::new(Conflicts::And)),
             71 => Mapper::Camerica(0),
+            232 => Mapper::Quattro(Quattro { aladdin: submapper == 1, ..Quattro::default() }),
             79 => Mapper::Nina03(Banks::new(Conflicts::None)),
             _ => return Err(format!("mapper {number}, which isn't here yet")),
         };
@@ -525,6 +541,10 @@ impl Cartridge {
                 };
                 bank * 0x2000 + (addr & 0x1FFF)
             }
+            Mapper::Quattro(quattro) => {
+                let block = quattro.block as usize * 4;
+                in_16k(block + if addr < 0xC000 { quattro.bank as usize } else { 3 })
+            }
             Mapper::Fme7(fme7) => {
                 let last_8k = len / 0x2000 - 1;
                 let bank = fme7.prg.get((addr - 0x8000) / 0x2000).map_or(last_8k, |&bank| bank as usize & 0x3F);
@@ -562,7 +582,7 @@ impl Cartridge {
     fn chr_offset(&self, addr: u16) -> usize {
         let addr = addr as usize;
         let offset = match &self.mapper {
-            Mapper::Nrom | Mapper::Uxrom(_) | Mapper::Axrom(_) | Mapper::Camerica(_) | Mapper::Bnrom(_) => addr,
+            Mapper::Nrom | Mapper::Uxrom(_) | Mapper::Axrom(_) | Mapper::Camerica(_) | Mapper::Bnrom(_) | Mapper::Quattro(_) => addr,
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
             Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.chr as usize * CHR_BANK + addr,
             Mapper::Nina001(nina) => nina.chr[addr >> 12] as usize * 0x1000 + (addr & 0x0FFF),
@@ -702,6 +722,13 @@ impl Cartridge {
                 0xE000 => (rambo.irq_enabled, rambo.irq, rambo.irq_delay) = (false, false, 0),
                 0xE001 => rambo.irq_enabled = true,
                 _ => {}
+            },
+            Mapper::Quattro(quattro) => match addr {
+                0x8000..=0xBFFF => {
+                    let block = (value >> 3) & 3;
+                    quattro.block = if quattro.aladdin { (block & 1) << 1 | block >> 1 } else { block };
+                }
+                _ => quattro.bank = value & 3,
             },
             Mapper::Fme7(fme7) => match addr {
                 0x8000..=0x9FFF => fme7.command = value & 0x0F,

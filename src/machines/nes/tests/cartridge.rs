@@ -590,6 +590,41 @@ mod tests {
     }
 
     #[test]
+    fn quattros_banks_are_in_a_64k_block() {
+        let mut cart = board(232, 16, 0);
+        assert_eq!(banks(&mut cart), (0, 3, 0, 0), "from the first, its block's last fixed");
+        cart.cpu_write(0xC000, 0xFD, 0);
+        assert_eq!(banks(&mut cart).0, 1, "two bits of bank");
+
+        for (block, value) in [(0, 0x00), (1, 0x08), (2, 0x10), (3, 0x18)] {
+            cart.cpu_write(0x8000, value, 0);
+            assert_eq!(banks(&mut cart), (block * 4 + 1, block * 4 + 3, 0, 0), "block {block}");
+        }
+        cart.cpu_write(0xBFFF, 0xE7 | 0x08, 0);
+        assert_eq!(banks(&mut cart).1, 7, "only bits 3 and 4, up to $BFFF");
+
+        // $C000 up is the bank only, not the block.
+        cart.cpu_write(0xFFFF, 0x10, 0);
+        assert_eq!(banks(&mut cart), (4, 7, 0, 0));
+
+        cart.chr_write(0x0123, 0x45);
+        assert_eq!(cart.chr_read(0x0123), 0x45, "its CHR RAM");
+    }
+
+    #[test]
+    fn the_aladdins_quattros_have_the_blocks_bits_swapped() {
+        let mut image = image(16, 0, [0x80, 0xE8, 0x10, 0, 0, 0, 0, 0, 0, 0]);
+        for page in image[16..].chunks_mut(0x100) {
+            page[..16].fill(0xFF);
+        }
+        let mut cart = Cartridge::new(&image).unwrap();
+        for (written, block) in [(0x00, 0), (0x08, 2), (0x10, 1), (0x18, 3)] {
+            cart.cpu_write(0x8000, written, 0);
+            assert_eq!(banks(&mut cart).1, block * 4 + 3, "written {written:02X}");
+        }
+    }
+
+    #[test]
     fn nina_03s_register_is_at_4100_and_every_other_page_to_5fff() {
         let mut cart = board(79, 4, 4);
         assert_eq!(banks(&mut cart), (0, 1, 0xC0, 0xC0), "from the first");
