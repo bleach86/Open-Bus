@@ -6,7 +6,7 @@
 // Archive. A game's title has to match: a floppy's better than a wrong cover.
 
 import { keepArt } from './files.js';
-import { plainTitle, shrink, tagsOf } from './art.js';
+import { shrink, tagsOf, titleWords } from './art.js';
 
 const BOXES = 'libretro-thumbnails/Nintendo_-_Nintendo_Entertainment_System';
 const BOX_TREES = `https://api.github.com/repos/${BOXES}/git/trees/`;
@@ -64,21 +64,20 @@ async function boxes() {
         const stem = path.replace(/\.png$/, '');
         const box = { url: BOX_FILES + encodeURIComponent(path), link: mode === LINK };
         exact.set(stem, box);
-        const title = plainTitle(path).toLowerCase();
+        const title = titleWords(stem);
         const rank = regionRank(stem);
         if (rank !== null && (byTitle.get(title)?.rank ?? Infinity) > rank) {
             byTitle.set(title, { box, rank });
         }
     }
     return ({ title, file }) => {
-        const box = exact.get(safe(file.replace(/\.[^.]*$/, ''))) ?? byTitle.get(title.toLowerCase())?.box;
+        const box = exact.get(safe(file.replace(/\.[^.]*$/, ''))) ?? byTitle.get(titleWords(title))?.box;
         return box ? [box] : [];
     };
 }
 
-/// A title reduced to its words, what's after a colon gone.
-const words = (title) => title.replace(/\([^)]*\)/g, '').split(':')[0].toLowerCase().replace(/['’]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ').replace(/\b(the|a)\b/g, ' ').replace(/\s+/g, ' ').trim();
+/// A title's words, what's after a colon gone.
+const words = (title) => titleWords(title.split(':')[0]);
 
 /// A disk's title without the version, or the year and who cracked it.
 const bareTitle = (title) => title.replace(/\s+v?\d+(\.\d+)+.*$/i, '').replace(/\s+19\d\d\b.*$/, '');
@@ -143,7 +142,7 @@ export async function findCovers(wanted, art, told) {
                     blob = blob ?? await picture(place);
                 }
                 if (blob) {
-                    const kept = { ...art.get(game.key), cover: await shrink(blob) };
+                    const kept = { ...art.get(game.key), cover: await shrink(blob), machine: game.machine };
                     art.set(game.key, kept);
                     await keepArt(new Map([[game.key, kept]]));
                     found++;

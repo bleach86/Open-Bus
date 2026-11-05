@@ -23,7 +23,14 @@ export const keyOf = (stem) => stem.trim().toLowerCase();
 export const artKey = (name) => keyOf(name.split('/').pop().replace(/\.[^.]*$/, ''));
 
 /// A game's name from its file, its brackets gone.
-export const plainTitle = (name) => name.split('/').pop().replace(/\.[^.]*$/, '').replace(/\s*[([][^)\]]*[)\]]/g, '').replace(/_/g, ' ').trim();
+export const plainTitle = (name) => name.split('/').pop().replace(/\.[^.]*$/, '').replace(/\s*[([][^)\]]*[)\]]/g, '')
+    .replace(/_ /g, ', ').replace(/[_\s]+/g, ' ').trim();
+
+/// A title as nothing but its letters and digits, without its "the" and "a"
+/// and whatever's in brackets, for what's named a little differently: a
+/// download's "Zelda_ The" for "Zelda, The", or "The Zelda".
+export const titleWords = (title) => title.replace(/\([^)]*\)|\[[^\]]*\]/g, '').toLowerCase().replace(/['’]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ').replace(/\b(the|a)\b/g, '').replace(/ /g, '');
 
 /// What's in a name's brackets, as what tells two of a title apart.
 export const tagsOf = (name) => [...name.matchAll(/[([]([^)\]]*)[)\]]/g)].map((tag) => tag[1]).join(', ');

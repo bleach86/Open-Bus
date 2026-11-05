@@ -6,7 +6,7 @@ import { keep, keepParts, forget, names, bytes, allArt } from './files.js';
 import { touch, attach, letGo } from './touch.js';
 import { games, isVolume, storedNames, shortName, natural } from './disks.js';
 import { findCovers } from './covers.js';
-import { artKey, isMedia, keyOf, plainTitle, tagsOf, takeArt } from './art.js';
+import { artKey, isMedia, keyOf, plainTitle, tagsOf, takeArt, titleWords } from './art.js';
 
 const page = (id) => document.getElementById(id);
 const IIE_ROMS = {
@@ -41,6 +41,10 @@ const SHOWN_EVERY = 24;
 /// The art there is, by key, and its covers' addresses.
 let art = new Map();
 const covers = new Map();
+/// The NES covers there are by their titles' words, the USA's if there's a
+/// choice, for a game named differently to its art. Not the Apple's: a
+/// game's on both, and one's picture isn't the other's.
+let coversByTitle = new Map();
 
 function say(text, problem = false) {
     page('message').textContent = text;
@@ -53,6 +57,13 @@ async function loadArt() {
     for (const [key, { cover }] of art) {
         if (cover && !covers.has(key)) {
             covers.set(key, URL.createObjectURL(cover));
+        }
+    }
+    coversByTitle = new Map();
+    for (const [key, { cover, machine }] of art) {
+        const words = titleWords(key);
+        if (cover && machine !== 'apple' && (!coversByTitle.has(words) || key.includes('(usa'))) {
+            coversByTitle.set(words, key);
         }
     }
 }
@@ -86,7 +97,7 @@ async function refresh() {
 /// The games with no cover, as `findCovers` wants them.
 function coverless() {
     const nes = files.filter(isGame).map((file) => ({
-        machine: 'nes', file, title: plainTitle(file), key: artFor(plainTitle(file), file),
+        machine: 'nes', file, title: plainTitle(file), key: nesArt(file),
     }));
     const apple = games(files.filter(isDisk)).map((game) => {
         const title = diskTitle(game);
@@ -128,8 +139,14 @@ function showCount(tab, name, count) {
     page(tab).replaceChildren(name, ...(count ? [tally] : []));
 }
 
+/// Whose art a NES game has: its own, or one of its title's.
+function nesArt(name) {
+    const key = artFor(plainTitle(name), name);
+    return covers.has(key) ? key : coversByTitle.get(titleWords(plainTitle(name))) ?? key;
+}
+
 /// A game's title, by what's known of it, else its file.
-const titleOf = (name) => art.get(artFor(plainTitle(name), name))?.title ?? plainTitle(name);
+const titleOf = (name) => art.get(nesArt(name))?.title ?? plainTitle(name);
 
 function fillGames(wanted) {
     const all = files.filter(isGame);
@@ -141,7 +158,7 @@ function fillGames(wanted) {
     list.replaceChildren(...shown.map((name) => {
         const item = document.createElement('li');
         item.className = 'tile';
-        const key = artFor(plainTitle(name), name);
+        const key = nesArt(name);
         const known = art.get(key);
         const button = document.createElement('button');
         button.className = 'play';
