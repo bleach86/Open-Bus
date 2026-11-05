@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="loading">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Open Bus</title>
-<link rel="stylesheet" href="style.css">
+<style>.loading body { visibility: hidden; }</style>
 </head>
 <body>
 <main id="library">
@@ -104,6 +104,32 @@
       <kbd>Tab</kbd> Select</span>
   </p>
 </main>
-<script type="module" src="app.js"></script>
+<script type="module">
+// A browser keeps a file a good while without asking whether it's changed,
+// and a page of old files and new doesn't work. So each is asked after first:
+// the answer's in the cache for what follows, and no bytes if it's as it was.
+// Failing that, as when offline, what's kept will do.
+const FILES = ['style.css', 'app.js', 'art.js', 'covers.js', 'disks.js', 'files.js', 'sound.js', 'touch.js',
+    'pkg/cpu_emu.js', 'pkg/cpu_emu_bg.wasm'];
+const asked = (url) => fetch(url, { cache: 'no-cache' }).catch(() => null);
+const [page] = await Promise.all([asked(location.href), ...FILES.map(asked)]);
+
+// This page is one of them, and it's already here: if it's old, once more.
+const modified = page?.headers.get('last-modified');
+if (modified && new Date(modified) > new Date(document.lastModified) && sessionStorage.getItem('reloaded') !== modified) {
+    sessionStorage.setItem('reloaded', modified);
+    location.reload();
+} else {
+    const style = document.createElement('link');
+    style.rel = 'stylesheet';
+    style.href = 'style.css';
+    await new Promise((loaded) => {
+        style.onload = style.onerror = loaded;
+        document.head.append(style);
+    });
+    document.documentElement.classList.remove('loading');
+    await import('./app.js');
+}
+</script>
 </body>
 </html>

@@ -26,6 +26,20 @@ mod tests {
         (Host::new(cpu, Box::new(Page(page.clone())), state), page)
     }
 
+    /// The page asks the server after its files, as a browser left to itself
+    /// won't: one left out of its list could go on being an old one.
+    #[test]
+    fn the_page_asks_after_every_file_of_its_own() {
+        let web = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web");
+        let page = std::fs::read_to_string(web.join("index.html")).unwrap();
+        for entry in std::fs::read_dir(&web).unwrap() {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            if name.ends_with(".js") || name.ends_with(".css") {
+                assert!(page.contains(&format!("'{name}'")), "{name} isn't in the page's list");
+            }
+        }
+    }
+
     #[test]
     fn its_picture_is_a_canvass_and_its_sound_is_kept() {
         let (mut host, page) = host();
