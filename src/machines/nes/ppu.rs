@@ -476,37 +476,47 @@ impl Ppu {
         self.shift_attribute_high = (self.shift_attribute_high & 0xFF00) | fill(self.attribute & 2);
     }
 
-    /// The 64 sprites looked through, dots 65 to 256, for the next line's:
-    /// the first 8 on it into secondary OAM, 2 dots for each looked at and
-    /// 6 more for each copied. A ninth sets the overflow flag, at the dot
-    /// it's found; but past the eighth, the PPU's search takes each
-    /// sprite's next byte as its Y, the one after for the next, and so on.
+    /// The sprites looked through, dots 65 to 256, for the next line's,
+    /// from wherever OAMADDR is at dot 65: 2 dots for each looked at, 6
+    /// more for each of the first 8 on the line copied into secondary OAM,
+    /// OAMADDR on 1 a byte copied; a sprite not on it, OAMADDR on 4 and its
+    /// low 2 bits cleared (realigning it, if it wasn't). The first looked
+    /// at, if it's on the line, is sprite 0 for sprite 0 hit. A ninth sets
+    /// the overflow flag, at the dot it's found; but past the eighth, by
+    /// the PPU's bug, OAMADDR goes on 4 and 1 more without carrying, taking
+    /// each sprite's next byte as its Y. Done once OAMADDR passes $FF.
     fn evaluate_sprites(&mut self) {
         let height = self.sprite_height();
         let on_line = |y: u8| (0..height).contains(&(self.line as i16 - y as i16));
         self.secondary = [0xFF; 32];
-        let (mut n, mut found, mut dot) = (0, 0, 65);
         self.zero_found = false;
-        while n < 64 && found < 8 {
-            if on_line(self.oam[n * 4]) {
-                self.secondary[found * 4..found * 4 + 4].copy_from_slice(&self.oam[n * 4..n * 4 + 4]);
-                self.zero_found |= n == 0;
-                found += 1;
-                dot += 6;
-            }
-            n += 1;
-            dot += 2;
-        }
-        let mut m = 0;
         self.overflow_at = None;
-        while n < 64 && dot <= 256 {
-            if on_line(self.oam[n * 4 + m]) {
+        let (mut addr, mut found, mut dot) = (self.oam_addr as usize, 0, 65);
+        while dot <= 256 {
+            let on = on_line(self.oam[addr]);
+            let next = if found < 8 {
+                if on {
+                    for byte in 0..4 {
+                        self.secondary[found * 4 + byte] = self.oam[(addr + byte) & 0xFF];
+                    }
+                    self.zero_found |= dot == 65;
+                    found += 1;
+                    dot += 6;
+                    addr + 4
+                } else {
+                    (addr + 4) & !3
+                }
+            } else if on {
                 self.overflow_at = Some(dot);
                 break;
-            }
-            n += 1;
-            m = (m + 1) & 3;
+            } else {
+                ((addr & !3) + 4) | ((addr + 1) & 3)
+            };
             dot += 2;
+            if next > 0xFF {
+                break;
+            }
+            addr = next;
         }
         self.found = found;
     }

@@ -5,11 +5,13 @@ impl<B: Bus> CPU<B> {
     /// The stores of a register ANDed with its address's high byte plus 1:
     /// SHA, SHX, SHY and TAS. The address's indexed as abs,X or abs,Y's is,
     /// read before the carry; but if the index carries into the high byte,
-    /// the high byte is what's stored, not the carried one.
+    /// the high byte is what's stored, not the carried one. A DMA halting
+    /// that read leaves the high byte out: the register's stored as it is.
     fn store_and_high(&mut self, base_addr: u16, index: u8, value: u8) {
         let addr = base_addr.wrapping_add(index as u16);
         self.read_before_carry(base_addr, addr);
-        let value = value & ((base_addr >> 8) as u8).wrapping_add(1);
+        let high = if self.halted { 0xFF } else { ((base_addr >> 8) as u8).wrapping_add(1) };
+        let value = value & high;
         let addr = if (base_addr ^ addr) & 0xFF00 != 0 { ((value as u16) << 8) | (addr & 0x00FF) } else { addr };
         self.write_byte(addr, value);
     }

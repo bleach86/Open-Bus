@@ -112,6 +112,7 @@ pub struct CPU<B: Bus = Memory> {
     jammed: Option<u8>,         // stopped by a JAM: its cycles since, up to 3
     waiting: bool,              // a WDC 65C02 at WAI, for an interrupt
     stopped: bool,              // a WDC 65C02 at STP, until reset
+    halted: bool,               // the last read halted, for a DMA of the machine's
     pub clock: u32,             // CPU clock counter
     pub clock_hz: u32,          // its speed: cycles a second
     pub variant: Variant,       // which of the family it is
@@ -143,6 +144,7 @@ impl<B: Bus> CPU<B> {
             jammed: None,
             waiting: false,
             stopped: false,
+            halted: false,
             clock: 0,
             clock_hz: DEFAULT_CLOCK_HZ,
             variant: Variant::Nmos6502,
@@ -151,7 +153,10 @@ impl<B: Bus> CPU<B> {
 
     /// Whether it's a 65C02, of any make.
     pub fn cmos(&self) -> bool {
-        matches!(self.variant, Variant::Synertek65C02 | Variant::Rockwell65C02 | Variant::Wdc65C02)
+        matches!(
+            self.variant,
+            Variant::Synertek65C02 | Variant::Rockwell65C02 | Variant::Wdc65C02
+        )
     }
 
     /// Whether its adds and subtracts are decimal: with D set, but not on
@@ -712,7 +717,6 @@ impl<B: Bus> CPU<B> {
             }
             Opcode::JSRAbsolute => {
                 self.jsr_absolute();
-                ////println!("JSR ${:04X}", sub_addr);
             }
             Opcode::ROLAccumulator => {
                 self.rol_accumulator();
@@ -746,8 +750,6 @@ impl<B: Bus> CPU<B> {
             }
             Opcode::RTS => {
                 self.rts();
-
-                ////println!("RTS to ${:04X}", self.pc);
             }
             Opcode::RTI => {
                 self.rti();
@@ -1101,7 +1103,8 @@ impl<B: Bus> CPU<B> {
     /// the read is made again on one of its own.
     pub fn read_byte(&mut self, addr: u16) -> u8 {
         self.advance_clock();
-        if self.memory.halt(addr) {
+        self.halted = self.memory.halt(addr);
+        if self.halted {
             self.memory.read(addr);
             while self.memory.halt(addr) {
                 self.advance_clock();

@@ -76,9 +76,19 @@ pub struct Via6522 {
 }
 
 impl Via6522 {
-    /// At power-on: its ports inputs, nothing pulled from outside.
+    /// At power-on: its ports inputs, nothing pulled from outside; its
+    /// timers' counters and latches whatever they came up as on the chip,
+    /// not 0, so running: $FFFF here, the same each time.
     pub fn new() -> Self {
-        Via6522 { pa_in: 0xFF, pb_in: 0xFF, ..Default::default() }
+        Via6522 {
+            pa_in: 0xFF,
+            pb_in: 0xFF,
+            t1_counter: 0xFFFF,
+            t1_latch: 0xFFFF,
+            t2_counter: 0xFFFF,
+            t2_latch: 0xFF,
+            ..Default::default()
+        }
     }
 
     /// RESET: every register cleared but the timers and the shift register.
@@ -110,8 +120,10 @@ impl Via6522 {
             DDRB => self.ddrb,
             DDRA => self.ddra,
             T1C_L => {
+                let value = self.t1_counter as u8;
+
                 self.ifr &= !T1;
-                self.t1_counter as u8
+                value
             }
             T1C_H => (self.t1_counter >> 8) as u8,
             T1L_L => self.t1_latch as u8,
@@ -177,6 +189,7 @@ impl Via6522 {
             self.t1_load = false;
         } else {
             self.t1_counter = self.t1_counter.wrapping_sub(1);
+
             if self.t1_counter == 0xFFFF {
                 if self.t1_armed {
                     self.ifr |= T1;
