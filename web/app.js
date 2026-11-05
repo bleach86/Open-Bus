@@ -1,8 +1,8 @@
 // The page: its library of files, and a machine run on the canvas, a frame
 // at a time, its picture and sound taken after each and what's pressed told
 // to it. The emulator itself is the WebAssembly, src/web.rs its side.
-import init, { Emulator, put_file, read_file, written_files } from './pkg/cpu_emu.js';
-import { keep, forget, names, bytes } from './files.js';
+import init, { Emulator, put_file, read_file, read_part, written_files, changed_files, take_changed_parts } from './pkg/cpu_emu.js';
+import { keep, keepParts, forget, names, bytes } from './files.js';
 
 const page = (id) => document.getElementById(id);
 const IIE_ROMS = {
@@ -315,9 +315,17 @@ async function start(make, machine, using) {
     last = performance.now();
 }
 
+/// What the machine's written, all taken at once, so it's kept as it was:
+/// files saved, whole; a hard disk's volume, only the parts written over.
 async function saveWritten() {
-    for (const name of written_files()) {
-        await keep(name, read_file(name));
+    const whole = written_files().map((name) => [name, read_file(name)]);
+    const parts = changed_files().map((name) => [name,
+        [...take_changed_parts(name)].map((offset) => [offset, read_part(name, offset)])]);
+    for (const [name, data] of whole) {
+        await keep(name, data);
+    }
+    for (const [name, changed] of parts) {
+        await keepParts(name, changed);
     }
 }
 

@@ -52,4 +52,41 @@ mod tests {
         assert!(web::written().is_empty(), "told again");
         assert_eq!(web::read(file).unwrap(), [6]);
     }
+
+    #[test]
+    fn a_web_page_is_told_only_the_parts_written_over() {
+        let file = Path::new("volume.hdv");
+        web::put(file, vec![0; 2 * web::PART + 100]);
+
+        // A write across the first two parts, and one in the short last.
+        web::write_at(file, web::PART as u64 - 2, &[1, 2, 3, 4]).unwrap();
+        web::write_at(file, 2 * web::PART as u64 + 10, &[5]).unwrap();
+        assert!(web::written().is_empty(), "the whole file told, for parts of it");
+        assert_eq!(web::changed(), [file.to_path_buf()]);
+        let offsets = [0, web::PART as u32, 2 * web::PART as u32];
+        assert_eq!(web::take_changed_parts(file), offsets);
+        assert!(web::changed().is_empty() && web::take_changed_parts(file).is_empty(), "told again");
+
+        let first = web::read_part(file, 0).unwrap();
+        let second = web::read_part(file, web::PART as u32).unwrap();
+        let last = web::read_part(file, 2 * web::PART as u32).unwrap();
+        assert_eq!((first.len(), second.len(), last.len()), (web::PART, web::PART, 100));
+        assert_eq!((&first[web::PART - 2..], &second[..2], last[10]), (&[1, 2][..], &[3, 4][..], 5));
+        assert!(web::read_part(Path::new("no/such"), 0).is_none());
+    }
+
+    #[test]
+    fn a_file_saved_whole_is_told_whole_not_in_parts() {
+        let (file, other) = (Path::new("a.hdv"), Path::new("b.hdv"));
+        web::put(file, vec![0; web::PART]);
+        web::write_at(file, 0, &[1]).unwrap();
+        web::save(file, &[2, 3]).unwrap();
+        assert!(web::changed().is_empty(), "parts of what was saved whole");
+
+        web::save(other, &[0; 4]).unwrap();
+        web::write_at(other, 1, &[1]).unwrap();
+        assert!(web::changed().is_empty(), "parts of what's already to be saved whole");
+        assert_eq!(web::written(), [file.to_path_buf(), other.to_path_buf()]);
+        assert_eq!(web::read(other).unwrap(), [0, 1, 0, 0]);
+    }
 }

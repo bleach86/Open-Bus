@@ -35,6 +35,24 @@ pub fn written_files() -> Vec<String> {
     names.map(|name| name.to_string_lossy().into_owned()).collect()
 }
 
+/// The files with parts written over since the page took them.
+#[wasm_bindgen]
+pub fn changed_files() -> Vec<String> {
+    let names = files::changed().into_iter();
+    names.map(|name| name.to_string_lossy().into_owned()).collect()
+}
+
+/// Where in `name` its parts written over start, for the page to keep.
+#[wasm_bindgen]
+pub fn take_changed_parts(name: &str) -> Vec<u32> {
+    files::take_changed_parts(Path::new(name))
+}
+
+#[wasm_bindgen]
+pub fn read_part(name: &str, offset: u32) -> Option<Vec<u8>> {
+    files::read_part(Path::new(name), offset)
+}
+
 enum Running {
     Apple(Host<Apple2>),
     Nes(Host<Nes>),
