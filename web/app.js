@@ -448,6 +448,10 @@ async function add(given, dropped = []) {
             await keep(nameOf(file), new Uint8Array(await file.arrayBuffer()));
         }
         const notes = [];
+        const loose = usable.length - added.length;
+        if (loose) {
+            notes.push(`Added ${loose} file${loose > 1 ? 's' : ''}.`);
+        }
         const roms = sorter.names();
         for (const name of roms) {
             await keep(name, sorter.bytes(name));
@@ -537,6 +541,18 @@ page('add').onchange = async (event) => {
     await add(event.target.files);
     event.target.value = '';
 };
+/// A folder chosen rather than dropped: its files by their paths, as a
+/// dropped one's are, those nearest the top first.
+page('add-folder').onchange = async (event) => {
+    const depth = (file) => file.path.split('/').length;
+    const inFolder = [...event.target.files];
+    for (const file of inFolder) {
+        file.path = `/${file.webkitRelativePath}`;
+    }
+    await add([], inFolder.sort((a, b) => depth(a) - depth(b)));
+    event.target.value = '';
+};
+page('add-folder-button').hidden = !('webkitdirectory' in HTMLInputElement.prototype);
 page('filter').oninput = refresh;
 page('model').onchange = showRoms;
 const holdingFiles = (event) => event.dataTransfer.types.includes('Files');
