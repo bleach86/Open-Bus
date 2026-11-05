@@ -27,6 +27,7 @@ pub mod host {
     pub mod font;
     pub mod machine;
     pub mod notice;
+    pub mod stats;
     pub mod page;
     pub mod run;
     pub mod save_state;
@@ -41,6 +42,7 @@ pub mod host {
         mod clock;
         mod files;
         mod notice;
+        mod stats;
         mod page;
         mod run;
         mod zip;

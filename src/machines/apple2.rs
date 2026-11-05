@@ -758,6 +758,41 @@ impl Machine for Apple2 {
         Some(screen)
     }
 
+    fn debug(&self) -> Vec<String> {
+        let model = if self.iie.is_some() { "IIE" } else { "II+" };
+        let switches = self.switches();
+        let double = switches.col80 && switches.dhires;
+        let mode = match (switches.graphics, switches.hires) {
+            (false, _) if switches.col80 => "TEXT 80",
+            (false, _) => "TEXT 40",
+            (true, true) if double => "DOUBLE HIRES",
+            (true, true) => "HIRES",
+            (true, false) if double => "DOUBLE LORES",
+            (true, false) => "LORES",
+        };
+        let mixed = if switches.graphics && switches.mixed { " MIXED" } else { "" };
+        let page = if switches.page2 { " PAGE 2" } else { "" };
+        let mut lines = vec![
+            format!("APPLE {model} FRAME {}", self.frames),
+            format!("{mode}{mixed}{page} {}", self.monitor.name()),
+        ];
+        if let Some(card) = &self.disk2 {
+            let (drive, track) = card.head();
+            let motor = if card.motor { "ON" } else { "OFF" };
+            lines.push(format!("DRIVE {} TRACK {track} MOTOR {motor}", drive + 1));
+            lines.push(format!("D1 {}", self.disk_name(0)));
+            lines.push(format!("D2 {}", self.disk_name(1)));
+        }
+        if let Some(card) = &self.hard_disk {
+            lines.push(format!("HARD DISK {} VOLUMES", card.units.iter().flatten().count()));
+        }
+        let boards = self.mockingboards.iter().flatten().count();
+        if boards > 0 {
+            lines.push(format!("MOCKINGBOARDS {boards}"));
+        }
+        lines
+    }
+
     fn title(&self) -> String {
         let name = if self.iie.is_some() {
             "Apple //e"

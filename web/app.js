@@ -355,6 +355,7 @@ function press(id, action) {
 
 press('save', () => emulator.function_key(2));
 press('load', () => emulator.function_key(4));
+press('info', () => emulator.function_key(3));
 press('full', () => fullscreen());
 page('reset').onpointerdown = () => {
     reset = true;

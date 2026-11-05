@@ -10,7 +10,26 @@
 #[cfg(target_arch = "wasm32")]
 use std::cell::Cell;
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+/// Seconds since a moment of no importance, for measuring what's between
+/// two of them.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn seconds() -> f64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_secs_f64()
+}
+
+// A web page has no Instant: its own clock, for the same.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(inline_js = "export function seconds() { return performance.now() / 1000; }")]
+extern "C" {
+    pub fn seconds() -> f64;
+}
 
 /// A date and time: the day of the week 0 Sunday to 6 Saturday.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

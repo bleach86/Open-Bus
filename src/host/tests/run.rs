@@ -147,6 +147,22 @@ mod tests {
     }
 
     #[test]
+    fn f3_turns_the_debug_panel_on_and_off() {
+        let (mut host, seen, _) = host("debug");
+        seen.borrow_mut().function_keys.push(3);
+        host.frame();
+        host.frame();
+        assert!(host.debug, "not on");
+        let on = seen.borrow().last.clone();
+
+        seen.borrow_mut().function_keys.push(3);
+        host.frame();
+        host.frame();
+        assert!(!host.debug, "not off");
+        assert_ne!(seen.borrow().last, on, "the panel drawn with it off");
+    }
+
+    #[test]
     fn the_controls_and_reset_are_given_to_the_machine() {
         let (mut host, seen, _) = host("controls");
         seen.borrow_mut().gamepad.start = true;

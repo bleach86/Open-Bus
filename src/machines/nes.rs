@@ -456,6 +456,17 @@ impl Machine for Nes {
         }
     }
 
+    fn debug(&self) -> Vec<String> {
+        let region = match self.region {
+            Region::Ntsc => "NTSC",
+            Region::Pal => "PAL",
+        };
+        let mut lines = vec![format!("NES {region} FRAME {}", self.frames)];
+        lines.extend(self.cartridge.debug());
+        lines.push(format!("APU {}", self.apu.sounding()));
+        lines
+    }
+
     fn title(&self) -> String {
         match self.region {
             Region::Ntsc => format!("NES   {}", self.name),

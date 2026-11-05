@@ -77,6 +77,14 @@ pub struct Drive {
     window: u8,
 }
 
+impl Disk2 {
+    /// The drive selected, 0 or 1, and its head's track.
+    pub fn head(&self) -> (usize, usize) {
+        let drive = self.drive2 as usize;
+        (drive, self.drives[drive].half_track / 2)
+    }
+}
+
 /// How long the motor runs on, switched off: a second.
 const MOTOR_RUNS_ON: u32 = CLOCK_HZ;
 

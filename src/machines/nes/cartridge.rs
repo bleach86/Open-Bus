@@ -1036,6 +1036,54 @@ impl Cartridge {
         }
     }
 
+    /// Its mapper, by its number and name, as a person knows it.
+    fn mapper_name(&self) -> String {
+        let (number, name) = match &self.mapper {
+            Mapper::Nrom => (0, "NROM"),
+            Mapper::Mmc1(_) => (1, "MMC1"),
+            Mapper::Uxrom(_) => (2, "UXROM"),
+            Mapper::Cnrom(_) => (3, "CNROM"),
+            Mapper::Mmc3(mmc3) if mmc3.mmc6 => (4, "MMC6"),
+            Mapper::Mmc3(_) => match self.board {
+                Board::Plain => (4, "MMC3"),
+                Board::Txsrom => (118, "TXSROM"),
+                Board::Tqrom => (119, "TQROM"),
+                Board::Multicart37 => (37, "MULTICART"),
+                Board::Multicart47 => (47, "MULTICART"),
+            },
+            Mapper::Mmc5(_) => (5, "MMC5"),
+            Mapper::Axrom(_) => (7, "AXROM"),
+            Mapper::Mmc2(_) => (9, "MMC2"),
+            Mapper::ColorDreams(_) => (11, "COLOR DREAMS"),
+            Mapper::Bnrom(_) => (34, "BNROM"),
+            Mapper::Nina001(_) => (34, "NINA-001"),
+            Mapper::Rambo1(_) => (64, "RAMBO-1"),
+            Mapper::Gxrom(_) => (66, "GXROM"),
+            Mapper::Fme7(_) => (69, "FME-7"),
+            Mapper::Camerica(_) => (71, "CAMERICA"),
+            Mapper::Nina03(_) => (79, "NINA-03"),
+            Mapper::Active(_) => (228, "ACTIVE"),
+            Mapper::Quattro(_) => (232, "QUATTRO"),
+        };
+        format!("MAPPER {number} {name}")
+    }
+
+    /// What's in it, for the debug panel.
+    pub fn debug(&self) -> Vec<String> {
+        let kilobytes = |bytes: usize| bytes / 1024;
+        let chr = match (self.chr_rom.len(), self.chr_ram.len()) {
+            (0, ram) => format!("CHR RAM {}K", kilobytes(ram)),
+            (rom, 0) => format!("CHR {}K", kilobytes(rom)),
+            (rom, ram) => format!("CHR {}K+{}K RAM", kilobytes(rom), kilobytes(ram)),
+        };
+        let battery = if self.battery { " BATTERY" } else { "" };
+        vec![
+            self.mapper_name(),
+            format!("PRG {}K {chr}", kilobytes(self.prg_rom.len())),
+            format!("RAM {}K{battery}  {:?}", kilobytes(self.prg_ram.len()), self.mirroring),
+        ]
+    }
+
     /// A CPU cycle: the IRQ counters of those that count them; RAMBO-1's
     /// line held if it's due.
     pub fn cycle(&mut self) {

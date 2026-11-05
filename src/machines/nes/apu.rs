@@ -644,6 +644,19 @@ impl Apu {
         self.noise.length.clock();
     }
 
+    /// The channels sounding, for the debug panel.
+    pub fn sounding(&self) -> String {
+        let on = [
+            (self.pulses[0].length.counter > 0, "P1"),
+            (self.pulses[1].length.counter > 0, "P2"),
+            (self.triangle.length.counter > 0, "TRI"),
+            (self.noise.length.counter > 0, "NOISE"),
+            (self.dmc.remaining > 0, "DMC"),
+        ];
+        let names: Vec<&str> = on.iter().filter(|(sounding, _)| *sounding).map(|(_, name)| *name).collect();
+        if names.is_empty() { "SILENT".to_string() } else { names.join(" ") }
+    }
+
     /// A CPU cycle: the frame counter, the channels' timers; then the
     /// length counters' loads and halts.
     pub fn cycle(&mut self) {

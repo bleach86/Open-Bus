@@ -50,6 +50,11 @@ pub trait Machine: Bus + Serialize + DeserializeOwned {
     /// left then a right.
     fn sound(&mut self) -> &mut Vec<f32>;
 
+    /// What it has to say of itself on the debug panel, a line each.
+    fn debug(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// A key typed.
     fn key(&mut self, _key: Key) {}
 

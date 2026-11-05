@@ -3,17 +3,21 @@
 //! isn't the machine's: its picture shown, with a notice over it if there
 //! is one (or its text screen in a terminal), its sound played; the keys,
 //! the controls and the Reset button given to it; F2 saving its state and
-//! F4 loading it back; what it keeps saved; and the window closed, off.
+//! F4 loading it back; F3 the debug panel, how fast it's going, its CPU and
+//! what the machine has to say of itself; what it keeps saved; and the
+//! window closed, off.
 //!
 //! `Host::frame` is a frame, for whatever calls it a frame at a time;
 //! `Host::run` calls it, keeping the machine to its clock.
 
 use crate::cpu::CPU;
+use crate::host::clock;
 use crate::host::display::Display;
 use crate::host::files;
 use crate::host::machine::{Input, Machine};
 use crate::host::notice;
 use crate::host::save_state;
+use crate::host::stats::Stats;
 use std::path::PathBuf;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -30,6 +34,10 @@ pub struct Host<M: Machine> {
     /// The window's title, as last set; the cycles run.
     title: String,
     cycles: u64,
+    /// The debug panel's showing; and how it's going, measured whether it
+    /// is or not.
+    pub debug: bool,
+    stats: Stats,
 }
 
 impl<M: Machine> Host<M> {
@@ -45,14 +53,18 @@ impl<M: Machine> Host<M> {
             noticed: Vec::new(),
             title: String::new(),
             cycles: 0,
+            debug: false,
+            stats: Stats::new(),
         }
     }
 
     /// A frame: false once the window's closed, the machine put away.
     pub fn frame(&mut self) -> bool {
+        let began = clock::seconds();
         let before = self.cpu.clock;
         self.cpu.run_frame();
-        self.cycles += self.cpu.clock.wrapping_sub(before) as u64;
+        let cycles = self.cpu.clock.wrapping_sub(before) as u64;
+        self.cycles += cycles;
 
         self.show();
         let machine = &mut self.cpu.memory;
@@ -76,6 +88,7 @@ impl<M: Machine> Host<M> {
         while let Some(key) = self.display.function_key() {
             match key {
                 2 => self.save_state(),
+                3 => self.debug = !self.debug,
                 4 => self.load_state(),
                 _ => {
                     if let Some(text) = self.cpu.memory.function_key(key) {
@@ -86,6 +99,8 @@ impl<M: Machine> Host<M> {
         }
         self.cpu.memory.reset_button(self.display.reset_held());
         self.cpu.memory.keep_saved(false);
+        let now = clock::seconds();
+        self.stats.frame(now, cycles, now - began);
         if self.display.closed() {
             self.cpu.memory.keep_saved(true);
             return false;
@@ -108,8 +123,20 @@ impl<M: Machine> Host<M> {
         }
     }
 
+    /// The debug panel's lines: how it's going, the CPU's, the machine's.
+    fn debug_lines(&self) -> Vec<String> {
+        let cpu = &self.cpu;
+        let mut lines = self.stats.lines(cpu.clock_hz);
+        lines.push(format!(
+            "PC {:04X} A{:02X} X{:02X} Y{:02X} S{:02X} P{:02X}",
+            cpu.pc, cpu.a, cpu.x, cpu.y, cpu.sp, cpu.status.to_byte()
+        ));
+        lines.extend(cpu.memory.debug());
+        lines
+    }
+
     /// The frame shown: as text, in a terminal; or its picture, with the
-    /// notice over it, if there is one.
+    /// notice and the debug panel over it, if they're on.
     fn show(&mut self) {
         if self.display.text_only() {
             if let Some(text) = self.cpu.memory.text_screen() {
@@ -117,18 +144,27 @@ impl<M: Machine> Host<M> {
             }
             return;
         }
+        let lines = self.debug.then(|| self.debug_lines());
         let picture = self.cpu.memory.picture();
-        let Some((text, frames)) = &mut self.notice else {
+        if self.notice.is_none() && lines.is_none() {
             self.display.show(picture.pixels, picture.width, picture.height);
             return;
-        };
+        }
+        let (width, height) = (picture.width, picture.height);
         self.noticed.clear();
         self.noticed.extend_from_slice(picture.pixels);
-        notice::draw(&mut self.noticed, picture.width, picture.height, text);
-        self.display.show(&self.noticed, picture.width, picture.height);
-        *frames -= 1;
-        if *frames == 0 {
-            self.notice = None;
+        if let Some(lines) = &lines {
+            notice::panel(&mut self.noticed, width, height, lines);
+        }
+        if let Some((text, _)) = &self.notice {
+            notice::draw(&mut self.noticed, width, height, text);
+        }
+        self.display.show(&self.noticed, width, height);
+        if let Some((_, frames)) = &mut self.notice {
+            *frames -= 1;
+            if *frames == 0 {
+                self.notice = None;
+            }
         }
     }
 

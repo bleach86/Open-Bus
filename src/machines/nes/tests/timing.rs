@@ -169,6 +169,16 @@ mod tests {
     }
 
     #[test]
+    fn it_says_what_it_is_on_the_debug_panel() {
+        let nes = |region| Nes::of(Cartridge::new(&image(&[])).unwrap(), region);
+        let lines = nes(Region::Ntsc).debug();
+        assert!(lines[0].starts_with("NES NTSC FRAME"), "{lines:?}");
+        assert_eq!(lines[1], "MAPPER 0 NROM");
+        assert!(lines[2].starts_with("PRG 16K CHR 8K"), "{lines:?}");
+        assert!(nes(Region::Pal).debug()[0].starts_with("NES PAL"));
+    }
+
+    #[test]
     fn a_state_keeps_to_its_region() {
         let nes = |region| Nes::of(Cartridge::new(&image(&[])).unwrap(), region);
         let (ntsc, pal) = (nes(Region::Ntsc).identity(), nes(Region::Pal).identity());
