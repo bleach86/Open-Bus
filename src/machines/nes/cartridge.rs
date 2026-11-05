@@ -83,6 +83,16 @@
 //! Race's, its ROM's bit 0 always winning; known by its ROM too, its
 //! header often saying 11.
 //!
+//! 118, TxSROM: MMC3 with the top bit of a 1K bank's number wired to the
+//! nametables' address line. Its CHR banking ignores PPU A13, so a
+//! nametable's address is banked as if it were $0000 to $0FFF's, and each
+//! 1K of the nametables is whichever page that bit of the same bank says:
+//! R0 and R1's for 2K each, or with the CHR inverted R2 to R5's for 1K;
+//! $A000's mirroring does nothing.
+//!
+//! 119, TQROM: MMC3 with both CHR ROM and 8K of CHR RAM, bit 6 of each
+//! bank's number choosing, 6 bits left to say which bank of it.
+//!
 //! Bus conflicts: on a board whose register is written with its ROM still
 //! driving the bus, the bits it holds low win; the register's given what
 //! was written ANDed with the ROM's byte there.
@@ -191,6 +201,28 @@ pub struct Nina001 {
     chr: [u8; 2],
 }
 
+/// The boards MMC3's wired to differently.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Board {
+    #[default]
+    Plain,
+    Txsrom,
+    Tqrom,
+}
+
+impl Mmc3 {
+    /// The 1K bank that CHR address `addr` is in, by the banks and their
+    /// inversion: R0 and R1 2K each, R2 to R5 1K.
+    fn chr_bank(&self, addr: usize) -> usize {
+        let addr = if self.select & 0x80 != 0 { addr ^ 0x1000 } else { addr };
+        match addr >> 10 {
+            slot @ (0 | 1) => (self.banks[0] as usize & 0xFE) | slot,
+            slot @ (2 | 3) => (self.banks[1] as usize & 0xFE) | (slot & 1),
+            slot => self.banks[slot - 2] as usize,
+        }
+    }
+}
+
 /// MMC2's registers: its 8K bank; of the pattern tables' two 4K banks each,
 /// those for tiles $FD and $FE; and each table's latch, which of them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -254,6 +286,9 @@ pub struct Cartridge {
     /// The region its header says it's for, if it says one.
     #[serde(skip)]
     pub region: Option<Region>,
+    /// The board its MMC3 is on: as the ROMs are, not in a save state.
+    #[serde(skip)]
+    pub board: Board,
 }
 
 const HEADER: usize = 16;
@@ -311,7 +346,7 @@ impl Cartridge {
             1 => Mapper::Mmc1(Mmc1 { shift: 0, bits: 0, control: 0x0C, chr: [0; 2], prg: 0, written: None }),
             2 => Mapper::Uxrom(0),
             3 => Mapper::Cnrom(0),
-            4 => Mapper::Mmc3(Mmc3 {
+            4 | 118 | 119 => Mapper::Mmc3(Mmc3 {
                 select: 0,
                 banks: [0, 2, 4, 5, 6, 7, 0, 1],
                 ram_enabled: true,
@@ -338,7 +373,13 @@ impl Cartridge {
             79 => Mapper::Nina03(Banks::new(Conflicts::None)),
             _ => return Err(format!("mapper {number}, which isn't here yet")),
         };
-        let chr_ram = if chr_rom.is_empty() { vec![0; chr_ram_size.max(CHR_BANK)] } else { Vec::new() };
+        let board = match number {
+            118 => Board::Txsrom,
+            119 => Board::Tqrom,
+            _ => Board::Plain,
+        };
+        let has_ram = chr_rom.is_empty() || board == Board::Tqrom;
+        let chr_ram = if has_ram { vec![0; chr_ram_size.max(CHR_BANK)] } else { Vec::new() };
         Ok(Cartridge {
             prg_rom,
             chr_rom,
@@ -349,6 +390,7 @@ impl Cartridge {
             mirroring,
             mapper,
             region,
+            board,
         })
     }
 
@@ -357,6 +399,7 @@ impl Cartridge {
     pub fn take_roms(&mut self, cartridge: &mut Cartridge) {
         self.prg_rom = std::mem::take(&mut cartridge.prg_rom);
         self.chr_rom = std::mem::take(&mut cartridge.chr_rom);
+        self.board = cartridge.board;
     }
 
     /// Where `addr`, $8000 up, is in the PRG ROM, as the mapper has its
@@ -417,16 +460,22 @@ impl Cartridge {
                 _ => mmc1.chr[addr >> 12] as usize * 0x1000 + (addr & 0x0FFF),
             },
             Mapper::Mmc3(mmc3) => {
-                let addr = if mmc3.select & 0x80 != 0 { addr ^ 0x1000 } else { addr };
-                match addr >> 10 {
-                    0 | 1 => (mmc3.banks[0] as usize & 0xFE) * 0x400 + (addr & 0x7FF),
-                    2 | 3 => (mmc3.banks[1] as usize & 0xFE) * 0x400 + (addr & 0x7FF),
-                    slot => mmc3.banks[slot - 2] as usize * 0x400 + (addr & 0x3FF),
-                }
+                let bank = mmc3.chr_bank(addr);
+                let bank = if self.board == Board::Tqrom { bank & 0x3F } else { bank };
+                bank * 0x400 + (addr & 0x3FF)
             }
         };
-        let chr = if self.chr_rom.is_empty() { &self.chr_ram } else { &self.chr_rom };
+        let chr = if self.chr_in_ram(addr as u16) { &self.chr_ram } else { &self.chr_rom };
         offset % chr.len()
+    }
+
+    /// Whether CHR address `addr` is in its CHR RAM.
+    fn chr_in_ram(&self, addr: u16) -> bool {
+        match &self.mapper {
+            _ if self.chr_rom.is_empty() => true,
+            Mapper::Mmc3(mmc3) if self.board == Board::Tqrom => mmc3.chr_bank(addr as usize) & 0x40 != 0,
+            _ => false,
+        }
     }
 
     /// Where `addr`, $6000 to $7FFF, is in its PRG RAM, if it's there to
@@ -594,10 +643,20 @@ impl Cartridge {
         }
     }
 
+    /// Which 1K of the PPU's nametable RAM, 0 to 3, PPU address `addr` is
+    /// in: as the board's mirroring wires it, or on TxSROM, the top bit of
+    /// the CHR bank that address falls in.
+    pub fn nametable_page(&self, addr: u16) -> usize {
+        match &self.mapper {
+            Mapper::Mmc3(mmc3) if self.board == Board::Txsrom => mmc3.chr_bank(addr as usize & 0x0FFF) >> 7,
+            _ => self.mirroring.page(addr),
+        }
+    }
+
     /// A read of the pattern tables, $0000 to $1FFF.
     pub fn chr_read(&mut self, addr: u16) -> u8 {
         let at = self.chr_offset(addr);
-        let value = if self.chr_rom.is_empty() { self.chr_ram[at] } else { self.chr_rom[at] };
+        let value = if self.chr_in_ram(addr) { self.chr_ram[at] } else { self.chr_rom[at] };
         if let Mapper::Mmc2(mmc2) = &mut self.mapper {
             match addr {
                 0x0FD8 => mmc2.latch[0] = 0,
@@ -612,7 +671,7 @@ impl Cartridge {
 
     /// A write to them: to its CHR RAM, if it has that.
     pub fn chr_write(&mut self, addr: u16, value: u8) {
-        if self.chr_rom.is_empty() {
+        if self.chr_in_ram(addr) {
             let at = self.chr_offset(addr);
             self.chr_ram[at] = value;
         }

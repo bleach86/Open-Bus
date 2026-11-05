@@ -5,7 +5,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::machines::nes::cartridge::{Cartridge, Mapper, Mirroring};
+    use crate::machines::nes::cartridge::{Board, Cartridge, Mapper, Mirroring};
 
     /// An iNES image: its flags 6 to 15, then `prg` 16K banks, each its
     /// number in every byte, and `chr` 8K banks of $C0 and its number.
@@ -258,6 +258,100 @@ mod tests {
         }
         cart.chr_read(0x1FD0);
         assert_eq!(cart.chr_read(0x1000), 0xC3, "the right table, on the first plane");
+    }
+
+    /// MMC3's CHR registers set: R0 to R5, each its value.
+    fn mmc3_banks(cart: &mut Cartridge, inverted: bool, banks: [u8; 6]) {
+        let invert = if inverted { 0x80 } else { 0 };
+        for (register, bank) in banks.into_iter().enumerate() {
+            cart.cpu_write(0x8000, invert | register as u8, 0);
+            cart.cpu_write(0x8001, bank, 0);
+        }
+    }
+
+    /// Which page each of the four nametables is.
+    fn pages(cart: &Cartridge) -> [usize; 4] {
+        [0x2000, 0x2400, 0x2800, 0x2C00].map(|addr| cart.nametable_page(addr))
+    }
+
+    #[test]
+    fn txsroms_nametables_are_the_chr_banks_top_bits() {
+        let mut cart = board(118, 8, 8);
+
+        // R0 and R1, 2K each: horizontal, either way round, or one screen.
+        mmc3_banks(&mut cart, false, [0x00, 0x80, 0, 0, 0, 0]);
+        assert_eq!(pages(&cart), [0, 0, 1, 1]);
+        mmc3_banks(&mut cart, false, [0x80, 0x00, 0, 0, 0, 0]);
+        assert_eq!(pages(&cart), [1, 1, 0, 0]);
+        mmc3_banks(&mut cart, false, [0x80, 0x80, 0, 0, 0, 0]);
+        assert_eq!(pages(&cart), [1, 1, 1, 1]);
+
+        // R2 to R5's bits are ignored while they're at $1000 up.
+        mmc3_banks(&mut cart, false, [0, 0, 0x80, 0x80, 0x80, 0x80]);
+        assert_eq!(pages(&cart), [0, 0, 0, 0]);
+
+        // Inverted, they're at $0000: 1K each, and R0 and R1's ignored.
+        mmc3_banks(&mut cart, true, [0x80, 0x80, 0x00, 0x80, 0x80, 0x00]);
+        assert_eq!(pages(&cart), [0, 1, 1, 0], "each 1K its own");
+        mmc3_banks(&mut cart, true, [0, 0, 0x00, 0x80, 0x00, 0x80]);
+        assert_eq!(pages(&cart), [0, 1, 0, 1]);
+
+        // The nametables' mirror at $3000, and $A000 doing nothing.
+        assert_eq!(cart.nametable_page(0x3400), 1);
+        cart.cpu_write(0xA000, 1, 0);
+        assert_eq!(pages(&cart), [0, 1, 0, 1], "$A000 did something");
+    }
+
+    #[test]
+    fn a_plain_mmc3s_top_bits_are_no_nametable() {
+        let mut cart = board(4, 8, 8);
+        cart.cpu_write(0xA000, 0, 0);
+        mmc3_banks(&mut cart, false, [0x80, 0x00, 0, 0, 0, 0]);
+        assert_eq!(pages(&cart), [0, 1, 0, 1], "vertical, by $A000");
+    }
+
+    #[test]
+    fn tqroms_banks_choose_its_chr_rom_or_its_ram() {
+        let mut cart = board(119, 8, 4);
+        // R0 ROM at $0000; R2 RAM at $1000, and R3 another bank of it.
+        mmc3_banks(&mut cart, false, [0x08, 0, 0x40, 0x41, 0, 0]);
+        assert_eq!(cart.chr_read(0x0000), 0xC1, "ROM's 1K bank 8, its second 8K");
+
+        cart.chr_write(0x1000, 0x5A);
+        cart.chr_write(0x1400, 0xA5);
+        assert_eq!((cart.chr_read(0x1000), cart.chr_read(0x1400)), (0x5A, 0xA5), "the RAM's banks");
+
+        // A write to ROM doing nothing, and the RAM's 8K wrapping.
+        cart.chr_write(0x0000, 0x11);
+        assert_eq!(cart.chr_read(0x0000), 0xC1, "the ROM written");
+        mmc3_banks(&mut cart, false, [0x08, 0, 0x48, 0x41, 0, 0]);
+        assert_eq!(cart.chr_read(0x1000), 0x5A, "RAM bank 8 not 0 again");
+
+        // Swapped to ROM, the RAM's kept.
+        mmc3_banks(&mut cart, false, [0x08, 0, 0x08, 0x41, 0, 0]);
+        assert_eq!(cart.chr_read(0x1000), 0xC1);
+        mmc3_banks(&mut cart, false, [0x08, 0, 0x40, 0x41, 0, 0]);
+        assert_eq!(cart.chr_read(0x1000), 0x5A);
+
+        // RAM in a 2K bank too, and bit 7 nothing.
+        mmc3_banks(&mut cart, false, [0xC0, 0, 0x40, 0x41, 0, 0]);
+        cart.chr_write(0x0400, 0x77);
+        assert_eq!(cart.chr_read(0x0400), 0x77);
+    }
+
+    #[test]
+    fn a_tqrom_of_no_chr_rom_is_all_ram() {
+        let mut cart = board(119, 8, 0);
+        cart.chr_write(0x0000, 0x12);
+        assert_eq!(cart.chr_read(0x0000), 0x12);
+    }
+
+    #[test]
+    fn a_state_has_its_board_from_the_cartridge_its_loaded_into() {
+        let mut loaded = board(0, 1, 1);
+        let mut running = board(119, 8, 4);
+        loaded.take_roms(&mut running);
+        assert_eq!(loaded.board, Board::Tqrom);
     }
 
     #[test]

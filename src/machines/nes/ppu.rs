@@ -211,7 +211,7 @@ impl Ppu {
         }
         match addr {
             0x0000..=0x1FFF => cart.chr_read(addr),
-            0x2000..=0x3EFF => self.nametables[cart.mirroring.page(addr) * 0x400 + (addr as usize & 0x3FF)],
+            0x2000..=0x3EFF => self.nametables[cart.nametable_page(addr) * 0x400 + (addr as usize & 0x3FF)],
             _ => self.palette[palette_index(addr)],
         }
     }
@@ -223,7 +223,7 @@ impl Ppu {
         }
         match addr {
             0x0000..=0x1FFF => cart.chr_write(addr, value),
-            0x2000..=0x3EFF => self.nametables[cart.mirroring.page(addr) * 0x400 + (addr as usize & 0x3FF)] = value,
+            0x2000..=0x3EFF => self.nametables[cart.nametable_page(addr) * 0x400 + (addr as usize & 0x3FF)] = value,
             _ => self.palette[palette_index(addr)] = value & 0x3F,
         }
     }
