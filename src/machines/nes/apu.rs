@@ -32,6 +32,7 @@
 //! bytes, past $FFFF on at $8000; then over, if it loops, or its IRQ flag
 //! set if that's enabled.
 
+use super::region::Region;
 use serde::{Deserialize, Serialize};
 
 const LENGTHS: [u8; 32] = [
@@ -48,18 +49,23 @@ const TRIANGLE: [u8; 32] = [
     15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
     13, 14, 15,
 ];
-const NOISE_PERIODS: [u16; 16] = [
-    4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
+/// The noise's periods and the DMC's rates, in CPU cycles, NTSC's and
+/// PAL's.
+const NOISE_PERIODS: [[u16; 16]; 2] = [
+    [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068],
+    [4, 8, 14, 30, 60, 88, 118, 148, 188, 236, 354, 472, 708, 944, 1890, 3778],
 ];
-const DMC_RATES: [u16; 16] = [
-    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
+const DMC_RATES: [[u16; 16]; 2] = [
+    [428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54],
+    [398, 354, 316, 298, 276, 236, 210, 198, 176, 148, 132, 118, 98, 78, 66, 50],
 ];
 
 /// The frame counter's steps, in CPU cycles from its start, mode 0's and
-/// mode 1's; and what each clocks: a quarter frame, a half, or nothing.
-const STEPS: [[u32; 6]; 2] = [
-    [7457, 14913, 22371, 29828, 29829, 29830],
-    [7457, 14913, 22371, 29829, 37281, 37282],
+/// mode 1's, NTSC's and PAL's; and what each clocks: a quarter frame, a
+/// half, or nothing.
+const STEPS: [[[u32; 6]; 2]; 2] = [
+    [[7457, 14913, 22371, 29828, 29829, 29830], [7457, 14913, 22371, 29829, 37281, 37282]],
+    [[8313, 16627, 24939, 33252, 33253, 33254], [8313, 16627, 24939, 33253, 41565, 41566]],
 ];
 #[derive(Clone, Copy, PartialEq)]
 enum Frame {
@@ -328,7 +334,7 @@ struct Noise {
 }
 
 impl Noise {
-    fn write(&mut self, register: u16, value: u8) {
+    fn write(&mut self, register: u16, value: u8, region: Region) {
         match register & 3 {
             0 => {
                 self.length.new_halt = value & 0x20 != 0;
@@ -337,7 +343,7 @@ impl Noise {
             1 => {}
             2 => {
                 self.short = value & 0x80 != 0;
-                self.period = NOISE_PERIODS[value as usize & 0x0F];
+                self.period = NOISE_PERIODS[region as usize][value as usize & 0x0F];
             }
             _ => {
                 self.length.load(value >> 3);
@@ -386,7 +392,7 @@ struct Dmc {
 }
 
 impl Dmc {
-    fn write(&mut self, register: u16, value: u8) {
+    fn write(&mut self, register: u16, value: u8, region: Region) {
         match register & 3 {
             0 => {
                 self.irq_enabled = value & 0x80 != 0;
@@ -394,7 +400,7 @@ impl Dmc {
                     self.irq = false;
                 }
                 self.looping = value & 0x40 != 0;
-                self.rate = DMC_RATES[value as usize & 0x0F];
+                self.rate = DMC_RATES[region as usize][value as usize & 0x0F];
             }
             1 => self.output = value & 0x7F,
             2 => self.sample_address = 0xC000 | (value as u16) << 6,
@@ -463,6 +469,9 @@ impl Dmc {
 
 #[derive(Serialize, Deserialize)]
 pub struct Apu {
+    /// Whose tables it has: in the machine it's loaded into, not a state.
+    #[serde(skip)]
+    pub region: Region,
     pulses: [Pulse; 2],
     triangle: Triangle,
     noise: Noise,
@@ -483,8 +492,9 @@ pub struct Apu {
 }
 
 impl Apu {
-    pub fn new() -> Self {
+    pub fn new(region: Region) -> Self {
         let mut apu = Apu {
+            region,
             pulses: [
                 Pulse::default(),
                 Pulse {
@@ -495,7 +505,7 @@ impl Apu {
             triangle: Triangle::default(),
             noise: Noise {
                 short: false,
-                period: NOISE_PERIODS[0],
+                period: NOISE_PERIODS[region as usize][0],
                 timer: 0,
                 shift: 1,
                 envelope: Envelope::default(),
@@ -504,8 +514,8 @@ impl Apu {
             dmc: Dmc {
                 irq_enabled: false,
                 looping: false,
-                rate: DMC_RATES[0],
-                timer: DMC_RATES[0] - 1,
+                rate: DMC_RATES[region as usize][0],
+                timer: DMC_RATES[region as usize][0] - 1,
                 output: 0,
                 sample_address: 0xC000,
                 sample_length: 1,
@@ -588,8 +598,8 @@ impl Apu {
             0x4000..=0x4003 => self.pulses[0].write(addr, value),
             0x4004..=0x4007 => self.pulses[1].write(addr, value),
             0x4008..=0x400B => self.triangle.write(addr, value),
-            0x400C..=0x400F => self.noise.write(addr, value),
-            0x4010..=0x4013 => self.dmc.write(addr, value),
+            0x400C..=0x400F => self.noise.write(addr, value, self.region),
+            0x4010..=0x4013 => self.dmc.write(addr, value, self.region),
             0x4015 => {
                 self.pulses[0].length.enable(value & 0x01 != 0);
                 self.pulses[1].length.enable(value & 0x02 != 0);
@@ -658,7 +668,7 @@ impl Apu {
     fn frame_counter(&mut self) {
         self.frame_cycle += 1;
         let mode = self.mode as usize;
-        if self.frame_cycle == STEPS[mode][self.frame_step] {
+        if self.frame_cycle == STEPS[self.region as usize][mode][self.frame_step] {
             if mode == 0 && self.frame_step >= 3 && !self.irq_inhibit {
                 self.frame_irq = true;
             }

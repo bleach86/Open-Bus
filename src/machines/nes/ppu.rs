@@ -4,7 +4,9 @@
 //! blank starts on 241, its flag set (and an NMI, if it's enabled) on its
 //! dot 1; and 261, the pre-render line, ends it, clears the flags on its
 //! dot 1, and fetches what line 0 begins with. On odd frames, rendering,
-//! the pre-render line is a dot short.
+//! the pre-render line is a dot short. The PAL 2C07's the same but for its
+//! region's timing: 312 lines, 311 the pre-render line, never a dot short;
+//! and the black border it draws, its first line and two dots at each side.
 //!
 //! Its memory, its own bus: the cartridge's pattern tables, $0000 to
 //! $1FFF; the nametables, $2000 to $2FFF, its 2K of RAM as the cartridge
@@ -35,18 +37,19 @@
 //! bit decaying to 0 if it isn't driven 1 again for 600 ms or so.
 
 use super::cartridge::Cartridge;
+use super::region::Region;
 use crate::host::save_state;
 use serde::{Deserialize, Serialize};
 
 pub const WIDTH: usize = 256;
 pub const HEIGHT: usize = 240;
 pub const DOTS: u16 = 341;
-pub const LINES: u16 = 262;
-const PRE_RENDER: u16 = 261;
 const VBLANK: u16 = 241;
-/// How long a bit on the registers' bus lasts, not driven 1: 36 frames,
-/// 600 ms.
-const DECAY_FRAMES: u32 = 36;
+/// How long a bit on the registers' bus lasts, not driven 1, in NTSC's
+/// frames and PAL's: 600 ms.
+const DECAY_FRAMES: [u32; 2] = [36, 30];
+/// The border's colour, black.
+const BORDER: u16 = 0x0E;
 
 /// A sprite fetched for the line: its X, its pattern's two planes (turned
 /// round if flipped), its attributes.
@@ -60,6 +63,9 @@ struct Sprite {
 
 #[derive(Serialize, Deserialize)]
 pub struct Ppu {
+    /// Whose timing it has: in the machine it's loaded into, not a state.
+    #[serde(skip)]
+    pub region: Region,
     ctrl: u8,
     mask: u8,
     vblank: bool,
@@ -125,8 +131,9 @@ pub struct Ppu {
 }
 
 impl Ppu {
-    pub fn new() -> Self {
+    pub fn new(region: Region) -> Self {
         Ppu {
+            region,
             ctrl: 0,
             mask: 0,
             vblank: false,
@@ -323,7 +330,7 @@ impl Ppu {
     /// while it renders, as rendering moves it, a tile across and a line
     /// down at once.
     fn next_address(&mut self, cart: &mut Cartridge) {
-        if self.rendering() && (self.line < 240 || self.line == PRE_RENDER) {
+        if self.rendering() && (self.line < 240 || self.line == self.pre_render()) {
             self.next_tile();
             self.next_line();
         } else {
@@ -362,11 +369,16 @@ impl Ppu {
         self.v = (self.v & !0x03E0) | (y << 5);
     }
 
+    /// The pre-render line, a frame's last.
+    fn pre_render(&self) -> u16 {
+        self.region.lines() - 1
+    }
+
     /// A dot.
     pub fn tick(&mut self, cart: &mut Cartridge) {
         let (line, dot) = (self.line, self.dot);
         let seen = line < 240;
-        let pre_render = line == PRE_RENDER;
+        let pre_render = line == self.pre_render();
 
         if line == VBLANK && dot == 1 {
             self.vblank = !self.suppress_vblank;
@@ -375,7 +387,7 @@ impl Ppu {
             // The bus's bits not driven 1 lately, decayed.
             self.frames += 1;
             for bit in 0..8 {
-                if self.frames - self.driven[bit] > DECAY_FRAMES {
+                if self.frames - self.driven[bit] > DECAY_FRAMES[self.region as usize] {
                     self.latch &= !(1 << bit);
                 }
             }
@@ -404,7 +416,7 @@ impl Ppu {
         // On, a dot; the pre-render line a dot short on odd frames, if
         // it's rendering as of dot 338.
         if pre_render && dot == 338 {
-            self.short_line = self.odd && self.rendering();
+            self.short_line = self.odd && self.rendering() && self.region == Region::Ntsc;
         }
         if pre_render && dot == 339 && self.short_line {
             self.dot = 340;
@@ -414,7 +426,7 @@ impl Ppu {
         if self.dot == DOTS {
             self.dot = 0;
             self.line += 1;
-            if self.line == LINES {
+            if self.line == self.region.lines() {
                 self.line = 0;
                 self.odd = !self.odd;
             }
@@ -450,7 +462,7 @@ impl Ppu {
         match dot {
             256 => self.next_line(),
             257 => self.v = (self.v & !0x041F) | (self.t & 0x041F),
-            280..=304 if self.line == PRE_RENDER => self.v = (self.v & !0x7BE0) | (self.t & 0x7BE0),
+            280..=304 if self.line == self.pre_render() => self.v = (self.v & !0x7BE0) | (self.t & 0x7BE0),
             // Two nametable fetches more, their bytes not used.
             338 | 340 => {
                 self.read(0x2000 | (self.v & 0x0FFF), cart);
@@ -532,7 +544,7 @@ impl Ppu {
         }
         self.oam_addr = 0;
         if dot == 257 {
-            let found = if self.line == PRE_RENDER { 0 } else { self.found };
+            let found = if self.line == self.pre_render() { 0 } else { self.found };
             self.sprite_count = found;
             self.zero_on_line = self.zero_found && found > 0;
         }
@@ -594,7 +606,8 @@ impl Ppu {
         };
         let grey = if self.mask & 0x01 != 0 { 0x30 } else { 0x3F };
         let emphasis = (self.mask as u16 >> 5) << 6;
-        self.frame[self.line as usize * WIDTH + x] = (colour & grey) as u16 | emphasis;
+        let border = self.region == Region::Pal && (self.line == 0 || !(2..WIDTH - 2).contains(&x));
+        self.frame[self.line as usize * WIDTH + x] = if border { BORDER } else { (colour & grey) as u16 | emphasis };
     }
 
     /// The background's dot at `x`: its colour, 0 to 3, and its palette;

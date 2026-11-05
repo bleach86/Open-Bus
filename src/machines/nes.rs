@@ -52,12 +52,14 @@ pub mod apu;
 pub mod cartridge;
 pub mod palette;
 pub mod ppu;
+pub mod region;
 
 #[cfg(test)]
 mod tests {
     mod cartridge;
     mod sound;
     mod test_roms;
+    mod timing;
 }
 
 use crate::cpu::bus::Bus;
@@ -74,6 +76,7 @@ use crate::host::sound::{HighPass, LowPass, Sampler};
 use crate::host::window::Window;
 use crate::host::zip::crc32;
 use apu::Apu;
+use region::Region;
 use cartridge::Cartridge;
 use ppu::Ppu;
 use serde::{Deserialize, Serialize};
@@ -145,6 +148,9 @@ pub struct Nes {
     #[serde(skip)]
     frame_ended: bool,
     reset_held: bool,
+    /// Its region, from its game: a state's loaded into one of the same.
+    #[serde(skip)]
+    pub region: Region,
     /// The game's name; the gamepad, as the host last gave it.
     #[serde(skip)]
     pub name: String,
@@ -170,10 +176,16 @@ pub struct Nes {
 
 impl Nes {
     pub fn new(cartridge: Cartridge) -> Self {
+        Nes::of(cartridge, Region::Ntsc)
+    }
+
+    /// A NES of `region`.
+    pub fn of(cartridge: Cartridge, region: Region) -> Self {
         Nes {
             ram: vec![0; 0x800],
-            ppu: Ppu::new(),
-            apu: Apu::new(),
+            ppu: Ppu::new(region),
+            apu: Apu::new(region),
+            region,
             cartridge,
             shifts: [0; 2],
             strobe: false,
@@ -190,7 +202,7 @@ impl Nes {
             reset_held: false,
             name: String::new(),
             gamepad: Gamepad::default(),
-            colours: palette::palette(),
+            colours: palette::palette(region),
             overscan: 0,
             battery_file: None,
             picture: Vec::new(),
@@ -277,7 +289,10 @@ impl Nes {
                 _ => {} // a cycle to line up with the gets and puts
             }
         }
-        if !busy {
+        // The PAL CPU stops for the DMC only on an instruction's first
+        // cycle, so a read of a register isn't made again.
+        let register = (0x2000..0x4020).contains(&self.halted_on);
+        if !busy && !(self.region == Region::Pal && register && self.dma.is_none()) {
             let value = self.cpu_read(self.halted_on);
             self.open_bus = value;
         }
@@ -348,9 +363,9 @@ impl Bus for Nes {
         }
     }
 
-    /// A cycle's three dots: the first the last cycle's, after its access,
-    /// at whose end the CPU samples NMI and IRQ; then this one's two,
-    /// before its access.
+    /// A cycle's dots, three (PAL's now and then four): the first the last
+    /// cycle's, after its access, at whose end the CPU samples NMI and IRQ;
+    /// then this one's, before its access.
     fn tick(&mut self) {
         self.cycles += 1;
         self.ppu.tick(&mut self.cartridge);
@@ -360,8 +375,9 @@ impl Bus for Nes {
             self.apu.reset();
         }
         self.apu.cycle();
-        self.ppu.tick(&mut self.cartridge);
-        self.ppu.tick(&mut self.cartridge);
+        for _ in 1..self.region.dots(self.cycles) {
+            self.ppu.tick(&mut self.cartridge);
+        }
         if self.halted {
             self.dma_cycle();
         }
@@ -426,13 +442,16 @@ impl Machine for Nes {
     }
 
     fn title(&self) -> String {
-        format!("NES   {}", self.name)
+        match self.region {
+            Region::Ntsc => format!("NES   {}", self.name),
+            Region::Pal => format!("NES   {}   PAL, 50 Hz", self.name),
+        }
     }
 
     fn sound_on(&mut self) {
         self.sound = Some(Sound {
-            low_passes: LOW_PASSES.map(|corner| LowPass::new(corner, CLOCK_HZ)),
-            sampler: Sampler::new(CLOCK_HZ),
+            low_passes: LOW_PASSES.map(|corner| LowPass::new(corner, self.region.clock_hz())),
+            sampler: Sampler::new(self.region.clock_hz()),
             high_pass: HighPass::new(HIGH_PASS, SAMPLE_RATE),
         });
     }
@@ -465,12 +484,15 @@ impl Machine for Nes {
     /// leaves out.
     fn identity(&self) -> String {
         let roms = [&self.cartridge.prg_rom[..], &self.cartridge.chr_rom[..]].concat();
-        format!("NES, ROMs {:08X}", crc32(&roms))
+        let region = if self.region == Region::Pal { ", PAL" } else { "" };
+        format!("NES, ROMs {:08X}{region}", crc32(&roms))
     }
 
     fn keep(&mut self, running: &mut Nes) {
         use std::mem::take;
         self.cartridge.take_roms(&mut running.cartridge);
+        self.region = running.region;
+        (self.ppu.region, self.apu.region) = (running.region, running.region);
         self.name = take(&mut running.name);
         self.gamepad = running.gamepad;
         self.colours = take(&mut running.colours);
@@ -504,12 +526,15 @@ fn seen(overscan: usize) -> (usize, usize) {
 
 /// The NES, on whichever host, with the game at `rom` (an iNES image, or a
 /// zip of one), its battery's RAM read if it has any, reset; `overscan` dots
-/// or lines hidden at each edge of its picture.
-pub fn build(rom: &str, overscan: usize) -> Result<CPU<Nes>, String> {
+/// or lines hidden at each edge of its picture; its `region`, or the
+/// game's, as its header or its name says.
+pub fn build(rom: &str, overscan: usize, region: Option<Region>) -> Result<CPU<Nes>, String> {
     let path = Path::new(rom);
     let image = image(path).map_err(|e| format!("{rom}: {e}"))?;
     let cartridge = Cartridge::new(&image).map_err(|e| format!("{rom}: {e}"))?;
-    let mut nes = Nes::new(cartridge);
+    let named = path.file_name().and_then(|name| Region::from_name(&name.to_string_lossy()));
+    let region = region.or(cartridge.region).or(named).unwrap_or_default();
+    let mut nes = Nes::of(cartridge, region);
     if nes.cartridge.battery {
         let file = path.with_extension("srm");
         if let Ok(saved) = files::read(&file) {
@@ -525,27 +550,29 @@ pub fn build(rom: &str, overscan: usize) -> Result<CPU<Nes>, String> {
     nes.overscan = overscan;
     let mut cpu = CPU::with_bus(nes);
     cpu.variant = Variant::Ricoh2A03;
-    cpu.clock_hz = CLOCK_HZ;
+    cpu.clock_hz = region.clock_hz();
     cpu.reset();
     Ok(cpu)
 }
 
 /// How big its picture's shown, `overscan` hidden: its dots and lines seen,
-/// each dot 8:7 as a TV shows it, 3 times over: 823 by 672, of 240 by 224.
-pub fn size(overscan: usize) -> (u32, u32) {
+/// each dot as `region`'s TV shows it, 8:7 on NTSC's, 3 times over: 823 by
+/// 672, of 240 by 224.
+pub fn size(overscan: usize, region: Region) -> (u32, u32) {
     let (width, height) = seen(overscan);
     (
-        (width as f32 * 8.0 / 7.0 * 3.0).round() as u32,
+        (width as f32 * region.dot_shape() * 3.0).round() as u32,
         height as u32 * 3,
     )
 }
 
 /// The NES as `build` has it, run in a window, `fullscreen` or not.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run(rom: &str, fullscreen: bool, overscan: usize) {
-    let cpu = build(rom, overscan).unwrap_or_else(|e| panic!("{e}"));
+pub fn run(rom: &str, fullscreen: bool, overscan: usize, region: Option<Region>) {
+    let cpu = build(rom, overscan, region).unwrap_or_else(|e| panic!("{e}"));
+    let region = cpu.memory.region;
     let (width, height) = seen(overscan);
     let title = cpu.memory.title();
-    let window = Window::new(&title, width, height, size(overscan), fullscreen);
+    let window = Window::new(&title, width, height, size(overscan, region), fullscreen);
     Host::new(cpu, Box::new(window), save_state::path(Path::new(rom))).run();
 }

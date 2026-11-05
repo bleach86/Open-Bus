@@ -78,14 +78,15 @@ fn model(name: &str) -> Result<Model, String> {
 impl Emulator {
     /// The NES, with the game `rom`.
     pub fn nes(rom: &str, overscan: usize) -> Result<Emulator, String> {
-        let cpu = nes::build(rom, overscan)?;
+        let cpu = nes::build(rom, overscan, None)?;
+        let region = cpu.memory.region;
         let page = Rc::new(RefCell::new(Shared::default()));
         let state = save_state::path(Path::new(rom));
         let host = Host::new(cpu, Box::new(Page(page.clone())), state);
         Ok(Emulator {
             running: Running::Nes(host),
             page,
-            size: nes::size(overscan),
+            size: nes::size(overscan, region),
         })
     }
 
@@ -126,7 +127,7 @@ impl Emulator {
     pub fn hz(&self) -> f64 {
         match &self.running {
             Running::Apple(_) => apple2::CLOCK_HZ as f64 / apple2::CYCLES_PER_FRAME as f64,
-            Running::Nes(_) => nes::CLOCK_HZ as f64 * 3.0 / (341.0 * 262.0 - 0.5),
+            Running::Nes(host) => host.cpu.memory.region.frames_per_second(),
         }
     }
 

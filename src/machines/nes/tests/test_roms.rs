@@ -12,6 +12,7 @@ mod tests {
     use crate::host::machine::Machine;
     use crate::cpu::{Variant, CPU};
     use crate::machines::nes::cartridge::Cartridge;
+    use crate::machines::nes::region::Region;
     use crate::machines::nes::{self, Nes, CLOCK_HZ};
     use std::path::{Path, PathBuf};
 
@@ -21,8 +22,12 @@ mod tests {
 
     /// The NES with the ROM at `path`, reset; none if it isn't there.
     fn nes(path: &Path) -> Option<CPU<Nes>> {
+        nes_of(path, Region::Ntsc)
+    }
+
+    fn nes_of(path: &Path, region: Region) -> Option<CPU<Nes>> {
         let image = nes::image(path).ok()?;
-        let mut cpu = CPU::with_bus(Nes::new(Cartridge::new(&image).unwrap()));
+        let mut cpu = CPU::with_bus(Nes::of(Cartridge::new(&image).unwrap(), region));
         cpu.variant = Variant::Ricoh2A03;
         cpu.clock_hz = u32::MAX; // as fast as it goes
         cpu.reset();
@@ -104,10 +109,15 @@ mod tests {
     /// Each of `roms` run as `run` has it, `passed` its result if it
     /// passed: those that didn't, and how.
     fn run_all(roms: &[&str], run: impl Fn(&mut CPU<Nes>) -> (bool, String)) {
+        run_all_of(Region::Ntsc, roms, run)
+    }
+
+    /// As `run_all`, on a NES of `region`.
+    fn run_all_of(region: Region, roms: &[&str], run: impl Fn(&mut CPU<Nes>) -> (bool, String)) {
         let mut failed = Vec::new();
         let mut missing = 0;
         for rom in roms {
-            let Some(mut cpu) = nes(&dir().join(rom)) else {
+            let Some(mut cpu) = nes_of(&dir().join(rom), region) else {
                 missing += 1;
                 continue;
             };
@@ -226,6 +236,18 @@ mod tests {
             &["1-len_ctr", "2-len_table", "3-irq_flag", "4-jitter", "5-len_timing", "6-irq_flag_timing", "7-dmc_basics", "8-dmc_rates"],
         );
         run_all(&strs(&roms), newer_passes);
+    }
+
+    #[test]
+    fn blargg_apu_pal() {
+        let roms = named(
+            "pal_apu_tests",
+            &[
+                "01.len_ctr", "02.len_table", "03.irq_flag", "04.clock_jitter", "05.len_timing_mode0", "06.len_timing_mode1",
+                "07.irq_flag_timing", "08.irq_timing", "10.len_halt_timing", "11.len_reload_timing",
+            ],
+        );
+        run_all_of(Region::Pal, &strs(&roms), old_passes(30, 0xF8));
     }
 
     #[test]

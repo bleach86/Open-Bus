@@ -25,7 +25,7 @@ use machines::apple2::video::Monitor;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32]";
+    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal]";
     match args.get(1).map(String::as_str) {
         Some("nes") => {
             let rom = args[2..]
@@ -36,7 +36,8 @@ fn main() {
                 Some(dots) => dots.parse().ok().filter(|&dots| dots <= 32).expect(usage),
                 None => 8,
             };
-            machines::nes::run(rom, args.iter().any(|arg| arg == "--fullscreen"), overscan);
+            let region = args.iter().find_map(|arg| arg.strip_prefix("--region=")).map(|name| machines::nes::region::Region::parse(name).expect(usage));
+            machines::nes::run(rom, args.iter().any(|arg| arg == "--fullscreen"), overscan, region);
         }
         Some(machine @ ("apple2" | "apple2e")) => {
             let files: Vec<&String> = args[2..]

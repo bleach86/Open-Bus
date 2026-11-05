@@ -1,4 +1,4 @@
-//! The NES's colours, as an NTSC TV shows them. The PPU makes no RGB of
+//! The NES's colours, as a TV shows them. The PPU makes no RGB of
 //! its own: each of its 64 colours is a square wave on the video signal,
 //! between two of its voltages, a level's low and high; in phase with the
 //! colour burst by its hue, 1 to 12 (0 is the high voltage alone, a grey;
@@ -7,7 +7,13 @@
 //! the signal to Y, I and Q, a brightness and two colours, then RGB: each
 //! colour here is that, the signal sampled at 12 phases. Turned up, as a
 //! TV's colour is: to look as the NES does on one.
+//!
+//! A PAL NES's is the same signal: only its colours' axis is half a hue
+//! on, its hue mirrored about 2.5 line by line, not about 2 (so its burst,
+//! hue 7, is PAL's 135 degrees), which a PAL TV mirrors back; and its
+//! emphasis bits' red and green are the other way round.
 
+use super::region::Region;
 use std::f32::consts::PI;
 
 /// The signal's voltages: its levels' lows, then their highs; black's and
@@ -17,18 +23,23 @@ const BLACK: f32 = 0.518;
 const WHITE: f32 = 1.962;
 const ATTENUATION: f32 = 0.746;
 
-/// The colour burst's phase, of the 12, against the decoder's; and the
-/// colour turned up.
+/// The colour burst's phase, of the 12, against the decoder's, an NTSC
+/// NES's and a PAL's; and the colour turned up.
 const HUE: f32 = 4.0;
+const PAL_HUE: f32 = 4.5;
 const SATURATION: f32 = 1.5;
 
 /// The 512 colours, 0xRRGGBB: a colour's 6 bits, then the emphasis's 3.
-pub fn palette() -> Vec<u32> {
-    (0..512).map(rgb).collect()
+pub fn palette(region: Region) -> Vec<u32> {
+    (0..512).map(|pixel| rgb(pixel, region)).collect()
 }
 
-fn rgb(pixel: usize) -> u32 {
+fn rgb(pixel: usize, region: Region) -> u32 {
     let (hue, emphasis) = (pixel & 0x0F, pixel >> 6);
+    let (emphasis, burst) = match region {
+        Region::Ntsc => (emphasis, HUE),
+        Region::Pal => (emphasis & 4 | (emphasis & 1) << 1 | (emphasis & 2) >> 1, PAL_HUE),
+    };
     let level = if hue > 13 { 1 } else { (pixel >> 4) & 3 };
     let (mut low, mut high) = (LEVELS[level], LEVELS[4 + level]);
     if hue == 0 {
@@ -48,7 +59,7 @@ fn rgb(pixel: usize) -> u32 {
             signal *= ATTENUATION;
         }
         let level = (signal - BLACK) / (WHITE - BLACK) / 12.0;
-        let angle = PI * (phase as f32 + HUE) / 6.0;
+        let angle = PI * (phase as f32 + burst) / 6.0;
         y += level;
         i += level * angle.cos() * SATURATION;
         q += level * angle.sin() * SATURATION;

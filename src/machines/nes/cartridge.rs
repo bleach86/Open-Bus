@@ -87,6 +87,7 @@
 //! driving the bus, the bits it holds low win; the register's given what
 //! was written ANDed with the ROM's byte there.
 
+use super::region::Region;
 use serde::{Deserialize, Serialize};
 
 /// How the PPU's four nametables, $2000, $2400, $2800 and $2C00, are
@@ -250,6 +251,9 @@ pub struct Cartridge {
     /// switches it.
     pub mirroring: Mirroring,
     pub mapper: Mapper,
+    /// The region its header says it's for, if it says one.
+    #[serde(skip)]
+    pub region: Option<Region>,
 }
 
 const HEADER: usize = 16;
@@ -284,6 +288,14 @@ impl Cartridge {
         if prg_rom.is_empty() {
             return Err("no PRG ROM".to_string());
         }
+        // NES 2.0's byte 12: 0 NTSC, 1 PAL, 2 either, 3 a Dendy; an old
+        // header's bytes 9 or 10, on the rare one that has them.
+        let region = match (nes2, header[12] & 3) {
+            (true, 0) => Some(Region::Ntsc),
+            (true, 1) => Some(Region::Pal),
+            (false, _) if !junk && (header[9] & 1 != 0 || header[10] & 3 == 2) => Some(Region::Pal),
+            _ => None,
+        };
         let rom_crc = crate::host::zip::crc32(&[&prg_rom[..], &chr_rom[..]].concat());
         let mmc6 = number == 4 && ((nes2 && header[8] >> 4 == 1) || MMC6_GAMES.contains(&rom_crc));
         if mmc6 && !nes2 {
@@ -336,6 +348,7 @@ impl Cartridge {
             written: false,
             mirroring,
             mapper,
+            region,
         })
     }
 
