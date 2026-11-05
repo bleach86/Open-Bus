@@ -1,0 +1,19 @@
+:root { color-scheme: dark; }
+body { margin: 0; background: #111; color: #ddd; font: 16px/1.5 system-ui, sans-serif; }
+main { max-width: 60rem; margin: 0 auto; padding: 1rem; }
+main[hidden] { display: none; }
+h1 { margin: 0 0 .25rem; }
+h2 { margin: 1.5rem 0 .25rem; font-size: 1.1rem; }
+ul { list-style: none; margin: 0; padding: 0; max-height: 40vh; overflow: auto; }
+li { display: flex; align-items: center; gap: .5rem; padding: .1rem 0; }
+li label, li .name { flex: 1; overflow-wrap: anywhere; }
+button, .button, select { font: inherit; padding: .25rem .75rem; background: #333; color: #eee;
+  border: 1px solid #555; border-radius: 4px; cursor: pointer; }
+#error { color: #f88; min-height: 1.5em; margin: 0; }
+.bar { margin: 0 0 .5rem; }
+.help { color: #999; font-size: .9rem; }
+/* The picture's shape is the machine's own, --ratio, not its pixels'. */
+#frame { display: flex; justify-content: center; align-items: center; background: #000; }
+canvas { display: block; width: min(100%, calc(80vh * var(--ratio))); aspect-ratio: var(--ratio);
+  image-rendering: pixelated; outline: none; }
+#frame:fullscreen canvas { width: min(100vw, calc(100vh * var(--ratio))); }

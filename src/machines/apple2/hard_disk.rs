@@ -9,8 +9,7 @@
 //! it reads it first, as the 6502's STA abs,X does, and that mustn't. A volume's blocks written are written to its image as they
 //! are: a read only image is write protected.
 
-use std::fs::OpenOptions;
-use std::io::{Seek, SeekFrom, Write};
+use crate::host::files;
 use crate::host::save_state;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -40,8 +39,8 @@ impl Volume {
     /// ProDOS's order; or the whole of a .hdv's or .po's. Write protected
     /// if the .2mg says so or the file is read only.
     pub fn open(path: &Path) -> Result<Volume, String> {
-        let image = std::fs::read(path).map_err(|e| e.to_string())?;
-        let read_only = std::fs::metadata(path).map_err(|e| e.to_string())?.permissions().readonly();
+        let image = files::read(path).map_err(|e| e.to_string())?;
+        let read_only = files::read_only(path).map_err(|e| e.to_string())?;
         let (offset, length, protected) = if image.starts_with(b"2IMG") {
             let word = |at: usize| u32::from_le_bytes(image[at..at + 4].try_into().unwrap());
             if image.len() < 64 || word(0x0C) != 1 {
@@ -152,10 +151,7 @@ impl HardDisk {
             2 if volume.write_protected => WRITE_PROTECTED,
             2 => {
                 volume.blocks[at..at + BLOCK].copy_from_slice(&self.buffer);
-                let written = OpenOptions::new().write(true).open(&volume.path).and_then(|mut file| {
-                    file.seek(SeekFrom::Start(volume.offset + at as u64))?;
-                    file.write_all(&self.buffer)
-                });
+                let written = files::write_at(&volume.path, volume.offset + at as u64, &self.buffer);
                 match written {
                     Ok(()) => 0,
                     Err(e) => {

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cpu_emu</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="library">
+  <h1>cpu_emu</h1>
+  <p>Your ROMs and disks stay in this browser. Add them here, or drop them on the page.</p>
+  <p><label class="button">Add files<input id="add" type="file" multiple hidden></label></p>
+  <p id="error" role="alert"></p>
+
+  <section>
+    <h2>NES</h2>
+    <ul id="games"></ul>
+  </section>
+
+  <section>
+    <h2>Apple II</h2>
+    <p><label>Machine
+      <select id="model">
+        <option value="apple2ee">Apple IIe, enhanced</option>
+        <option value="apple2e">Apple IIe</option>
+        <option value="apple2">Apple II+</option>
+      </select></label>
+      <label>Mockingboards
+      <select id="mockingboards">
+        <option>0</option><option selected>1</option><option>2</option>
+      </select></label>
+    </p>
+    <p id="roms"></p>
+    <ul id="disks"></ul>
+    <p><button id="apple">Start the Apple</button></p>
+  </section>
+</main>
+
+<main id="machine" hidden>
+  <p class="bar"><button id="back">Back</button> <span id="title"></span></p>
+  <div id="frame"><canvas id="screen" tabindex="0"></canvas></div>
+  <p class="help">F2 saves its state, F4 loads it. F11 or a double click is fullscreen. F12 is Reset.
+  On the Apple, F8 changes the monitor, F9 and F10 the disks.
+  On the NES: arrows, X and Z, Enter for Start, Tab or Right Shift for Select.</p>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

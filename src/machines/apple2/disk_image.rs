@@ -19,6 +19,7 @@
 //! sectors, read back off its tracks, every one of which must read; a .nib
 //! by its tracks' bytes; a .woz by its bits, as a WOZ2.
 
+use crate::host::files;
 use crate::host::zip::crc32;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -152,10 +153,10 @@ pub fn images(path: &Path) -> Result<Vec<PathBuf>, String> {
     let extension = path
         .extension()
         .map_or(String::new(), |kind| kind.to_string_lossy().to_lowercase());
-    if path.is_dir() {
-        let entries = std::fs::read_dir(path).map_err(|e| e.to_string())?;
+    if files::is_folder(path) {
+        let entries = files::list(path).map_err(|e| e.to_string())?;
         let mut images: Vec<PathBuf> = entries
-            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .into_iter()
             .filter(|file| {
                 file.extension().is_some_and(|kind| {
                     KINDS.contains(&kind.to_string_lossy().to_lowercase().as_str())
@@ -167,7 +168,8 @@ pub fn images(path: &Path) -> Result<Vec<PathBuf>, String> {
         });
         Ok(images)
     } else if extension == "m3u" {
-        let list = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+        let list = files::read(path).map_err(|e| e.to_string())?;
+        let list = String::from_utf8_lossy(&list);
         let folder = path.parent().unwrap_or(Path::new(""));
         Ok(list
             .lines()
@@ -205,7 +207,7 @@ impl Disk {
     /// The disk in the image at `path`, by its kind: a .dsk or .do, .po,
     /// .nib or .woz; write protected if the file is read only.
     pub fn open(path: &Path) -> Result<Disk, String> {
-        let image = std::fs::read(path).map_err(|e| e.to_string())?;
+        let image = files::read(path).map_err(|e| e.to_string())?;
         let kind = path
             .extension()
             .map_or(String::new(), |kind| kind.to_string_lossy().to_lowercase());
@@ -216,10 +218,7 @@ impl Disk {
             "woz" => Disk::from_woz(&image),
             _ => Err("not a .dsk, .do, .po, .nib or .woz".to_string()),
         }?;
-        let read_only = std::fs::metadata(path)
-            .map_err(|e| e.to_string())?
-            .permissions()
-            .readonly();
+        let read_only = files::read_only(path).map_err(|e| e.to_string())?;
         disk.write_protected |= read_only;
         disk.path = Some(path.to_path_buf());
         Ok(disk)

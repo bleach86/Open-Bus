@@ -1,50 +1,3 @@
-mod cpu;
-
-/// The chips the machines are made of, besides the CPU.
-mod chips {
-    pub mod ay38910;
-    pub mod via6522;
-
-    #[cfg(test)]
-    mod tests {
-        mod ay38910;
-        mod via6522;
-    }
-}
-
-/// The host's side: what drives a machine, a frame at a time, and all that
-/// any machine shares: its window, sound and controls, its terminal, its
-/// notices, its save states.
-mod host {
-    pub mod clock;
-    pub mod display;
-    pub mod files;
-    pub mod font;
-    pub mod machine;
-    pub mod notice;
-    pub mod run;
-    pub mod save_state;
-    pub mod sound;
-    pub mod terminal;
-    pub mod window;
-    pub mod zip;
-
-    #[cfg(test)]
-    mod tests {
-        mod clock;
-        mod notice;
-        mod run;
-        mod zip;
-    }
-}
-
-/// The machines the CPU runs in.
-mod machines {
-    pub mod apple2;
-    pub mod basic;
-    pub mod nes;
-}
-
 /// The machine to run: `cpu_emu` for this one, with BASIC; `cpu_emu apple2
 /// ROM [DISK...]` for an Apple II+, ROM a dump of its ROM (its last 12K,
 /// $D000 up), the Disk II's ROMs (disk2-p5-341-0027.bin and
@@ -67,6 +20,7 @@ mod machines {
 /// `cpu_emu nes ROM [--fullscreen] [--overscan=N]` for the NES, ROM an
 /// iNES image or a zip of one, its picture's edges hidden as a TV hides
 /// them, N dots or lines each (8, or 0 to see it all).
+use cpu_emu::{cpu, machines};
 use machines::apple2::video::Monitor;
 
 fn main() {

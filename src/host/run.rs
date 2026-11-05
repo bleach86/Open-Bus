@@ -152,10 +152,10 @@ impl<M: Machine> Host<M> {
 
     /// F4: the machine put back as its file has it, if it can be.
     fn load_state(&mut self) {
-        if !self.state.exists() {
+        if !files::exists(&self.state) {
             return self.say("No state saved");
         }
-        let loaded = std::fs::read(&self.state)
+        let loaded = files::read(&self.state)
             .map_err(|e| e.to_string())
             .and_then(|state| save_state::restore(&mut self.cpu, &state));
         match loaded {

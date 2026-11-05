@@ -65,9 +65,12 @@ use crate::cpu::{CPU, Variant};
 use crate::host::display::{Gamepad, SAMPLE_RATE};
 use crate::host::files;
 use crate::host::machine::{Input, Machine, Picture};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::host::run::Host;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::host::save_state;
 use crate::host::sound::{HighPass, LowPass, Sampler};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::host::window::Window;
 use crate::host::zip::crc32;
 use apu::Apu;
@@ -482,7 +485,7 @@ impl Machine for Nes {
 
 /// The iNES image at `path`, or in the zip there, the first in it.
 pub fn image(path: &Path) -> Result<Vec<u8>, String> {
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let bytes = files::read(path).map_err(|e| e.to_string())?;
     let zipped = path
         .extension()
         .is_some_and(|kind| kind.eq_ignore_ascii_case("zip"));
@@ -499,17 +502,17 @@ fn seen(overscan: usize) -> (usize, usize) {
     (ppu::WIDTH - 2 * overscan, ppu::HEIGHT - 2 * overscan)
 }
 
-/// The NES run, with the game at `rom` (an iNES image, or a zip of one),
-/// in a window, `fullscreen` or not, `overscan` dots or lines hidden at
-/// each edge of its picture.
-pub fn run(rom: &str, fullscreen: bool, overscan: usize) {
+/// The NES, on whichever host, with the game at `rom` (an iNES image, or a
+/// zip of one), its battery's RAM read if it has any, reset; `overscan` dots
+/// or lines hidden at each edge of its picture.
+pub fn build(rom: &str, overscan: usize) -> Result<CPU<Nes>, String> {
     let path = Path::new(rom);
-    let image = image(path).unwrap_or_else(|e| panic!("{rom}: {e}"));
-    let cartridge = Cartridge::new(&image).unwrap_or_else(|e| panic!("{rom}: {e}"));
+    let image = image(path).map_err(|e| format!("{rom}: {e}"))?;
+    let cartridge = Cartridge::new(&image).map_err(|e| format!("{rom}: {e}"))?;
     let mut nes = Nes::new(cartridge);
     if nes.cartridge.battery {
         let file = path.with_extension("srm");
-        if let Ok(saved) = std::fs::read(&file) {
+        if let Ok(saved) = files::read(&file) {
             let ram = &mut nes.cartridge.prg_ram;
             let len = saved.len().min(ram.len());
             ram[..len].copy_from_slice(&saved[..len]);
@@ -519,19 +522,30 @@ pub fn run(rom: &str, fullscreen: bool, overscan: usize) {
     nes.name = path
         .file_stem()
         .map_or(String::new(), |name| name.to_string_lossy().into_owned());
-    // Its dots and lines seen, each dot 8:7 as a TV shows it, 3 times over:
-    // 823 by 672, of 240 by 224.
     nes.overscan = overscan;
-    let (width, height) = seen(overscan);
-    let size = (
-        (width as f32 * 8.0 / 7.0 * 3.0).round() as u32,
-        height as u32 * 3,
-    );
-    let window = Window::new(&nes.title(), width, height, size, fullscreen);
-
     let mut cpu = CPU::with_bus(nes);
     cpu.variant = Variant::Ricoh2A03;
     cpu.clock_hz = CLOCK_HZ;
     cpu.reset();
-    Host::new(cpu, Box::new(window), save_state::path(path)).run();
+    Ok(cpu)
+}
+
+/// How big its picture's shown, `overscan` hidden: its dots and lines seen,
+/// each dot 8:7 as a TV shows it, 3 times over: 823 by 672, of 240 by 224.
+pub fn size(overscan: usize) -> (u32, u32) {
+    let (width, height) = seen(overscan);
+    (
+        (width as f32 * 8.0 / 7.0 * 3.0).round() as u32,
+        height as u32 * 3,
+    )
+}
+
+/// The NES as `build` has it, run in a window, `fullscreen` or not.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run(rom: &str, fullscreen: bool, overscan: usize) {
+    let cpu = build(rom, overscan).unwrap_or_else(|e| panic!("{e}"));
+    let (width, height) = seen(overscan);
+    let title = cpu.memory.title();
+    let window = Window::new(&title, width, height, size(overscan), fullscreen);
+    Host::new(cpu, Box::new(window), save_state::path(Path::new(rom))).run();
 }

@@ -4,8 +4,12 @@
 //! listed before now; or, past those, by the rule at the file's end (as
 //! `CST6CDT,M3.2.0,M11.1.0`: standard time 6 hours west, summer time from
 //! the second Sunday of March to the first of November). Without the file,
-//! UTC.
+//! UTC. A web page has neither the file nor the system's time: it says
+//! what the time is there, `set_local`, for now to give.
 
+#[cfg(target_arch = "wasm32")]
+use std::cell::Cell;
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A date and time: the day of the week 0 Sunday to 6 Saturday.
@@ -20,7 +24,25 @@ pub struct DateTime {
     pub second: u32,
 }
 
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static LOCAL_SECONDS: Cell<i64> = const { Cell::new(0) };
+}
+
+/// The time where the page is: `seconds` after 1970 began, there.
+#[cfg(target_arch = "wasm32")]
+pub fn set_local(seconds: i64) {
+    LOCAL_SECONDS.set(seconds);
+}
+
+/// Now, where the page is.
+#[cfg(target_arch = "wasm32")]
+pub fn now() -> DateTime {
+    at(LOCAL_SECONDS.get())
+}
+
 /// Now, where the host is.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn now() -> DateTime {
     let utc = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs() as i64);
     let zone = std::fs::read("/etc/localtime").unwrap_or_default();

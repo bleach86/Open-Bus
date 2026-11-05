@@ -1,0 +1,76 @@
+//! A web page as a display: what the host shows and plays kept for the page
+//! to take after each frame, and what the page is told of the keys and the
+//! controls kept for the host. No more of a browser than that: the page
+//! has the canvas and the sound, and calls in through `web.rs`.
+
+use crate::host::display::{Display, Gamepad, Joystick, Key};
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::rc::Rc;
+
+/// What the page and the host share.
+#[derive(Default)]
+pub struct Shared {
+    /// The last picture, four bytes a dot, as a canvas has them; its size.
+    pub pixels: Vec<u8>,
+    pub width: usize,
+    pub height: usize,
+    /// The sound played and not yet taken; the title.
+    pub samples: Vec<f32>,
+    pub title: String,
+    /// What's pressed, and held.
+    pub keys: VecDeque<Key>,
+    pub function_keys: VecDeque<u8>,
+    pub gamepad: Gamepad,
+    pub joystick: Joystick,
+    pub key_down: bool,
+    pub reset: bool,
+}
+
+/// The display a host has; the page has the same `Shared`.
+pub struct Page(pub Rc<RefCell<Shared>>);
+
+impl Display for Page {
+    fn show(&mut self, pixels: &[u32], width: usize, height: usize) {
+        let page = &mut self.0.borrow_mut();
+        page.width = width;
+        page.height = height;
+        page.pixels.clear();
+        page.pixels.extend(pixels.iter().flat_map(|&dot| {
+            let [_, red, green, blue] = dot.to_be_bytes();
+            [red, green, blue, 0xFF]
+        }));
+    }
+
+    fn key(&mut self) -> Option<Key> {
+        self.0.borrow_mut().keys.pop_front()
+    }
+
+    fn joystick(&self) -> Joystick {
+        self.0.borrow().joystick
+    }
+
+    fn gamepad(&self) -> Gamepad {
+        self.0.borrow().gamepad
+    }
+
+    fn key_down(&self) -> bool {
+        self.0.borrow().key_down
+    }
+
+    fn reset_held(&self) -> bool {
+        self.0.borrow().reset
+    }
+
+    fn function_key(&mut self) -> Option<u8> {
+        self.0.borrow_mut().function_keys.pop_front()
+    }
+
+    fn title(&mut self, title: &str) {
+        self.0.borrow_mut().title = title.to_string();
+    }
+
+    fn play(&mut self, samples: &[f32]) {
+        self.0.borrow_mut().samples.extend_from_slice(samples);
+    }
+}

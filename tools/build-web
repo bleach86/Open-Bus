@@ -1,0 +1,7 @@
+#!/bin/sh
+# Build the web page: the emulator as WebAssembly, into web/pkg/, for
+# web/index.html. Serve web/ (python3 -m http.server -d web) and open it:
+# a page opened as a file can't load WebAssembly.
+set -e
+cd "$(dirname "$0")/.."
+wasm-pack build --release --target web --out-dir web/pkg --no-pack

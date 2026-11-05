@@ -41,13 +41,18 @@ mod tests {
 
 use crate::cpu::bus::Bus;
 use crate::cpu::{CPU, Variant};
-use crate::host::display::{Display, Joystick, Key};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::host::display::Display;
+use crate::host::display::{Joystick, Key};
 use crate::host::files;
 use crate::host::machine::{Input, Machine, Picture};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::host::run::Host;
 use crate::host::save_state;
 use crate::host::sound::{HighPass, Sampler};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::host::terminal::Terminal;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::host::window::Window;
 use crate::host::zip::crc32;
 use disk_image::Disk;
@@ -849,7 +854,7 @@ impl Machine for Apple2 {
         }
         let units = self.hard_disk.iter().flat_map(|card| card.units.iter());
         for volume in units.flatten() {
-            let path = std::fs::canonicalize(&volume.path).unwrap_or_else(|_| volume.path.clone());
+            let path = files::canonical(&volume.path);
             machine += &format!(", the hard disk's {}", path.display());
         }
         machine
@@ -882,11 +887,11 @@ impl Machine for Apple2 {
 
 /// Whether the image at `path` is a hard disk's volume, not a floppy: a
 /// .hdv or .2mg, or a .po bigger than a floppy's 140K.
-fn is_volume(path: &Path) -> bool {
+pub fn is_volume(path: &Path) -> bool {
     let kind = path
         .extension()
         .map_or(String::new(), |kind| kind.to_string_lossy().to_lowercase());
-    let size = std::fs::metadata(path).map_or(0, |file| file.len());
+    let size = files::size(path).unwrap_or(0);
     matches!(kind.as_str(), "hdv" | "2mg") || (kind == "po" && size > 143_360)
 }
 
@@ -898,18 +903,123 @@ pub enum Model {
     IIeEnhanced,
 }
 
-/// An Apple run, `model`, with a language card, a clock card in slot 1
-/// and `mockingboards` (0 to 2) in slots 4 and 5, its CPU `variant` (or its own: the 6502, the
-/// enhanced IIe's 65C02): `roms`, for the II+ a dump of its ROM (its last
-/// 12K, $D000 up), for a IIe the folder its ROMs are in, by their names;
-/// `disks` .dsk, .do, .po, .nib or .woz images, or folders or .m3u
-/// playlists of them, for a Disk II, whose ROMs are found beside the II+'s
-/// or in the IIe's folder, the first in drive 1; and hard disk volumes,
-/// .hdv, .2mg and .po bigger than a floppy, the first two the hard disk's
-/// drives;
-/// in a window, `fullscreen` or not, on `monitor`, or `text`, its text
-/// screen in the terminal. Its save state is kept beside its first disk,
-/// or its ROM.
+/// An Apple built, ready to run, on whichever host: the CPU, its machine
+/// within it, reset; a notice of the disk put in, if there was one; where
+/// its save state is kept.
+pub struct Built {
+    pub cpu: CPU<Apple2>,
+    pub notice: Option<String>,
+    pub state: PathBuf,
+}
+
+impl Model {
+    /// How big its picture's shown: the II+'s 560 dots by 192 lines at 4:3,
+    /// 840 by 576; a IIe's 80 columns' dots each a whole pixel, 1,120 by 768.
+    pub fn size(self) -> (u32, u32) {
+        match self {
+            Model::IIPlus => (840, 576),
+            Model::IIe | Model::IIeEnhanced => (1120, 768),
+        }
+    }
+}
+
+/// An Apple, `model`, with a language card, a clock card in slot 1 and
+/// `mockingboards` (0 to 2) in slots 4 and 5, its CPU `variant` (or its
+/// own: the 6502, the enhanced IIe's 65C02): `roms`, for the II+ a dump of
+/// its ROM (its last 12K, $D000 up), for a IIe the folder its ROMs are in,
+/// by their names; `disks` .dsk, .do, .po, .nib or .woz images, or folders
+/// or .m3u playlists of them, for a Disk II, whose ROMs are found beside
+/// the II+'s or in the IIe's folder, the first in drive 1; and hard disk
+/// volumes, .hdv, .2mg and .po bigger than a floppy, the first two the
+/// hard disk's drives; on `monitor`. Its save state is kept beside its
+/// first disk, or its ROM.
+pub fn build(
+    model: Model,
+    roms: &str,
+    disks: &[&str],
+    mockingboards: usize,
+    variant: Option<Variant>,
+    monitor: video::Monitor,
+) -> Result<Built, String> {
+    let read = |path: &Path| files::read(path).map_err(|e| format!("{}: {e}", path.display()));
+    let roms = Path::new(roms);
+    let state = save_state::path(disks.first().map_or(roms, |disk| Path::new(disk)));
+    let (mut apple, folder, own_variant) = match model {
+        Model::IIPlus => {
+            let rom = read(roms)?;
+            if rom.len() < 0x3000 {
+                return Err("the ROM is 12K, $D000 to $FFFF".to_string());
+            }
+            let mut apple = Apple2::new(rom[rom.len() - 0x3000..].to_vec());
+            apple.language_card = Some(language_card::LanguageCard::new());
+            let folder = roms.parent().unwrap_or(Path::new(".")).to_path_buf();
+            (apple, folder, Variant::Nmos6502)
+        }
+        Model::IIe | Model::IIeEnhanced => {
+            let enhanced = model == Model::IIeEnhanced;
+            let names = if enhanced { iie::ENHANCED_ROMS } else { iie::ROMS };
+            let cd = read(&roms.join(names[0]))?;
+            let ef = read(&roms.join(names[1]))?;
+            let characters = read(&roms.join(names[2]))?;
+            let apple = Apple2::new_iie(&cd, &ef, characters);
+            let variant = if enhanced {
+                Variant::Synertek65C02
+            } else {
+                Variant::Nmos6502
+            };
+            (apple, roms.to_path_buf(), variant)
+        }
+    };
+    apple.monitor = monitor;
+    apple.clock = Some(clock_card::ClockCard::new());
+    for card in apple.mockingboards.iter_mut().take(mockingboards) {
+        *card = Some(mockingboard::Mockingboard::new());
+    }
+
+    // The images, the hard disk's volumes from the Disk II's.
+    let mut notice = None;
+    let mut images = Vec::new();
+    for disk in disks {
+        images.extend(disk_image::images(Path::new(disk)).map_err(|e| format!("{disk}: {e}"))?);
+    }
+    let (volumes, floppies): (Vec<PathBuf>, Vec<PathBuf>) =
+        images.into_iter().partition(|image| is_volume(image));
+    if !volumes.is_empty() {
+        if volumes.len() > 2 {
+            return Err(format!("the hard disk has two drives, not {}", volumes.len()));
+        }
+        let mut card = hard_disk::HardDisk::new();
+        for (unit, volume) in card.units.iter_mut().zip(&volumes) {
+            let opened = hard_disk::Volume::open(volume);
+            *unit = Some(opened.map_err(|e| format!("{}: {e}", volume.display()))?);
+        }
+        apple.hard_disk = Some(card);
+    }
+    if !floppies.is_empty() {
+        let card = disk2::Disk2::new(
+            read(&folder.join("disk2-p5-341-0027.bin"))?,
+            &read(&folder.join("disk2-p6-341-0028.bin"))?,
+        )
+        .map_err(|e| format!("the Disk II's ROMs: {e}"))?;
+        apple.disk2 = Some(card);
+        // Each image opened, to know it can be; the first put in drive 1.
+        for image in &floppies {
+            Disk::open(image).map_err(|e| format!("{}: {e}", image.display()))?;
+        }
+        apple.disks = floppies;
+        notice = apple.change_disk(0);
+    }
+
+    let mut cpu = CPU::with_bus(apple);
+    cpu.clock_hz = CLOCK_HZ;
+    cpu.variant = variant.unwrap_or(own_variant);
+    cpu.reset();
+    Ok(Built { cpu, notice, state })
+}
+
+/// An Apple as `build` has it, run in a window, `fullscreen` or not; or
+/// `text`, its text screen in the terminal.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run(
     model: Model,
     roms: &str,
@@ -920,106 +1030,17 @@ pub fn run(
     text: bool,
     fullscreen: bool,
 ) {
-    let read =
-        |path: &Path| std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let roms = Path::new(roms);
-    let state = save_state::path(disks.first().map_or(roms, |disk| Path::new(disk)));
-    let (mut apple, folder, title, size, own_variant) = match model {
-        Model::IIPlus => {
-            let rom = read(roms);
-            assert!(rom.len() >= 0x3000, "the ROM is 12K, $D000 to $FFFF");
-            let mut apple = Apple2::new(rom[rom.len() - 0x3000..].to_vec());
-            apple.language_card = Some(language_card::LanguageCard::new());
-            // Its 560 dots by 192 lines, shown 4:3: 840 by 576.
-            (
-                apple,
-                roms.parent().unwrap_or(Path::new(".")).to_path_buf(),
-                "Apple ][",
-                (840, 576),
-                Variant::Nmos6502,
-            )
-        }
-        Model::IIe | Model::IIeEnhanced => {
-            let enhanced = model == Model::IIeEnhanced;
-            let [cd, ef, characters] = if enhanced {
-                iie::ENHANCED_ROMS
-            } else {
-                iie::ROMS
-            }
-            .map(|name| read(&roms.join(name)));
-            let apple = Apple2::new_iie(&cd, &ef, characters);
-            let variant = if enhanced {
-                Variant::Synertek65C02
-            } else {
-                Variant::Nmos6502
-            };
-            // 80 columns' dots each a whole pixel: 1,120 by 768.
-            (apple, roms.to_path_buf(), "Apple //e", (1120, 768), variant)
-        }
-    };
-    apple.monitor = monitor;
-    apple.clock = Some(clock_card::ClockCard::new());
-    for card in apple.mockingboards.iter_mut().take(mockingboards) {
-        *card = Some(mockingboard::Mockingboard::new());
-    }
-
+    let built = build(model, roms, disks, mockingboards, variant, monitor)
+        .unwrap_or_else(|e| panic!("{e}"));
     let display: Box<dyn Display> = if text {
         Box::new(Terminal::new())
     } else {
-        Box::new(Window::new(
-            title,
-            video::PICTURE_WIDTH,
-            video::HEIGHT,
-            size,
-            fullscreen,
-        ))
+        let title = built.cpu.memory.title();
+        let (width, height) = (video::PICTURE_WIDTH, video::HEIGHT);
+        Box::new(Window::new(&title, width, height, model.size(), fullscreen))
     };
-    // The images, the hard disk's volumes from the Disk II's.
-    let mut notice = None;
-    let mut images = Vec::new();
-    for disk in disks {
-        images
-            .extend(disk_image::images(Path::new(disk)).unwrap_or_else(|e| panic!("{disk}: {e}")));
-    }
-    let (volumes, floppies): (Vec<PathBuf>, Vec<PathBuf>) =
-        images.into_iter().partition(|image| is_volume(image));
-    if !volumes.is_empty() {
-        assert!(
-            volumes.len() <= 2,
-            "the hard disk has two drives, not {}",
-            volumes.len()
-        );
-        let mut card = hard_disk::HardDisk::new();
-        for (unit, volume) in card.units.iter_mut().zip(&volumes) {
-            *unit = Some(
-                hard_disk::Volume::open(volume)
-                    .unwrap_or_else(|e| panic!("{}: {e}", volume.display())),
-            );
-        }
-        apple.hard_disk = Some(card);
-    }
-    if !floppies.is_empty() {
-        let beside = |name: &str| read(&folder.join(name));
-        let card = disk2::Disk2::new(
-            beside("disk2-p5-341-0027.bin"),
-            &beside("disk2-p6-341-0028.bin"),
-        )
-        .unwrap_or_else(|e| panic!("the Disk II's ROMs: {e}"));
-        apple.disk2 = Some(card);
-        // Each image opened, to know it can be; the first put in drive 1.
-        for image in &floppies {
-            Disk::open(image).unwrap_or_else(|e| panic!("{}: {e}", image.display()));
-        }
-        apple.disks = floppies;
-        notice = apple.change_disk(0);
-    }
-
-    let mut cpu = CPU::with_bus(apple);
-    cpu.clock_hz = CLOCK_HZ;
-    cpu.variant = variant.unwrap_or(own_variant);
-    cpu.reset();
-    let mut host = Host::new(cpu, display, state);
-    if let Some(text) = notice {
+    let mut host = Host::new(built.cpu, display, built.state);
+    if let Some(text) = built.notice {
         host.say(text);
     }
     host.run();
