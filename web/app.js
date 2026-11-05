@@ -18,91 +18,166 @@ const kind = (name) => name.split('.').pop().toLowerCase();
 const isGame = (name) => ['nes', 'zip'].includes(kind(name));
 const isDisk = (name) => ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'].includes(kind(name));
 const isOurs = (name) => ['srm', 'state'].includes(kind(name));
+const isUsable = (name) => isGame(name) || isDisk(name) || isOurs(name) || ['rom', 'bin'].includes(kind(name));
 
 let files = [];
+/// The disks ticked, in the order they were: the first is in drive 1.
+let chosen = [];
 
-/// The files, in order; those the machines write hidden.
+function say(text, problem = false) {
+    page('message').textContent = text;
+    page('message').classList.toggle('problem', problem);
+}
+
+/// The files, in order, those a filter hides left out; those the machines
+/// write hidden.
 async function refresh() {
     files = (await names()).sort();
-    fill(page('games'), files.filter(isGame), (name) => {
-        const button = document.createElement('button');
-        button.textContent = 'Start';
-        button.onclick = () => start(() => Emulator.nes(name, 8));
-        return button;
-    });
-    fill(page('disks'), files.filter(isDisk), null);
+    chosen = chosen.filter((name) => files.includes(name));
+    const wanted = page('filter').value.trim().toLowerCase();
+    const shown = (name) => name.toLowerCase().includes(wanted);
+    fill(page('games'), files.filter(isGame).filter(shown), gameButton, wanted, 'No games yet. Add .nes or .zip files.');
+    fill(page('disks'), files.filter(isDisk).filter(shown), diskBox, wanted, 'No disks yet. Add disk images.');
     showRoms();
 }
 
-function fill(list, items, action) {
+function fill(list, items, main, filtered, none) {
+    list.nextElementSibling.textContent = filtered ? 'Nothing matches.' : none;
     list.replaceChildren(...items.map((name) => {
         const item = document.createElement('li');
-        if (action) {
-            const label = document.createElement('span');
-            label.className = 'name';
-            label.textContent = name;
-            item.append(label, action(name));
-        } else {
-            const label = document.createElement('label');
-            const box = document.createElement('input');
-            box.type = 'checkbox';
-            box.value = name;
-            label.append(box, ' ', name);
-            item.append(label);
-        }
-        const remove = document.createElement('button');
-        remove.textContent = 'Remove';
-        remove.onclick = async () => {
-            await forget(name);
-            refresh();
-        };
-        item.append(remove);
+        item.append(main(name), removeButton(name));
         return item;
     }));
 }
 
-/// The ROMs the chosen Apple needs and hasn't got: its own, and the Disk
-/// II's with disks chosen.
-function missingRoms() {
+function gameButton(name) {
+    const button = document.createElement('button');
+    button.className = 'name';
+    button.title = name;
+    button.textContent = name.replace(/\.[^.]*$/, '');
+    button.onclick = () => start(() => Emulator.nes(name, 8), 'nes', [name]);
+    return button;
+}
+
+function diskBox(name) {
+    const label = document.createElement('label');
+    label.className = 'name';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = name;
+    box.checked = chosen.includes(name);
+    box.onchange = () => {
+        chosen = box.checked ? [...chosen, name] : chosen.filter((other) => other !== name);
+        showRoms();
+    };
+    const drive = document.createElement('span');
+    drive.className = 'drive';
+    drive.title = 'The order the disks go in';
+    label.append(box, name, drive);
+    return label;
+}
+
+function removeButton(name) {
+    const remove = document.createElement('button');
+    remove.className = 'remove';
+    remove.textContent = '×';
+    remove.title = `Remove ${name}`;
+    remove.setAttribute('aria-label', remove.title);
+    remove.onclick = async () => {
+        if (confirm(`Remove ${name} from this browser?`)) {
+            await forget(name);
+            refresh();
+        }
+    };
+    return remove;
+}
+
+/// The chosen Apple's ROMs, its own and the Disk II's, each with whether
+/// it's here. The Disk II's are needed for floppies, not a hard disk.
+function appleRoms() {
     const model = page('model').value;
-    const own = model === 'apple2' ? [plusRom()].filter(Boolean) : IIE_ROMS[model];
-    const needed = [...own, ...DISK_II_ROMS];
-    const missing = needed.filter((name) => !files.includes(name));
-    if (model === 'apple2' && !plusRom()) {
-        missing.unshift('a II+ ROM (.rom)');
-    }
-    return missing;
+    const own = model === 'apple2' ? [plusRom() ?? 'A II+ ROM (.rom)'] : IIE_ROMS[model];
+    return [...own, ...DISK_II_ROMS].map((name) => ({ name, here: files.includes(name) }));
 }
 
 const plusRom = () => files.find((name) => kind(name) === 'rom');
+const isFloppy = (name) => ['dsk', 'do', 'nib', 'woz'].includes(kind(name));
 
 function showRoms() {
-    const missing = missingRoms();
-    page('roms').textContent = missing.length ? `Still needs: ${missing.join(', ')}` : 'ROMs found.';
+    const roms = appleRoms();
+    const own = roms.slice(0, -DISK_II_ROMS.length);
+    const needed = chosen.some(isFloppy) ? roms : own;
+    const short = needed.filter((rom) => !rom.here).length;
+    page('apple').disabled = short > 0;
+    page('roms').classList.toggle('short', short > 0);
+    page('roms').open = short > 0;
+    page('roms').querySelector('summary').textContent = short ? `Still needs ${short} ROM${short > 1 ? 's' : ''}` : `${roms.filter((rom) => rom.here).length} ROMs found`;
+    page('rom-list').replaceChildren(...roms.map(({ name, here }) => {
+        const item = document.createElement('li');
+        item.classList.toggle('missing', !here);
+        const mark = document.createElement('span');
+        mark.className = 'mark';
+        mark.textContent = here ? '✓' : '✗';
+        const label = document.createElement('span');
+        label.className = 'rom';
+        label.textContent = name;
+        item.append(mark, label);
+        if (here) {
+            item.append(removeButton(name));
+        }
+        return item;
+    }));
+    page('disks').querySelectorAll('label').forEach((label) => {
+        const at = chosen.indexOf(label.querySelector('input').value);
+        label.querySelector('.drive').textContent = at < 0 ? '' : at + 1;
+    });
 }
 
 async function add(list) {
-    page('error').textContent = '';
-    for (const file of list) {
-        await keep(file.name, new Uint8Array(await file.arrayBuffer()));
+    const chosenFiles = [...list];
+    const usable = chosenFiles.filter((file) => isUsable(file.name));
+    const unused = chosenFiles.filter((file) => !isUsable(file.name));
+    say('');
+    try {
+        for (const [at, file] of usable.entries()) {
+            say(`Adding ${at + 1} of ${usable.length}…`);
+            await keep(file.name, new Uint8Array(await file.arrayBuffer()));
+        }
+        say(unused.length ? `Not ROMs or disks, so not added: ${unused.map((file) => file.name).join(', ')}` : '', unused.length > 0);
+    } catch (error) {
+        say(`Couldn't add it: ${error}`, true);
     }
     refresh();
 }
 
-page('add').onchange = (event) => add(event.target.files);
+page('add').onchange = async (event) => {
+    await add(event.target.files);
+    event.target.value = '';
+};
+page('filter').oninput = refresh;
 page('model').onchange = showRoms;
-addEventListener('dragover', (event) => event.preventDefault());
+const holdingFiles = (event) => event.dataTransfer.types.includes('Files');
+addEventListener('dragover', (event) => {
+    event.preventDefault();
+    document.body.classList.toggle('dropping', holdingFiles(event));
+});
+addEventListener('dragleave', (event) => {
+    if (!event.relatedTarget) {
+        document.body.classList.remove('dropping');
+    }
+});
 addEventListener('drop', (event) => {
     event.preventDefault();
+    document.body.classList.remove('dropping');
     add(event.dataTransfer.files);
 });
 
 page('apple').onclick = () => {
     const model = page('model').value;
-    const chosen = [...page('disks').querySelectorAll('input:checked')].map((box) => box.value);
     const mockingboards = Number(page('mockingboards').value);
     const roms = model === 'apple2' ? plusRom() ?? '' : '';
-    start(() => Emulator.apple(model, roms, chosen, mockingboards));
+    const disks = chosen;
+    start(() => Emulator.apple(model, roms, disks, mockingboards), 'apple', disks);
 };
 
 // Running a machine.
@@ -113,6 +188,7 @@ let last = 0;
 let nextSave = 0;
 const held = new Set();
 let reset = false;
+let starting = false;
 
 async function startAudio() {
     if (!audio) {
@@ -124,26 +200,41 @@ async function startAudio() {
     await audio.resume();
 }
 
-async function start(make) {
-    page('error').textContent = '';
+/// A machine made and run, `machine` nes or apple, `using` the games or
+/// disks it's given: the saves and ROMs and those put where it can open
+/// them, not the rest of the library.
+async function start(make, machine, using) {
+    if (starting) {
+        return;
+    }
+    starting = true;
+    say('Starting…');
     try {
-        // Every file the machine might open, ours and yours.
         for (const name of await names()) {
-            put_file(name, await bytes(name));
+            if (using.includes(name) || (!isGame(name) && !isDisk(name))) {
+                put_file(name, await bytes(name));
+            }
         }
         emulator = make();
     } catch (error) {
-        page('error').textContent = String(error);
+        say(String(error), true);
         return;
+    } finally {
+        starting = false;
     }
+    let sound = true;
     try {
         await startAudio();
     } catch (error) {
         // No sound where the page isn't secure; it runs all the same.
         console.warn('no sound:', error);
+        sound = false;
     }
+    say('');
+    page('no-sound').hidden = sound;
     page('library').hidden = true;
     page('machine').hidden = false;
+    page('machine').dataset.machine = machine;
     const canvas = page('screen');
     canvas.style.setProperty('--ratio', emulator.shown_width() / emulator.shown_height());
     canvas.focus();
@@ -163,10 +254,30 @@ async function stop() {
     held.clear();
     page('machine').hidden = true;
     page('library').hidden = false;
+    document.title = 'cpu_emu';
     refresh();
 }
 
 page('back').onclick = stop;
+
+/// A button on the bar, the keys going back to the picture after it.
+function press(id, action) {
+    page(id).onclick = () => {
+        action();
+        page('screen').focus();
+    };
+}
+
+press('save', () => emulator.function_key(2));
+press('load', () => emulator.function_key(4));
+press('full', () => fullscreen());
+page('reset').onpointerdown = () => {
+    reset = true;
+};
+page('reset').onpointerup = page('reset').onpointerleave = () => {
+    reset = false;
+    page('screen').focus();
+};
 addEventListener('pagehide', saveWritten);
 
 /// The gamepad's and the keyboard's controls, each frame.
@@ -216,7 +327,11 @@ function show() {
     }
     const image = new ImageData(new Uint8ClampedArray(emulator.pixels()), width, height);
     canvas.getContext('2d').putImageData(image, 0, 0);
-    page('title').textContent = emulator.title();
+    const title = emulator.title();
+    if (title !== page('title').textContent) {
+        page('title').textContent = title;
+        document.title = `${title} - cpu_emu`;
+    }
 }
 
 /// As many frames as are due, at the machine's own rate, the screen's

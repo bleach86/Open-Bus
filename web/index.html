@@ -8,41 +8,69 @@
 </head>
 <body>
 <main id="library">
-  <h1>cpu_emu</h1>
-  <p>Your ROMs and disks stay in this browser. Add them here, or drop them on the page.</p>
-  <p><label class="button">Add files<input id="add" type="file" multiple hidden></label></p>
-  <p id="error" role="alert"></p>
+  <div id="scene" aria-hidden="true"><div class="sun"></div><div class="floor"></div></div>
+  <header>
+    <div>
+      <h1>cpu_emu</h1>
+      <p class="quiet">Your ROMs and disks stay in this browser. Add them, or drop them anywhere on the page.</p>
+    </div>
+    <div class="actions">
+      <input id="filter" type="search" placeholder="Filter" aria-label="Filter games and disks">
+      <label class="button primary">Add files<input id="add" class="unseen" type="file" multiple></label>
+    </div>
+  </header>
+  <p id="message" role="status"></p>
 
-  <section>
-    <h2>NES</h2>
-    <ul id="games"></ul>
-  </section>
+  <div class="cards">
+    <section class="card">
+      <h2>NES</h2>
+      <ul id="games"></ul>
+      <p class="empty"></p>
+    </section>
 
-  <section>
-    <h2>Apple II</h2>
-    <p><label>Machine
-      <select id="model">
-        <option value="apple2ee">Apple IIe, enhanced</option>
-        <option value="apple2e">Apple IIe</option>
-        <option value="apple2">Apple II+</option>
-      </select></label>
-      <label>Mockingboards
-      <select id="mockingboards">
-        <option>0</option><option selected>1</option><option>2</option>
-      </select></label>
-    </p>
-    <p id="roms"></p>
-    <ul id="disks"></ul>
-    <p><button id="apple">Start the Apple</button></p>
-  </section>
+    <section class="card">
+      <h2>Apple II</h2>
+      <div class="fields">
+        <label>Machine
+          <select id="model">
+            <option value="apple2ee">Apple IIe, enhanced</option>
+            <option value="apple2e">Apple IIe</option>
+            <option value="apple2">Apple II+</option>
+          </select></label>
+        <label>Mockingboards
+          <select id="mockingboards">
+            <option>0</option><option selected>1</option><option>2</option>
+          </select></label>
+      </div>
+      <h3>Disks</h3>
+      <ul id="disks"></ul>
+      <p class="empty"></p>
+      <details id="roms"><summary></summary><ul id="rom-list"></ul></details>
+      <p class="go"><button id="apple" class="primary">Start the Apple</button></p>
+    </section>
+  </div>
 </main>
 
 <main id="machine" hidden>
-  <p class="bar"><button id="back">Back</button> <span id="title"></span></p>
+  <div class="bar">
+    <button id="back">Library</button>
+    <span id="title"></span>
+    <span id="no-sound" class="quiet" hidden>No sound: it needs localhost or HTTPS</span>
+    <span class="controls">
+      <button id="save">Save state</button>
+      <button id="load">Load state</button>
+      <button id="reset">Reset</button>
+      <button id="full">Fullscreen</button>
+    </span>
+  </div>
   <div id="frame"><canvas id="screen" tabindex="0"></canvas></div>
-  <p class="help">F2 saves its state, F4 loads it. F11 or a double click is fullscreen. F12 is Reset.
-  On the Apple, F8 changes the monitor, F9 and F10 the disks.
-  On the NES: arrows, X and Z, Enter for Start, Tab or Right Shift for Select.</p>
+  <p class="help">
+    <kbd>F2</kbd> save state <kbd>F4</kbd> load state <kbd>F11</kbd> fullscreen <kbd>F12</kbd> Reset
+    <span class="for-apple"><kbd>F8</kbd> monitor <kbd>F9</kbd> next disk, drive 1 <kbd>F10</kbd> drive 2
+      <kbd>Numpad</kbd> joystick <kbd>Alt</kbd> its buttons</span>
+    <span class="for-nes"><kbd>Arrows</kbd> D-pad <kbd>X</kbd> A <kbd>Z</kbd> B <kbd>Enter</kbd> Start
+      <kbd>Tab</kbd> Select</span>
+  </p>
 </main>
 <script type="module" src="app.js"></script>
 </body>
