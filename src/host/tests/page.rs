@@ -50,8 +50,10 @@ mod tests {
     fn what_the_page_is_told_reaches_the_machine() {
         let (mut host, page) = host();
         page.borrow_mut().gamepad.start = true;
+        page.borrow_mut().gamepad_2.b = true;
         host.frame();
         assert!(host.cpu.memory.gamepad.start, "the gamepad not given");
+        assert!(host.cpu.memory.gamepad_2.b, "the second gamepad not given");
         page.borrow_mut().reset = true;
         host.frame();
         let pc = host.cpu.pc;

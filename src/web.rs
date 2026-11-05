@@ -176,21 +176,25 @@ impl Emulator {
         self.page.borrow_mut().function_keys.push_back(key);
     }
 
-    /// The controls as they are: the gamepad's a bit each, up, down, left,
+    /// The controls as they are: each gamepad's a bit each, up, down, left,
     /// right, A, B, Select, Start.
-    pub fn controls(&self, gamepad: u8, x: f32, y: f32, buttons: u8, key_down: bool, reset: bool) {
-        let held = |bit: u8| gamepad >> bit & 1 != 0;
-        let page = &mut self.page.borrow_mut();
-        page.gamepad = Gamepad {
-            up: held(0),
-            down: held(1),
-            left: held(2),
-            right: held(3),
-            a: held(4),
-            b: held(5),
-            select: held(6),
-            start: held(7),
+    pub fn controls(&self, gamepad: u8, gamepad_2: u8, x: f32, y: f32, buttons: u8, key_down: bool, reset: bool) {
+        let pad = |bits: u8| {
+            let held = |bit: u8| bits >> bit & 1 != 0;
+            Gamepad {
+                up: held(0),
+                down: held(1),
+                left: held(2),
+                right: held(3),
+                a: held(4),
+                b: held(5),
+                select: held(6),
+                start: held(7),
+            }
         };
+        let page = &mut self.page.borrow_mut();
+        page.gamepad = pad(gamepad);
+        page.gamepad_2 = pad(gamepad_2);
         page.joystick = Joystick {
             x,
             y,

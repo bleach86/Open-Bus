@@ -366,10 +366,8 @@ page('reset').onpointerup = page('reset').onpointerleave = () => {
 addEventListener('pagehide', saveWritten);
 
 /// The gamepad's and the keyboard's controls, each frame.
-function controls() {
-    const pad = navigator.getGamepads?.().find(Boolean);
+function padState(pad) {
     const button = (n) => pad?.buttons[n]?.pressed ?? false;
-    const key = (...codes) => codes.some((code) => held.has(code));
     // The west button: 2 in the standard layout, but Firefox on Linux goes by
     // the kernel's button names, and an Xbox pad's X is sent as BTN_NORTH.
     const west = /Linux.*Firefox/.test(navigator.userAgent) && /x-?box/i.test(pad?.id) ? 3 : 2;
@@ -383,17 +381,38 @@ function controls() {
     const raw = pad?.mapping === '' && pad.buttons.length === 11 && pad.axes.length === 8;
     const [back, start] = raw ? [6, 7] : [8, 9];
     const hat = (axis, way) => raw && pad.axes[axis] * way > 0.5;
-    const padUp = button(12) || hat(7, -1);
-    const padDown = button(13) || hat(7, 1);
-    const padLeft = button(14) || hat(6, -1);
-    const padRight = button(15) || hat(6, 1);
-    const up = padUp || stickY < -0.5 || key('ArrowUp') || touch.up;
-    const down = padDown || stickY > 0.5 || key('ArrowDown') || touch.down;
-    const left = padLeft || stickX < -0.5 || key('ArrowLeft') || touch.left;
-    const right = padRight || stickX > 0.5 || key('ArrowRight') || touch.right;
-    const gamepad = [up, down, left, right,
-        button(0) || key('KeyX') || touch.a, button(west) || key('KeyZ') || touch.b,
-        button(back) || key('ShiftRight', 'Tab') || touch.select, button(start) || key('Enter') || touch.start];
+    return {
+        stickX,
+        stickY,
+        padUp: button(12) || hat(7, -1),
+        padDown: button(13) || hat(7, 1),
+        padLeft: button(14) || hat(6, -1),
+        padRight: button(15) || hat(6, 1),
+        a: button(0),
+        b: button(west),
+        east: button(1),
+        select: button(back),
+        start: button(start),
+    };
+}
+
+/// A gamepad's buttons, a bit each, its `pad` and what else presses them.
+function padBits(pad, up, down, left, right, a, b, select, start) {
+    return [pad.padUp || pad.stickY < -0.5 || up, pad.padDown || pad.stickY > 0.5 || down,
+        pad.padLeft || pad.stickX < -0.5 || left, pad.padRight || pad.stickX > 0.5 || right,
+        pad.a || a, pad.b || b, pad.select || select, pad.start || start]
+        .reduce((bits, on, bit) => bits | (on ? 1 << bit : 0), 0);
+}
+
+function controls() {
+    const pads = [...(navigator.getGamepads?.() ?? [])].filter(Boolean);
+    const [first, second] = [padState(pads[0]), padState(pads[1])];
+    const key = (...codes) => codes.some((code) => held.has(code));
+    const { stickX, stickY, padUp, padDown, padLeft, padRight } = first;
+    const gamepad = padBits(first, key('ArrowUp') || touch.up, key('ArrowDown') || touch.down,
+        key('ArrowLeft') || touch.left, key('ArrowRight') || touch.right, key('KeyX') || touch.a,
+        key('KeyZ') || touch.b, key('ShiftRight', 'Tab') || touch.select, key('Enter') || touch.start);
+    const gamepad2 = padBits(second);
     // The joystick: the numeric keypad's too, and the Alt keys its buttons.
     const towards = (minus, plus, stick) => {
         if (minus !== plus) {
@@ -405,11 +424,10 @@ function controls() {
         padRight || key('Numpad6', 'Numpad9', 'Numpad3'), stickX);
     const y = towards(padUp || key('Numpad8', 'Numpad7', 'Numpad9'),
         padDown || key('Numpad2', 'Numpad1', 'Numpad3'), stickY);
-    const buttons = (button(0) || key('Numpad0', 'AltLeft') ? 1 : 0)
-        | (button(1) || key('NumpadDecimal', 'AltRight') ? 2 : 0);
+    const buttons = (first.a || key('Numpad0', 'AltLeft') ? 1 : 0)
+        | (first.east || key('NumpadDecimal', 'AltRight') ? 2 : 0);
     const down_ = [...held].some((code) => !/^(Shift|Control|Alt|Meta)/.test(code));
-    emulator.controls(gamepad.reduce((bits, on, bit) => bits | (on ? 1 << bit : 0), 0),
-        x, y, buttons, down_, reset);
+    emulator.controls(gamepad, gamepad2, x, y, buttons, down_, reset);
 }
 
 function show() {

@@ -33,7 +33,7 @@
 //! A controller, its 8 buttons latched while $4016's bit 0 is written 1,
 //! read a bit at a time (bit 0 of $4016 or $4017) once it's 0: A, B,
 //! Select, Start, Up, Down, Left, Right; then 1s. The first is the
-//! window's gamepad; the second, none.
+//! window's first gamepad and its keys; the second, its second gamepad.
 //!
 //! Its picture is shown as a TV shows it, its edges hidden behind the
 //! screen's bezel, 8 dots or lines each by default: where games leave
@@ -58,6 +58,7 @@ pub mod region;
 #[cfg(test)]
 mod tests {
     mod cartridge;
+    mod controllers;
     mod mmc5;
     mod sound;
     mod test_roms;
@@ -153,11 +154,13 @@ pub struct Nes {
     /// Its region, from its game: a state's loaded into one of the same.
     #[serde(skip)]
     pub region: Region,
-    /// The game's name; the gamepad, as the host last gave it.
+    /// The game's name; the gamepads, as the host last gave them.
     #[serde(skip)]
     pub name: String,
     #[serde(skip)]
     pub gamepad: Gamepad,
+    #[serde(skip)]
+    pub gamepad_2: Gamepad,
     /// The PPU's colours; the dots or lines hidden at each edge, as a TV's
     /// overscan hides them; and the frame made of them, what's seen of it.
     #[serde(skip)]
@@ -204,6 +207,7 @@ impl Nes {
             reset_held: false,
             name: String::new(),
             gamepad: Gamepad::default(),
+            gamepad_2: Gamepad::default(),
             colours: palette::palette(region),
             overscan: 0,
             battery_file: None,
@@ -213,10 +217,9 @@ impl Nes {
         }
     }
 
-    /// The first controller's buttons, a bit each: A, B, Select, Start, Up,
-    /// Down, Left, Right. A D-pad's opposites can't both be pressed.
-    fn buttons(&self) -> u8 {
-        let pad = self.gamepad;
+    /// A controller's buttons, a bit each: A, B, Select, Start, Up, Down,
+    /// Left, Right. A D-pad's opposites can't both be pressed.
+    fn buttons(pad: Gamepad) -> u8 {
         let (up, down) = (pad.up && !pad.down, pad.down && !pad.up);
         let (left, right) = (pad.left && !pad.right, pad.right && !pad.left);
         [pad.a, pad.b, pad.select, pad.start, up, down, left, right]
@@ -225,10 +228,15 @@ impl Nes {
             .fold(0, |buttons, (bit, &held)| buttons | (held as u8) << bit)
     }
 
+    /// The controllers latched.
+    fn latch(&mut self) {
+        self.shifts = [Nes::buttons(self.gamepad), Nes::buttons(self.gamepad_2)];
+    }
+
     /// Controller `n`'s next bit; while latching, A's, over again.
     fn controller(&mut self, n: usize) -> u8 {
         if self.strobe {
-            self.shifts = [self.buttons(), 0];
+            self.latch();
         }
         let bit = self.shifts[n] & 1;
         if !self.strobe {
@@ -360,7 +368,7 @@ impl Bus for Nes {
             0x4016 => {
                 self.strobe = value & 1 != 0;
                 if self.strobe {
-                    self.shifts = [self.buttons(), 0];
+                    self.latch();
                 }
             }
             0x4000..=0x4017 => self.apu.write(addr, value, self.cycles % 2 == 1),
@@ -469,6 +477,7 @@ impl Machine for Nes {
 
     fn input(&mut self, input: Input) {
         self.gamepad = input.gamepad;
+        self.gamepad_2 = input.gamepad_2;
     }
 
     /// Held, the PPU's reset, and the CPU and APU held so.
@@ -503,6 +512,7 @@ impl Machine for Nes {
         (self.ppu.region, self.apu.region) = (running.region, running.region);
         self.name = take(&mut running.name);
         self.gamepad = running.gamepad;
+        self.gamepad_2 = running.gamepad_2;
         self.colours = take(&mut running.colours);
         self.overscan = running.overscan;
         self.battery_file = running.battery_file.take();

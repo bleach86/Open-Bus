@@ -22,6 +22,8 @@ pub struct Picture<'a> {
 pub struct Input {
     pub joystick: Joystick,
     pub gamepad: Gamepad,
+    /// The second player's.
+    pub gamepad_2: Gamepad,
     /// Whether a key is held down, any but the modifiers and the function
     /// keys.
     pub key_down: bool,

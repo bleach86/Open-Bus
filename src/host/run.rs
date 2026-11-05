@@ -70,6 +70,7 @@ impl<M: Machine> Host<M> {
         self.cpu.memory.input(Input {
             joystick: self.display.joystick(),
             gamepad: self.display.gamepad(),
+            gamepad_2: self.display.gamepad_2(),
             key_down: self.display.key_down(),
         });
         while let Some(key) = self.display.function_key() {

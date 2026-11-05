@@ -1,10 +1,11 @@
 //! The host's window, by SDL2: a machine's frames, scaled up; the keys
 //! typed in it; and a joystick, a gamepad's (its left stick or D-pad, A and
 //! B its buttons) or the numeric keypad's (8, 2, 4 and 6 and the corners;
-//! 0 and . its buttons), the Alt keys buttons too; a console's gamepad,
-//! the host's gamepad (its D-pad or left stick; its east button A, its
-//! south B; Back and Start) or the keyboard's (the arrows; X and Z, A and
-//! B; Right Shift or Tab, Select; Return, Start); F1 to F10, for the
+//! 0 and . its buttons), the Alt keys buttons too; a console's gamepads,
+//! the host's first (its D-pad or left stick; its south button A, its
+//! west B; Back and Start) or the keyboard's (the arrows; X and Z, A and
+//! B; Right Shift or Tab, Select; Return, Start), and the host's second,
+//! each keeping its place if the other's taken out; F1 to F10, for the
 //! machine's own uses, and F12, its Reset key; and the machine's sound, in
 //! stereo, through an audio queue. F11 or a double click switches it to
 //! fullscreen and back, the picture its shape still, bars at its sides if
@@ -35,11 +36,9 @@ pub struct Window {
     function_keys: VecDeque<u8>,
     audio: Option<AudioQueue<f32>>,
     controllers: GameControllerSubsystem,
-    gamepad: Option<GameController>,
-    /// The gamepad's left stick, -1 to 1 each way.
-    stick: (f32, f32),
-    /// The gamepad's buttons held, the keypad's keys and the Alt keys.
-    pad_held: HashSet<Button>,
+    /// The players' gamepads.
+    pads: [Option<Pad>; 2],
+    /// The keypad's keys held, and the Alt keys.
     keypad_held: HashSet<Keycode>,
     alt_held: [bool; 2],
     right_shift_held: bool,
@@ -53,6 +52,50 @@ pub struct Window {
     keypad_text: Option<char>,
     /// When the pointer last moved.
     pointer_moved: Instant,
+}
+
+/// A player's gamepad: its left stick, -1 to 1 each way, and its buttons held.
+struct Pad {
+    controller: GameController,
+    stick: (f32, f32),
+    held: HashSet<Button>,
+}
+
+impl Pad {
+    fn new(controller: GameController) -> Pad {
+        Pad { controller, stick: (0.0, 0.0), held: HashSet::new() }
+    }
+
+    /// Its D-pad, or its stick pushed well over; its buttons.
+    fn gamepad(&self) -> Gamepad {
+        let held = |button| self.held.contains(&button);
+        let pushed = 0.5;
+        Gamepad {
+            up: held(Button::DPadUp) || self.stick.1 < -pushed,
+            down: held(Button::DPadDown) || self.stick.1 > pushed,
+            left: held(Button::DPadLeft) || self.stick.0 < -pushed,
+            right: held(Button::DPadRight) || self.stick.0 > pushed,
+            a: held(Button::A),
+            b: held(Button::X),
+            select: held(Button::Back),
+            start: held(Button::Start),
+        }
+    }
+}
+
+/// The gamepad of instance `which`, if it's a player's.
+fn pad_of(pads: &mut [Option<Pad>; 2], which: u32) -> Option<&mut Pad> {
+    pads.iter_mut().flatten().find(|pad| pad.controller.instance_id() == which)
+}
+
+/// A gamepad plugged in, or there already, as SDL says at the start: the
+/// first place free's, unless it has one.
+fn plugged_in(pads: &mut [Option<Pad>; 2], controllers: &GameControllerSubsystem, device: u32) {
+    let Some(place) = pads.iter().position(Option::is_none) else { return };
+    let Ok(controller) = controllers.open(device) else { return };
+    if pad_of(pads, controller.instance_id()).is_none() {
+        pads[place] = Some(Pad::new(controller));
+    }
 }
 
 /// A stick's travel taken as centred: a resting gamepad's isn't quite 0.
@@ -117,9 +160,12 @@ impl Window {
             Some(queue)
         });
         let controllers = sdl.game_controller().expect("SDL's game controllers");
-        let gamepad = (0..controllers.num_joysticks().unwrap_or(0))
+        let mut opened = (0..controllers.num_joysticks().unwrap_or(0))
             .filter(|&n| controllers.is_game_controller(n))
-            .find_map(|n| controllers.open(n).ok());
+            .filter_map(|n| controllers.open(n).ok())
+            .map(Pad::new);
+        let pads = [opened.next(), opened.next()];
+        drop(opened);
         let events = sdl.event_pump().expect("SDL's events");
         let mut window = Window {
             canvas,
@@ -130,9 +176,7 @@ impl Window {
             function_keys: VecDeque::new(),
             audio,
             controllers,
-            gamepad,
-            stick: (0.0, 0.0),
-            pad_held: HashSet::new(),
+            pads,
             keypad_held: HashSet::new(),
             alt_held: [false; 2],
             right_shift_held: false,
@@ -259,15 +303,15 @@ impl Window {
                     ..
                 } => toggle = !toggle,
                 Event::MouseMotion { .. } => self.pointer_moved = Instant::now(),
-                Event::ControllerDeviceAdded { which, .. } if self.gamepad.is_none() => {
-                    self.gamepad = self.controllers.open(which).ok();
+                Event::ControllerDeviceAdded { which, .. } => plugged_in(&mut self.pads, &self.controllers, which),
+                Event::ControllerDeviceRemoved { which, .. } => {
+                    let place = self.pads.iter_mut().find(|pad| pad.as_ref().is_some_and(|pad| pad.controller.instance_id() == which));
+                    if let Some(place) = place {
+                        *place = None;
+                    }
                 }
-                Event::ControllerDeviceRemoved { .. } => {
-                    self.gamepad = None;
-                    self.stick = (0.0, 0.0);
-                    self.pad_held.clear();
-                }
-                Event::ControllerAxisMotion { axis, value, .. } => {
+                Event::ControllerAxisMotion { which, axis, value, .. } => {
+                    let Some(pad) = pad_of(&mut self.pads, which) else { continue };
                     let travel = value as f32 / 32767.0;
                     let travel = if travel.abs() < DEAD_ZONE {
                         0.0
@@ -275,16 +319,20 @@ impl Window {
                         travel.clamp(-1.0, 1.0)
                     };
                     match axis {
-                        Axis::LeftX => self.stick.0 = travel,
-                        Axis::LeftY => self.stick.1 = travel,
+                        Axis::LeftX => pad.stick.0 = travel,
+                        Axis::LeftY => pad.stick.1 = travel,
                         _ => {}
                     }
                 }
-                Event::ControllerButtonDown { button, .. } => {
-                    self.pad_held.insert(button);
+                Event::ControllerButtonDown { which, button, .. } => {
+                    if let Some(pad) = pad_of(&mut self.pads, which) {
+                        pad.held.insert(button);
+                    }
                 }
-                Event::ControllerButtonUp { button, .. } => {
-                    self.pad_held.remove(&button);
+                Event::ControllerButtonUp { which, button, .. } => {
+                    if let Some(pad) = pad_of(&mut self.pads, which) {
+                        pad.held.remove(&button);
+                    }
                 }
                 _ => {}
             }
@@ -386,7 +434,9 @@ impl Display for Window {
     /// The gamepad's stick, unless the D-pad or the keypad pushes it all the
     /// way; their buttons, and the Alt keys'.
     fn joystick(&self) -> Joystick {
-        let pad = |button| self.pad_held.contains(&button);
+        let first = self.pads.iter().flatten().next();
+        let pad = |button| first.is_some_and(|pad| pad.held.contains(&button));
+        let stick = first.map_or((0.0, 0.0), |pad| pad.stick);
         let keys = |held: &[Keycode]| held.iter().any(|key| self.keypad_held.contains(key));
         let left = pad(Button::DPadLeft) || keys(&[Keycode::Kp4, Keycode::Kp7, Keycode::Kp1]);
         let right = pad(Button::DPadRight) || keys(&[Keycode::Kp6, Keycode::Kp9, Keycode::Kp3]);
@@ -398,8 +448,8 @@ impl Display for Window {
             _ => stick,
         };
         Joystick {
-            x: axis(left, right, self.stick.0),
-            y: axis(up, down, self.stick.1),
+            x: axis(left, right, stick.0),
+            y: axis(up, down, stick.1),
             buttons: [
                 pad(Button::A) || keys(&[Keycode::Kp0]) || self.alt_held[0],
                 pad(Button::B) || keys(&[Keycode::KpPeriod]) || self.alt_held[1],
@@ -408,22 +458,25 @@ impl Display for Window {
         }
     }
 
-    /// The gamepad's D-pad, or its stick pushed well over; or the
+    /// The first gamepad's, or the
     /// keyboard's.
     fn gamepad(&self) -> Gamepad {
-        let pad = |button| self.pad_held.contains(&button);
+        let pad = self.pads[0].as_ref().map_or(Gamepad::default(), Pad::gamepad);
         let key = |keycode| self.keys_held.contains(&keycode);
-        let pushed = 0.5;
         Gamepad {
-            up: pad(Button::DPadUp) || self.stick.1 < -pushed || key(Keycode::Up),
-            down: pad(Button::DPadDown) || self.stick.1 > pushed || key(Keycode::Down),
-            left: pad(Button::DPadLeft) || self.stick.0 < -pushed || key(Keycode::Left),
-            right: pad(Button::DPadRight) || self.stick.0 > pushed || key(Keycode::Right),
-            a: pad(Button::A) || key(Keycode::X),
-            b: pad(Button::X) || key(Keycode::Z),
-            select: pad(Button::Back) || self.right_shift_held || key(Keycode::Tab),
-            start: pad(Button::Start) || key(Keycode::Return),
+            up: pad.up || key(Keycode::Up),
+            down: pad.down || key(Keycode::Down),
+            left: pad.left || key(Keycode::Left),
+            right: pad.right || key(Keycode::Right),
+            a: pad.a || key(Keycode::X),
+            b: pad.b || key(Keycode::Z),
+            select: pad.select || self.right_shift_held || key(Keycode::Tab),
+            start: pad.start || key(Keycode::Return),
         }
+    }
+
+    fn gamepad_2(&self) -> Gamepad {
+        self.pads[1].as_ref().map_or(Gamepad::default(), Pad::gamepad)
     }
 
     fn reset_held(&self) -> bool {

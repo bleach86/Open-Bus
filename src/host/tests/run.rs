@@ -25,6 +25,7 @@ mod tests {
         title: String,
         function_keys: Vec<u8>,
         gamepad: Gamepad,
+        gamepad_2: Gamepad,
         reset: bool,
         closed: bool,
         /// Closed once it's shown this many pictures, if it's to be.
@@ -47,6 +48,10 @@ mod tests {
 
         fn gamepad(&self) -> Gamepad {
             self.0.borrow().gamepad
+        }
+
+        fn gamepad_2(&self) -> Gamepad {
+            self.0.borrow().gamepad_2
         }
 
         fn reset_held(&self) -> bool {
@@ -145,8 +150,10 @@ mod tests {
     fn the_controls_and_reset_are_given_to_the_machine() {
         let (mut host, seen, _) = host("controls");
         seen.borrow_mut().gamepad.start = true;
+        seen.borrow_mut().gamepad_2.a = true;
         host.frame();
         assert!(host.cpu.memory.gamepad.start, "the gamepad not given");
+        assert!(host.cpu.memory.gamepad_2.a && !host.cpu.memory.gamepad_2.start, "the second gamepad not given");
 
         seen.borrow_mut().reset = true;
         host.frame();

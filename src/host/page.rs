@@ -22,6 +22,7 @@ pub struct Shared {
     pub keys: VecDeque<Key>,
     pub function_keys: VecDeque<u8>,
     pub gamepad: Gamepad,
+    pub gamepad_2: Gamepad,
     pub joystick: Joystick,
     pub key_down: bool,
     pub reset: bool,
@@ -52,6 +53,10 @@ impl Display for Page {
 
     fn gamepad(&self) -> Gamepad {
         self.0.borrow().gamepad
+    }
+
+    fn gamepad_2(&self) -> Gamepad {
+        self.0.borrow().gamepad_2
     }
 
     fn key_down(&self) -> bool {

@@ -35,6 +35,11 @@ pub trait Display {
         Gamepad::default()
     }
 
+    /// The second player's, as the first's.
+    fn gamepad_2(&self) -> Gamepad {
+        Gamepad::default()
+    }
+
     /// Whether a key is held down, any but the modifiers and the function
     /// keys.
     fn key_down(&self) -> bool {
