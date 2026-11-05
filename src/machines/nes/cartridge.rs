@@ -93,6 +93,17 @@
 //! 119, TQROM: MMC3 with both CHR ROM and 8K of CHR RAM, bit 6 of each
 //! bank's number choosing, 6 bits left to say which bank of it.
 //!
+//! 64, RAMBO-1, Tengen's: MMC3's registers at the same addresses, and
+//! more. Bank select's bit 5 makes $0000 to $0FFF's banks four of 1K, R0,
+//! R8, R1 and R9, not R0 and R1's 2K each; it has a third 8K of PRG, RF, at
+//! $C000, or with bit 6 $8000 and R6 at $C000; only the last 8K is fixed.
+//! Its IRQ counts A12's rises as MMC3's does, or ($C001's bit 0) every 4
+//! CPU cycles: at each count, reloaded from its latch at 0 or if $C001 was
+//! written, then ORed with 1, else taken down, and at 0 enabled, the line
+//! held a little later, 4 cycles counting lines and 1 counting cycles: Klax
+//! sets its scroll every 8 lines from the IRQ, its writes only safely past
+//! dot 256 of the line if it's as late as that. No PRG RAM.
+//!
 //! Bus conflicts: on a board whose register is written with its ROM still
 //! driving the bus, the bits it holds low win; the register's given what
 //! was written ANDed with the ROM's byte there.
@@ -201,6 +212,59 @@ pub struct Nina001 {
     chr: [u8; 2],
 }
 
+/// RAMBO-1's registers: bank select, and R0 to R9 and RF, by their numbers;
+/// the IRQ's latch, counter and reload, whether it's counting cycles and
+/// how many of the 4, enable, line, the cycles till that's held; and the
+/// PPU dot A12 was last seen low from.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rambo1 {
+    select: u8,
+    banks: [u8; 16],
+    irq_latch: u8,
+    irq_counter: u8,
+    irq_reload: bool,
+    counting_cycles: bool,
+    prescaler: u8,
+    irq_enabled: bool,
+    irq: bool,
+    irq_delay: u8,
+    a12_low_since: Option<u64>,
+}
+
+impl Rambo1 {
+    /// The 1K bank that CHR address `addr` is in, by the banks, the mode
+    /// and their inversion.
+    fn chr_bank(&self, addr: usize) -> usize {
+        let addr = if self.select & 0x80 != 0 { addr ^ 0x1000 } else { addr };
+        let full = self.select & 0x20 != 0;
+        let bank = |register: usize| self.banks[register] as usize;
+        match addr >> 10 {
+            0 if full => bank(0),
+            1 if full => bank(8),
+            2 if full => bank(1),
+            3 if full => bank(9),
+            slot @ (0 | 1) => (bank(0) & 0xFE) | slot,
+            slot @ (2 | 3) => (bank(1) & 0xFE) | (slot & 1),
+            slot => bank(slot - 2),
+        }
+    }
+
+    /// A count of the IRQ's, the line held `delay` cycles on if it's due.
+    fn count(&mut self, delay: u8) {
+        if self.irq_reload {
+            self.irq_counter = if self.irq_latch == 0 { 0 } else { self.irq_latch | 1 };
+            self.irq_reload = false;
+        } else if self.irq_counter == 0 {
+            self.irq_counter = self.irq_latch;
+        } else {
+            self.irq_counter -= 1;
+        }
+        if self.irq_counter == 0 && self.irq_enabled {
+            self.irq_delay = delay;
+        }
+    }
+}
+
 /// The boards MMC3's wired to differently.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Board {
@@ -245,6 +309,11 @@ const MAPPER_144_GAMES: [u32; 1] = [0x5CAA_3E61];
 /// fetches, only as the background's give way to theirs.
 const A12_LOW_DOTS: u64 = 10;
 
+/// The cycles after a count RAMBO-1's IRQ line's held: counting lines, and
+/// counting cycles.
+const RAMBO1_LINE_DELAY: u8 = 4;
+const RAMBO1_CYCLE_DELAY: u8 = 1;
+
 /// A board's mapper, and its registers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Mapper {
@@ -261,6 +330,7 @@ pub enum Mapper {
     Bnrom(u8),
     Nina001(Nina001),
     Mmc2(Mmc2),
+    Rambo1(Rambo1),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -336,6 +406,9 @@ impl Cartridge {
         if mmc6 && !nes2 {
             prg_ram_size = 0x400;
         }
+        if number == 64 && !nes2 {
+            prg_ram_size = 0;
+        }
         let mirroring = match header[6] & 0x09 {
             0x00 => Mirroring::Horizontal,
             0x01 => Mirroring::Vertical,
@@ -368,6 +441,7 @@ impl Cartridge {
             144 => Mapper::ColorDreams(Banks::new(Conflicts::RomD0)),
             34 if submapper == 1 || (submapper != 2 && chr_size > CHR_BANK) => Mapper::Nina001(Nina001::default()),
             34 => Mapper::Bnrom(0),
+            64 => Mapper::Rambo1(Rambo1::default()),
             66 => Mapper::Gxrom(Banks::new(Conflicts::And)),
             71 => Mapper::Camerica(0),
             79 => Mapper::Nina03(Banks::new(Conflicts::None)),
@@ -415,6 +489,17 @@ impl Cartridge {
             Mapper::Axrom(bank) | Mapper::Bnrom(bank) => (*bank as usize) * 0x8000 + (addr & 0x7FFF),
             Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.prg as usize * 0x8000 + (addr & 0x7FFF),
             Mapper::Nina001(nina) => nina.prg as usize * 0x8000 + (addr & 0x7FFF),
+            Mapper::Rambo1(rambo) => {
+                let last_8k = len / 0x2000 - 1;
+                let swapped = rambo.select & 0x40 != 0;
+                let bank = match ((addr - 0x8000) / 0x2000, swapped) {
+                    (0, false) | (2, true) => rambo.banks[6] as usize,
+                    (0, true) | (2, false) => rambo.banks[15] as usize,
+                    (1, _) => rambo.banks[7] as usize,
+                    _ => last_8k,
+                };
+                bank * 0x2000 + (addr & 0x1FFF)
+            }
             Mapper::Mmc2(mmc2) if addr < 0xA000 => mmc2.prg as usize * 0x2000 + (addr & 0x1FFF),
             Mapper::Mmc2(_) => len - 0x6000 + (addr - 0xA000),
             Mapper::Mmc1(mmc1) => {
@@ -451,6 +536,7 @@ impl Cartridge {
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
             Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.chr as usize * CHR_BANK + addr,
             Mapper::Nina001(nina) => nina.chr[addr >> 12] as usize * 0x1000 + (addr & 0x0FFF),
+            Mapper::Rambo1(rambo) => rambo.chr_bank(addr) * 0x400 + (addr & 0x3FF),
             Mapper::Mmc2(mmc2) => {
                 let table = addr >> 12;
                 mmc2.chr[table][mmc2.latch[table]] as usize * 0x1000 + (addr & 0x0FFF)
@@ -566,6 +652,21 @@ impl Cartridge {
                 (banks.prg, banks.chr) = ((value >> 4) & 3, value & 3);
             }
             Mapper::Bnrom(bank) => *bank = Conflicts::And.on(value, rom),
+            Mapper::Rambo1(rambo) => match addr & 0xE001 {
+                0x8000 => rambo.select = value,
+                0x8001 => rambo.banks[rambo.select as usize & 0x0F] = value,
+                0xA000 if !four_screen => {
+                    self.mirroring = if value & 1 == 0 { Mirroring::Vertical } else { Mirroring::Horizontal };
+                }
+                0xC000 => rambo.irq_latch = value,
+                0xC001 => {
+                    rambo.counting_cycles = value & 1 != 0;
+                    (rambo.irq_counter, rambo.irq_reload, rambo.prescaler) = (0, true, 0);
+                }
+                0xE000 => (rambo.irq_enabled, rambo.irq, rambo.irq_delay) = (false, false, 0),
+                0xE001 => rambo.irq_enabled = true,
+                _ => {}
+            },
             Mapper::Mmc2(mmc2) => match addr >> 12 {
                 0xA => mmc2.prg = value & 0x0F,
                 0xB..=0xE => {
@@ -677,15 +778,24 @@ impl Cartridge {
         }
     }
 
-    /// The PPU's address on its bus, at PPU dot `dot`: for MMC3, A12 rising
-    /// after it's been low a while clocking its IRQ counter.
+    /// The PPU's address on its bus, at PPU dot `dot`: for MMC3 and RAMBO-1,
+    /// A12 rising after it's been low a while clocking its IRQ counter.
     pub fn ppu_bus(&mut self, addr: u16, dot: u64) {
-        let Mapper::Mmc3(mmc3) = &mut self.mapper else { return };
+        let low_since = match &mut self.mapper {
+            Mapper::Mmc3(mmc3) => &mut mmc3.a12_low_since,
+            Mapper::Rambo1(rambo) if !rambo.counting_cycles => &mut rambo.a12_low_since,
+            _ => return,
+        };
         if addr & 0x1000 == 0 {
-            mmc3.a12_low_since.get_or_insert(dot);
+            low_since.get_or_insert(dot);
             return;
         }
-        if mmc3.a12_low_since.take().is_some_and(|since| dot - since >= A12_LOW_DOTS) {
+        if !low_since.take().is_some_and(|since| dot - since >= A12_LOW_DOTS) {
+            return;
+        }
+        if let Mapper::Rambo1(rambo) = &mut self.mapper {
+            rambo.count(RAMBO1_LINE_DELAY);
+        } else if let Mapper::Mmc3(mmc3) = &mut self.mapper {
             if mmc3.irq_counter == 0 || mmc3.irq_reload {
                 mmc3.irq_counter = mmc3.irq_latch;
                 mmc3.irq_reload = false;
@@ -698,8 +808,27 @@ impl Cartridge {
         }
     }
 
+    /// A CPU cycle: RAMBO-1's line held if it's due, and its count of them.
+    pub fn cycle(&mut self) {
+        let Mapper::Rambo1(rambo) = &mut self.mapper else { return };
+        if rambo.irq_delay > 0 {
+            rambo.irq_delay -= 1;
+            rambo.irq |= rambo.irq_delay == 0;
+        }
+        if rambo.counting_cycles {
+            rambo.prescaler = (rambo.prescaler + 1) & 3;
+            if rambo.prescaler == 0 {
+                rambo.count(RAMBO1_CYCLE_DELAY);
+            }
+        }
+    }
+
     /// Whether its mapper holds the IRQ line.
     pub fn irq(&self) -> bool {
-        matches!(&self.mapper, Mapper::Mmc3(mmc3) if mmc3.irq)
+        match &self.mapper {
+            Mapper::Mmc3(mmc3) => mmc3.irq,
+            Mapper::Rambo1(rambo) => rambo.irq,
+            _ => false,
+        }
     }
 }

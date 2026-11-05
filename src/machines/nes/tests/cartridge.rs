@@ -354,6 +354,128 @@ mod tests {
         assert_eq!(loaded.board, Board::Tqrom);
     }
 
+    /// A RAMBO-1's register `number` set, with bank select's `mode` bits.
+    fn rambo_bank(cart: &mut Cartridge, mode: u8, number: u8, bank: u8) {
+        cart.cpu_write(0x8000, mode | number, 0);
+        cart.cpu_write(0x8001, bank, 0);
+    }
+
+    #[test]
+    fn rambo_1s_third_prg_bank_leaves_only_the_last_fixed() {
+        let mut cart = board(64, 8, 8);
+        // In 8K: R6 2, R7 4, RF 6; the 16K banks' numbers halve them.
+        for (number, bank) in [(6, 2), (7, 4), (15, 6)] {
+            rambo_bank(&mut cart, 0, number, bank);
+        }
+        let prg = |cart: &mut Cartridge| [0x8020, 0xA020, 0xC020, 0xE020].map(|addr| cart.cpu_read(addr).unwrap());
+        assert_eq!(prg(&mut cart), [1, 2, 3, 7], "R6, R7, RF, the last");
+        cart.cpu_write(0x8000, 0x40, 0);
+        assert_eq!(prg(&mut cart), [3, 2, 1, 7], "RF, R7, R6, the last");
+        assert_eq!(cart.cpu_read(0x6000), None, "PRG RAM");
+    }
+
+    #[test]
+    fn rambo_1s_chr_is_2k_and_1k_or_all_1k() {
+        let mut cart = board(64, 8, 8);
+        // In 1K: each 8K bank's value at every 8 of them.
+        for (number, bank) in [(0, 0x08), (1, 0x10), (2, 0x18), (3, 0x20), (4, 0x28), (5, 0x30), (8, 0x38), (9, 0x00)] {
+            rambo_bank(&mut cart, 0, number, bank);
+        }
+        let chr = |cart: &mut Cartridge| [0x0000, 0x0400, 0x0800, 0x0C00, 0x1000, 0x1400, 0x1800, 0x1C00].map(|addr| cart.chr_read(addr) & 7);
+
+        cart.cpu_write(0x8000, 0x00, 0);
+        assert_eq!(chr(&mut cart), [1, 1, 2, 2, 3, 4, 5, 6], "R0 and R1 2K");
+        cart.cpu_write(0x8000, 0x20, 0);
+        assert_eq!(chr(&mut cart), [1, 7, 2, 0, 3, 4, 5, 6], "R0, R8, R1, R9");
+        cart.cpu_write(0x8000, 0x80, 0);
+        assert_eq!(chr(&mut cart), [3, 4, 5, 6, 1, 1, 2, 2], "inverted");
+        cart.cpu_write(0x8000, 0xA0, 0);
+        assert_eq!(chr(&mut cart), [3, 4, 5, 6, 1, 7, 2, 0], "inverted, all 1K");
+
+        // 2K's low bit is A10's, not the register's.
+        rambo_bank(&mut cart, 0, 0, 0x09);
+        assert_eq!(cart.chr_read(0x0000), 0xC1);
+    }
+
+    #[test]
+    fn rambo_1s_mirroring_is_mmc3s() {
+        let mut cart = board(64, 2, 1);
+        cart.cpu_write(0xA000, 0, 0);
+        assert_eq!(cart.mirroring, Mirroring::Vertical);
+        cart.cpu_write(0xA000, 1, 0);
+        assert_eq!(cart.mirroring, Mirroring::Horizontal);
+    }
+
+    #[test]
+    fn rambo_1_counts_4_cpu_cycles_a_count() {
+        let mut cart = board(64, 2, 1);
+        cart.cpu_write(0xC000, 2, 0);
+        cart.cpu_write(0xC001, 1, 0); // counting cycles, and reloaded
+        cart.cpu_write(0xE001, 0, 0);
+
+        // At 4 reloaded with 2 ORed with 1; at 8, 2; at 12, 1; at 16, 0;
+        // the line held a cycle on.
+        for cycle in 1..=16 {
+            cart.cycle();
+            assert!(!cart.irq(), "held at {cycle}");
+        }
+        cart.cycle();
+        assert!(cart.irq(), "not held");
+
+        // Enabling doesn't acknowledge it; $E000 does, and disables.
+        cart.cpu_write(0xE001, 0, 0);
+        assert!(cart.irq(), "acknowledged by $E001");
+        cart.cpu_write(0xE000, 0, 0);
+        assert!(!cart.irq(), "not acknowledged");
+        for _ in 0..100 {
+            cart.cycle();
+        }
+        assert!(!cart.irq(), "held, disabled");
+    }
+
+    #[test]
+    fn rambo_1_counts_a12s_rises_and_holds_the_line_4_cycles_on() {
+        let mut cart = board(64, 2, 1);
+        let rise = |cart: &mut Cartridge, dot: u64| {
+            cart.ppu_bus(0x0000, dot);
+            cart.ppu_bus(0x1000, dot + 20);
+        };
+        cart.cpu_write(0xC000, 1, 0);
+        cart.cpu_write(0xC001, 0, 0); // counting lines, and reloaded
+        cart.cpu_write(0xE001, 0, 0);
+        rise(&mut cart, 0); // reloaded, 1
+        for _ in 0..4 {
+            cart.cycle();
+        }
+        assert!(!cart.irq(), "held at 1");
+        rise(&mut cart, 100); // 0
+        for _ in 0..3 {
+            cart.cycle();
+        }
+        assert!(!cart.irq(), "held three on");
+        cart.cycle();
+        assert!(cart.irq(), "not held four on");
+
+        // A rise too soon after a fall isn't one.
+        cart.cpu_write(0xE000, 0, 0);
+        cart.cpu_write(0xE001, 0, 0);
+        cart.ppu_bus(0x0000, 200);
+        cart.ppu_bus(0x1000, 203);
+        for _ in 0..4 {
+            cart.cycle();
+        }
+        assert!(!cart.irq(), "counted a short fall");
+
+        // Counting cycles, A12's ignored.
+        cart.cpu_write(0xC000, 200, 0);
+        cart.cpu_write(0xC001, 1, 0);
+        rise(&mut cart, 300);
+        for _ in 0..3 {
+            cart.cycle();
+        }
+        assert!(!cart.irq(), "counted A12's rise, counting cycles");
+    }
+
     #[test]
     fn nina_03s_register_is_at_4100_and_every_other_page_to_5fff() {
         let mut cart = board(79, 4, 4);

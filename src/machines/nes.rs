@@ -370,6 +370,7 @@ impl Bus for Nes {
         self.cycles += 1;
         self.ppu.tick(&mut self.cartridge);
         self.nmi_line = self.ppu.nmi();
+        self.cartridge.cycle();
         self.irq_line = self.cartridge.irq() || self.apu.irq();
         if self.reset_held {
             self.apu.reset();

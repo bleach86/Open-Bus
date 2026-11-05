@@ -48,6 +48,10 @@ const VBLANK: u16 = 241;
 /// How long a bit on the registers' bus lasts, not driven 1, in NTSC's
 /// frames and PAL's: 600 ms.
 const DECAY_FRAMES: [u32; 2] = [36, 30];
+/// The dots from the write of PPUADDR's second byte to v having it: 1 to
+/// 1.5 from when the write's done, a dot after it's made here. Past dot
+/// 256 by the time it arrives, a line isn't moved on over it.
+const V_DELAY: u8 = 2;
 /// The border's colour, black.
 const BORDER: u16 = 0x0E;
 
@@ -75,7 +79,7 @@ pub struct Ppu {
     #[serde(with = "save_state::bytes")]
     oam: [u8; 256],
     // The scroll: the address, the address to be, fine X, the write toggle.
-    v: u16,
+    pub v: u16,
     t: u16,
     fine_x: u8,
     w: bool,
@@ -128,6 +132,10 @@ pub struct Ppu {
     /// A frame finished, to be shown.
     #[serde(skip)]
     pub frame_ready: bool,
+    /// The dots till v takes t, after a write of PPUADDR: gone in a moment,
+    /// so not in a state, taken between frames.
+    #[serde(skip)]
+    v_due: u8,
 }
 
 impl Ppu {
@@ -175,6 +183,7 @@ impl Ppu {
             zero_on_line: false,
             frame: vec![0; WIDTH * HEIGHT],
             frame_ready: false,
+            v_due: 0,
         }
     }
 
@@ -306,8 +315,7 @@ impl Ppu {
                     self.t = (self.t & 0x00FF) | ((value as u16 & 0x3F) << 8);
                 } else {
                     self.t = (self.t & 0xFF00) | value as u16;
-                    self.v = self.t;
-                    cart.ppu_bus(self.v & 0x3FFF, self.dots);
+                    self.v_due = V_DELAY;
                 }
                 self.w = !self.w;
             }
@@ -376,6 +384,13 @@ impl Ppu {
 
     /// A dot.
     pub fn tick(&mut self, cart: &mut Cartridge) {
+        if self.v_due > 0 {
+            self.v_due -= 1;
+            if self.v_due == 0 {
+                self.v = self.t;
+                cart.ppu_bus(self.v & 0x3FFF, self.dots);
+            }
+        }
         let (line, dot) = (self.line, self.dot);
         let seen = line < 240;
         let pre_render = line == self.pre_render();

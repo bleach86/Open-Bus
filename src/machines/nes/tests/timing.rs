@@ -7,6 +7,7 @@ mod tests {
     use crate::host::machine::Machine;
     use crate::machines::nes::cartridge::Cartridge;
     use crate::machines::nes::palette::palette;
+    use crate::machines::nes::ppu::Ppu;
     use crate::machines::nes::region::{PAL_CLOCK_HZ, Region};
     use crate::machines::nes::{CLOCK_HZ, Nes};
 
@@ -86,6 +87,37 @@ mod tests {
     fn its_blank_starts_where_ntscs_does_and_goes_on_to_line_311() {
         assert_eq!(lines(Region::Ntsc), (241, 261));
         assert_eq!(lines(Region::Pal), (241, 311));
+    }
+
+    /// What's in v by dot 260 of a line, rendering, $0040 written to PPUADDR
+    /// as the PPU comes to `dot`.
+    fn v_after_writing_at(dot: u16) -> u16 {
+        let mut cart = Cartridge::new(&image(&[])).unwrap();
+        let mut ppu = Ppu::new(Region::Ntsc);
+        // Past the writes being ignored, and onto a line of the next frame.
+        while !(ppu.line == 100 && ppu.dot == 0) || !ppu.frame_ready {
+            ppu.tick(&mut cart);
+        }
+        ppu.write_register(0x2001, 0x18, &mut cart);
+        while ppu.dot != dot {
+            ppu.tick(&mut cart);
+        }
+        ppu.write_register(0x2006, 0x00, &mut cart);
+        ppu.write_register(0x2006, 0x40, &mut cart);
+        while ppu.dot != 260 {
+            ppu.tick(&mut cart);
+        }
+        ppu.v
+    }
+
+    #[test]
+    fn a_write_of_ppuaddr_reaches_v_a_little_later() {
+        // Past dot 256 by then: the line's not moved on over it (and dot
+        // 257 has X back from t, which is the same).
+        assert_eq!(v_after_writing_at(256), 0x0040);
+        assert_eq!(v_after_writing_at(258), 0x0040);
+        // There by 256: fine Y moved on a line.
+        assert_eq!(v_after_writing_at(250), 0x1040);
     }
 
     #[test]
