@@ -711,6 +711,76 @@ mod tests {
         assert_eq!(cart.cpu_read(0x6000), Some(0x55));
     }
 
+    /// Action 52's write: chip, 16K bank, one-bank, CHR's high and low bits,
+    /// the mirroring bit, as the address and data hold them.
+    fn active(cart: &mut Cartridge, chip: u16, bank: u16, one: u16, high: u16, low: u8, mirroring: u16) {
+        let addr = 0x8000 | mirroring << 13 | chip << 11 | bank << 6 | one << 5 | high;
+        cart.cpu_write(addr, 0xFC | low, 0);
+    }
+
+    /// A cartridge of Action 52's shape: 1.5M of PRG, its 16K banks' first
+    /// bytes each its number, $FF for 96, past a byte; 512K of CHR.
+    fn action_52() -> Cartridge {
+        let mut header = b"NES\x1A".to_vec();
+        header.extend([96, 64, 0x41, 0xE0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        for bank in 0..96u8 {
+            header.extend([bank; 0x4000]);
+        }
+        for bank in 0..64u8 {
+            header.extend([bank; 0x2000]);
+        }
+        Cartridge::new(&header).unwrap()
+    }
+
+    #[test]
+    fn action_52s_chips_are_where_they_are_in_its_image() {
+        let mut cart = action_52();
+        assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000)), (Some(0), Some(1)), "from the first, 32K");
+
+        // In 32K mode, even and odd; the second chip is 32 16Ks on.
+        active(&mut cart, 1, 5, 0, 0, 0, 0);
+        assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000)), (Some(32 + 4), Some(32 + 5)));
+
+        // One bank at both.
+        active(&mut cart, 1, 5, 1, 0, 0, 0);
+        assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000)), (Some(32 + 5), Some(32 + 5)));
+
+        // The fourth chip's straight after the second, in the image.
+        active(&mut cart, 3, 31, 1, 0, 0, 0);
+        assert_eq!(cart.cpu_read(0x8000), Some(64 + 31));
+
+        // The third isn't there, and the first's back.
+        active(&mut cart, 2, 3, 0, 0, 0, 0);
+        assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000)), (None, None), "open bus");
+        active(&mut cart, 0, 3, 1, 0, 0, 0);
+        assert_eq!(cart.cpu_read(0x8000), Some(3));
+    }
+
+    #[test]
+    fn action_52s_chr_is_from_the_address_and_the_data() {
+        let mut cart = action_52();
+        active(&mut cart, 0, 0, 0, 0b1010, 0b11, 0);
+        assert_eq!(cart.chr_read(0), 0b1010_11, "the address's four, the data's two");
+        assert_eq!(cart.chr_read(0x1FFF), 0b1010_11, "8K of it");
+    }
+
+    #[test]
+    fn action_52s_mirroring_is_a13() {
+        let mut cart = action_52();
+        active(&mut cart, 0, 0, 0, 0, 0, 1);
+        assert_eq!(cart.mirroring, Mirroring::Horizontal);
+        active(&mut cart, 0, 0, 0, 0, 0, 0);
+        assert_eq!(cart.mirroring, Mirroring::Vertical);
+    }
+
+    #[test]
+    fn reset_takes_action_52_back_to_its_menu() {
+        let mut cart = action_52();
+        active(&mut cart, 3, 31, 1, 15, 3, 1);
+        cart.reset();
+        assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000), cart.chr_read(0)), (Some(0), Some(1), 0));
+    }
+
     #[test]
     fn nina_03s_register_is_at_4100_and_every_other_page_to_5fff() {
         let mut cart = board(79, 4, 4);

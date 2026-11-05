@@ -127,6 +127,13 @@
 //! the line and acknowledging, the line held on going past 0. The
 //! Famicom's 5B has sound at $C000 up too; carts of this have none.
 //!
+//! 228, Active Enterprises' Action 52 and Cheetahmen II: what's written is
+//! mostly in the address. A13 the mirroring (0 vertical); A12 and A11
+//! which 512K chip of PRG, the third there isn't, so open bus, the images
+//! having the fourth straight after the second; A10 to A6 its 16K bank; A5
+//! that bank at $8000 and $C000, not 32K of it and the next; and of the CHR's 8K
+//! bank, A3 to A0 the high bits, the data's two the low.
+//!
 //! Bus conflicts: on a board whose register is written with its ROM still
 //! driving the bus, the bits it holds low win; the register's given what
 //! was written ANDed with the ROM's byte there.
@@ -312,6 +319,19 @@ pub struct Quattro {
     aladdin: bool,
 }
 
+/// Action 52's register: its chip of PRG and 16K bank, whether that's at
+/// both places, and its 8K of CHR.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Active {
+    chip: u8,
+    bank: u8,
+    one_bank: bool,
+    chr: u8,
+}
+
+/// The chip of Action 52 that isn't there.
+const ACTIVE_NO_CHIP: u8 = 2;
+
 /// The boards MMC3's wired to differently.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Board {
@@ -389,6 +409,7 @@ pub enum Mapper {
     Fme7(Fme7),
     Quattro(Quattro),
     Mmc5(Box<Mmc5>),
+    Active(Active),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -510,6 +531,7 @@ impl Cartridge {
             69 => Mapper::Fme7(Fme7::default()),
             66 => Mapper::Gxrom(Banks::new(Conflicts::And)),
             71 => Mapper::Camerica(0),
+            228 => Mapper::Active(Active::default()),
             232 => Mapper::Quattro(Quattro { aladdin: submapper == 1, ..Quattro::default() }),
             79 => Mapper::Nina03(Banks::new(Conflicts::None)),
             _ => return Err(format!("mapper {number}, which isn't here yet")),
@@ -570,6 +592,9 @@ impl Cartridge {
         if let Mapper::Mmc5(mmc5) = &mut self.mapper {
             mmc5.reset();
         }
+        if let Mapper::Active(active) = &mut self.mapper {
+            *active = Active::default();
+        }
     }
 
     /// Where `addr`, $8000 up, is in the PRG ROM, as the mapper has its
@@ -597,6 +622,12 @@ impl Cartridge {
                 bank * 0x2000 + (addr & 0x1FFF)
             }
             Mapper::Mmc5(_) => addr,
+            Mapper::Active(active) => {
+                let chip = [0, 1, 0, 2][active.chip as usize] * 0x80000;
+                let high = (addr >= 0xC000) as usize;
+                let bank = if active.one_bank { active.bank as usize } else { (active.bank as usize & !1) | high };
+                chip + in_16k(bank)
+            }
             Mapper::Quattro(quattro) => {
                 let block = quattro.block as usize * 4;
                 in_16k(block + if addr < 0xC000 { quattro.bank as usize } else { 3 })
@@ -644,6 +675,7 @@ impl Cartridge {
         let offset = match &self.mapper {
             Mapper::Nrom | Mapper::Uxrom(_) | Mapper::Axrom(_) | Mapper::Camerica(_) | Mapper::Bnrom(_) | Mapper::Quattro(_) | Mapper::Mmc5(_) => addr,
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
+            Mapper::Active(active) => active.chr as usize * CHR_BANK + addr,
             Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.chr as usize * CHR_BANK + addr,
             Mapper::Nina001(nina) => nina.chr[addr >> 12] as usize * 0x1000 + (addr & 0x0FFF),
             Mapper::Rambo1(rambo) => rambo.chr_bank(addr) * 0x400 + (addr & 0x3FF),
@@ -724,7 +756,10 @@ impl Cartridge {
                 }
                 _ => self.prg_ram_offset(addr, false).map(|at| self.prg_ram[at]),
             },
-            0x8000..=0xFFFF => Some(self.prg_rom[self.prg_offset(addr)]),
+            0x8000..=0xFFFF => match &self.mapper {
+                Mapper::Active(active) if active.chip == ACTIVE_NO_CHIP => None,
+                _ => Some(self.prg_rom[self.prg_offset(addr)]),
+            },
             _ => None,
         }
     }
@@ -796,6 +831,12 @@ impl Cartridge {
                 0xE001 => rambo.irq_enabled = true,
                 _ => {}
             },
+            Mapper::Active(active) => {
+                let bits = |shift: u16, mask: u16| ((addr >> shift) & mask) as u8;
+                (active.chip, active.bank, active.one_bank) = (bits(11, 3), bits(6, 0x1F), bits(5, 1) != 0);
+                active.chr = bits(0, 0x0F) << 2 | value & 3;
+                self.mirroring = if bits(13, 1) == 0 { Mirroring::Vertical } else { Mirroring::Horizontal };
+            }
             Mapper::Quattro(quattro) => match addr {
                 0x8000..=0xBFFF => {
                     let block = (value >> 3) & 3;
