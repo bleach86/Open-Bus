@@ -41,7 +41,10 @@ fn rgb(pixel: usize) -> u32 {
     for phase in 0..12 {
         let in_phase = |hue: usize| (hue + phase) % 12 < 6;
         let mut signal = if in_phase(hue) { high } else { low };
-        if (emphasis & 1 != 0 && in_phase(0)) || (emphasis & 2 != 0 && in_phase(4)) || (emphasis & 4 != 0 && in_phase(8)) {
+        if (emphasis & 1 != 0 && in_phase(0))
+            || (emphasis & 2 != 0 && in_phase(4))
+            || (emphasis & 4 != 0 && in_phase(8))
+        {
             signal *= ATTENUATION;
         }
         let level = (signal - BLACK) / (WHITE - BLACK) / 12.0;

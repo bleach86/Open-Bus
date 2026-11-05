@@ -27,8 +27,22 @@ const ENVELOPE_SHAPE: usize = 13;
 /// The DAC's 16 levels, as parts of its most: 3 dB apart, a factor of the
 /// square root of 2; 0, nothing.
 pub const LEVELS: [f32; 16] = [
-    0.0, 0.007_812_5, 0.011_048_5, 0.015_625, 0.022_097, 0.031_25, 0.044_194, 0.062_5, 0.088_388, 0.125,
-    0.176_777, 0.25, 0.353_553, 0.5, 0.707_107, 1.0,
+    0.0,
+    0.007_812_5,
+    0.011_048_5,
+    0.015_625,
+    0.022_097,
+    0.031_25,
+    0.044_194,
+    0.062_5,
+    0.088_388,
+    0.125,
+    0.176_777,
+    0.25,
+    0.353_553,
+    0.5,
+    0.707_107,
+    1.0,
 ];
 
 #[derive(Serialize, Deserialize)]
@@ -191,7 +205,11 @@ impl Ay38910 {
             return 0.0;
         }
         let amplitude = self.regs[8 + channel];
-        let level = if amplitude & 0x10 != 0 { self.envelope() } else { amplitude & 0x0F };
+        let level = if amplitude & 0x10 != 0 {
+            self.envelope()
+        } else {
+            amplitude & 0x0F
+        };
         LEVELS[level as usize]
     }
 }

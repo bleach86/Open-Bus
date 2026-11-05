@@ -10,17 +10,17 @@
 //! fullscreen and back, the picture its shape still, bars at its sides if
 //! the screen is wider. Closed, it tells the machine, to turn itself off.
 
-use crate::host::display::{Display, Gamepad, Joystick, Key, CHANNELS, SAMPLE_RATE};
+use crate::host::display::{CHANNELS, Display, Gamepad, Joystick, Key, SAMPLE_RATE};
 use sdl2::EventPump;
+use sdl2::GameControllerSubsystem;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::controller::{Axis, Button, GameController};
 use sdl2::event::Event;
 use sdl2::keyboard::{Keycode, Mod};
 use sdl2::mouse::{MouseButton, MouseUtil};
-use sdl2::video::FullscreenType;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::{Canvas, Texture};
-use sdl2::GameControllerSubsystem;
+use sdl2::video::FullscreenType;
 use std::collections::{HashSet, VecDeque};
 
 pub struct Window {
@@ -65,7 +65,13 @@ impl Window {
     /// A window `title`d, for frames `width` by `height` pixels, shown at
     /// `size`, the window's width and height, its shape kept in
     /// fullscreen; `fullscreen` to start with.
-    pub fn new(title: &str, width: usize, height: usize, size: (u32, u32), fullscreen: bool) -> Window {
+    pub fn new(
+        title: &str,
+        width: usize,
+        height: usize,
+        size: (u32, u32),
+        fullscreen: bool,
+    ) -> Window {
         let sdl = sdl2::init().expect("SDL");
         let video = sdl.video().expect("SDL's video");
         let window = video
@@ -73,8 +79,14 @@ impl Window {
             .position_centered()
             .build()
             .expect("a window");
-        let mut canvas = window.into_canvas().accelerated().build().expect("a canvas");
-        canvas.set_logical_size(size.0, size.1).expect("the picture's shape");
+        let mut canvas = window
+            .into_canvas()
+            .accelerated()
+            .build()
+            .expect("a canvas");
+        canvas
+            .set_logical_size(size.0, size.1)
+            .expect("the picture's shape");
         let texture = canvas
             .texture_creator()
             .create_texture_streaming(PixelFormatEnum::RGB888, width as u32, height as u32)
@@ -82,10 +94,20 @@ impl Window {
         video.text_input().start();
         // The sound, if the host has any: a queue of samples, a cushion of
         // silence in it to start.
-        let audio = sdl.audio().ok().and_then(|audio| {
-            let spec = AudioSpecDesired { freq: Some(SAMPLE_RATE as i32), channels: Some(CHANNELS as u8), samples: Some(512) };
+        let audio: Option<AudioQueue<f32>> = sdl.audio().ok().and_then(|audio| {
+            let spec = AudioSpecDesired {
+                freq: Some(SAMPLE_RATE as i32),
+                channels: Some(CHANNELS as u8),
+                samples: Some(512),
+            };
             let queue = audio.open_queue::<f32, _>(None, &spec).ok()?;
-            queue.queue_audio(&vec![0.0; (SAMPLE_RATE as f32 * AUDIO_CUSHION) as usize * CHANNELS]).ok()?;
+            queue
+                .queue_audio(&vec![
+                    0.0;
+                    (SAMPLE_RATE as f32 * AUDIO_CUSHION) as usize
+                        * CHANNELS
+                ])
+                .ok()?;
             queue.resume();
             Some(queue)
         });
@@ -124,7 +146,11 @@ impl Window {
     /// the window.
     fn toggle_fullscreen(&mut self) {
         let fullscreen = self.canvas.window().fullscreen_state() == FullscreenType::Off;
-        let state = if fullscreen { FullscreenType::Desktop } else { FullscreenType::Off };
+        let state = if fullscreen {
+            FullscreenType::Desktop
+        } else {
+            FullscreenType::Off
+        };
         let _ = self.canvas.window_mut().set_fullscreen(state);
         self.mouse.show_cursor(!fullscreen);
     }
@@ -137,14 +163,27 @@ impl Window {
             match event {
                 Event::Quit { .. } => self.closed = true,
                 Event::TextInput { text, .. } => {
-                    if self.keypad_text.take().is_some_and(|c| text == c.to_string()) {
+                    if self
+                        .keypad_text
+                        .take()
+                        .is_some_and(|c| text == c.to_string())
+                    {
                         continue;
                     }
-                    self.keys.extend(text.bytes().filter(u8::is_ascii).map(Key::Char));
+                    self.keys
+                        .extend(text.bytes().filter(u8::is_ascii).map(Key::Char));
                 }
-                Event::KeyDown { keycode: Some(keycode), keymod, repeat, .. } => {
+                Event::KeyDown {
+                    keycode: Some(keycode),
+                    keymod,
+                    repeat,
+                    ..
+                } => {
                     self.keypad_text = None;
-                    if !is_modifier(keycode) && function_key(keycode).is_none() && !matches!(keycode, Keycode::F11 | Keycode::F12) {
+                    if !is_modifier(keycode)
+                        && function_key(keycode).is_none()
+                        && !matches!(keycode, Keycode::F11 | Keycode::F12)
+                    {
                         self.keys_held.insert(keycode);
                     }
                     if let Some(text) = keypad(keycode) {
@@ -196,7 +235,10 @@ impl Window {
                     };
                     self.keys.extend(key);
                 }
-                Event::KeyUp { keycode: Some(keycode), .. } => {
+                Event::KeyUp {
+                    keycode: Some(keycode),
+                    ..
+                } => {
                     self.keypad_held.remove(&keycode);
                     self.keys_held.remove(&keycode);
                     match keycode {
@@ -207,7 +249,11 @@ impl Window {
                         _ => {}
                     }
                 }
-                Event::MouseButtonDown { mouse_btn: MouseButton::Left, clicks: 2, .. } => toggle = !toggle,
+                Event::MouseButtonDown {
+                    mouse_btn: MouseButton::Left,
+                    clicks: 2,
+                    ..
+                } => toggle = !toggle,
                 Event::ControllerDeviceAdded { which, .. } if self.gamepad.is_none() => {
                     self.gamepad = self.controllers.open(which).ok();
                 }
@@ -218,7 +264,11 @@ impl Window {
                 }
                 Event::ControllerAxisMotion { axis, value, .. } => {
                     let travel = value as f32 / 32767.0;
-                    let travel = if travel.abs() < DEAD_ZONE { 0.0 } else { travel.clamp(-1.0, 1.0) };
+                    let travel = if travel.abs() < DEAD_ZONE {
+                        0.0
+                    } else {
+                        travel.clamp(-1.0, 1.0)
+                    };
                     match axis {
                         Axis::LeftX => self.stick.0 = travel,
                         Axis::LeftY => self.stick.1 = travel,
@@ -244,18 +294,35 @@ impl Window {
 fn is_modifier(keycode: Keycode) -> bool {
     matches!(
         keycode,
-        Keycode::LShift | Keycode::RShift | Keycode::LCtrl | Keycode::RCtrl | Keycode::LAlt | Keycode::RAlt
-            | Keycode::LGui | Keycode::RGui | Keycode::CapsLock
+        Keycode::LShift
+            | Keycode::RShift
+            | Keycode::LCtrl
+            | Keycode::RCtrl
+            | Keycode::LAlt
+            | Keycode::RAlt
+            | Keycode::LGui
+            | Keycode::RGui
+            | Keycode::CapsLock
     )
 }
 
 /// F1 to F10's numbers.
 fn function_key(keycode: Keycode) -> Option<u8> {
     let keys = [
-        Keycode::F1, Keycode::F2, Keycode::F3, Keycode::F4, Keycode::F5,
-        Keycode::F6, Keycode::F7, Keycode::F8, Keycode::F9, Keycode::F10,
+        Keycode::F1,
+        Keycode::F2,
+        Keycode::F3,
+        Keycode::F4,
+        Keycode::F5,
+        Keycode::F6,
+        Keycode::F7,
+        Keycode::F8,
+        Keycode::F9,
+        Keycode::F10,
     ];
-    keys.iter().position(|&key| key == keycode).map(|n| n as u8 + 1)
+    keys.iter()
+        .position(|&key| key == keycode)
+        .map(|n| n as u8 + 1)
 }
 
 /// A numeric keypad key the joystick takes, and the text it would type.
@@ -288,7 +355,9 @@ impl Display for Window {
             })
             .expect("the texture");
         self.canvas.clear();
-        self.canvas.copy(&self.texture, None, None).expect("the frame");
+        self.canvas
+            .copy(&self.texture, None, None)
+            .expect("the frame");
         self.canvas.present();
         self.take_events();
     }
@@ -342,8 +411,8 @@ impl Display for Window {
             down: pad(Button::DPadDown) || self.stick.1 > pushed || key(Keycode::Down),
             left: pad(Button::DPadLeft) || self.stick.0 < -pushed || key(Keycode::Left),
             right: pad(Button::DPadRight) || self.stick.0 > pushed || key(Keycode::Right),
-            a: pad(Button::B) || key(Keycode::X),
-            b: pad(Button::A) || key(Keycode::Z),
+            a: pad(Button::A) || key(Keycode::X),
+            b: pad(Button::X) || key(Keycode::Z),
             select: pad(Button::Back) || self.right_shift_held || key(Keycode::Tab),
             start: pad(Button::Start) || key(Keycode::Return),
         }

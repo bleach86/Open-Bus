@@ -59,8 +59,8 @@ mod tests {
     mod test_roms;
 }
 
-use crate::cpu::{Variant, CPU};
 use crate::cpu::bus::Bus;
+use crate::cpu::{CPU, Variant};
 use crate::host::display::{Display, Gamepad, SAMPLE_RATE};
 use crate::host::window::Window;
 use crate::machines::save_state;
@@ -74,12 +74,12 @@ use std::path::{Path, PathBuf};
 pub const CLOCK_HZ: u32 = 1_789_773;
 
 /// How loud it is, of the host's full volume.
-const VOLUME: f32 = 0.6;
+const VOLUME: f32 = 0.85;
 
 /// The output's filters' corners: its low-passes', a cycle at a time; its
 /// high-passes', a sample at a time.
 const LOW_PASSES: [f32; 3] = [14_000.0, 20_000.0, 20_000.0];
-const HIGH_PASSES: [f32; 2] = [90.0, 440.0];
+const HIGH_PASSES: [f32; 2] = [90.0, 1.0];
 
 /// A save state to be saved, or loaded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -209,7 +209,10 @@ impl Nes {
     /// The first controller's buttons, a bit each: A, B, Select, Start, Up,
     /// Down, Left, Right. A D-pad's opposites can't both be pressed.
     fn buttons(&self) -> u8 {
-        let pad = self.display.as_ref().map_or(self.gamepad, |display| display.gamepad());
+        let pad = self
+            .display
+            .as_ref()
+            .map_or(self.gamepad, |display| display.gamepad());
         let (up, down) = (pad.up && !pad.down, pad.down && !pad.up);
         let (left, right) = (pad.left && !pad.right, pad.right && !pad.left);
         [pad.a, pad.b, pad.select, pad.start, up, down, left, right]
@@ -295,13 +298,16 @@ impl Nes {
     /// written: to a file beside it, then put in its place, so it's never
     /// half saved.
     fn save_battery(&mut self) {
-        let Some(path) = &self.battery_file else { return };
+        let Some(path) = &self.battery_file else {
+            return;
+        };
         if !self.cartridge.written {
             return;
         }
         self.cartridge.written = false;
         let saving = path.with_extension("srm.saving");
-        let saved = std::fs::write(&saving, &self.cartridge.prg_ram).and_then(|_| std::fs::rename(&saving, path));
+        let saved = std::fs::write(&saving, &self.cartridge.prg_ram)
+            .and_then(|_| std::fs::rename(&saving, path));
         if let Err(e) = saved {
             eprintln!("{}: not saved: {e}", path.display());
         }
@@ -314,9 +320,16 @@ impl Nes {
         if let Some(display) = &mut self.display {
             let (width, height) = seen(self.overscan);
             self.picture.clear();
-            for line in self.ppu.frame.chunks(ppu::WIDTH).skip(self.overscan).take(height) {
+            for line in self
+                .ppu
+                .frame
+                .chunks(ppu::WIDTH)
+                .skip(self.overscan)
+                .take(height)
+            {
                 let dots = &line[self.overscan..self.overscan + width];
-                self.picture.extend(dots.iter().map(|&colour| self.colours[colour as usize]));
+                self.picture
+                    .extend(dots.iter().map(|&colour| self.colours[colour as usize]));
             }
             display.show(&self.picture, width, height);
             while let Some(key) = display.function_key() {
@@ -410,7 +423,13 @@ impl Bus for Nes {
         match addr {
             0x0000..=0x1FFF => self.ram[addr as usize & 0x7FF] = value,
             0x2000..=0x3FFF => self.ppu.write_register(addr, value, &mut self.cartridge),
-            0x4014 => self.dma = Some(Dma { page: value, value: None, done: 0 }),
+            0x4014 => {
+                self.dma = Some(Dma {
+                    page: value,
+                    value: None,
+                    done: 0,
+                })
+            }
             0x4016 => {
                 self.strobe = value & 1 != 0;
                 if self.strobe {
@@ -486,7 +505,9 @@ impl Bus for Nes {
 /// The iNES image at `path`, or in the zip there, the first in it.
 pub fn image(path: &Path) -> Result<Vec<u8>, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    let zipped = path.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("zip"));
+    let zipped = path
+        .extension()
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("zip"));
     if !zipped {
         return Ok(bytes);
     }
@@ -501,7 +522,9 @@ fn wanted(cpu: &mut CPU<Nes>, path: &Path) {
         Some(Wanted::Save) => {
             let saving = path.with_extension("state.saving");
             let saved = save_state::save(cpu, &cpu.memory.machine()).and_then(|state| {
-                std::fs::write(&saving, state).and_then(|_| std::fs::rename(&saving, path)).map_err(|e| e.to_string())
+                std::fs::write(&saving, state)
+                    .and_then(|_| std::fs::rename(&saving, path))
+                    .map_err(|e| e.to_string())
             });
             if let Err(e) = saved {
                 eprintln!("{}: not saved: {e}", path.display());
@@ -545,14 +568,28 @@ pub fn run(rom: &str, fullscreen: bool, overscan: usize) {
         }
         nes.battery_file = Some(file);
     }
-    let name = path.file_stem().map_or(String::new(), |name| name.to_string_lossy().into_owned());
+    let name = path
+        .file_stem()
+        .map_or(String::new(), |name| name.to_string_lossy().into_owned());
     // Its dots and lines seen, each dot 8:7 as a TV shows it, 3 times over:
     // 823 by 672, of 240 by 224.
     nes.overscan = overscan;
     let (width, height) = seen(overscan);
-    let size = ((width as f32 * 8.0 / 7.0 * 3.0).round() as u32, height as u32 * 3);
-    nes.display = Some(Box::new(Window::new(&format!("NES   {name}"), width, height, size, fullscreen)));
-    let state: PathBuf = path.with_file_name(format!("{}.state", path.file_name().unwrap().to_string_lossy()));
+    let size = (
+        (width as f32 * 8.0 / 7.0 * 3.0).round() as u32,
+        height as u32 * 3,
+    );
+    nes.display = Some(Box::new(Window::new(
+        &format!("NES   {name}"),
+        width,
+        height,
+        size,
+        fullscreen,
+    )));
+    let state: PathBuf = path.with_file_name(format!(
+        "{}.state",
+        path.file_name().unwrap().to_string_lossy()
+    ));
 
     let mut cpu = CPU::with_bus(nes);
     cpu.variant = Variant::Ricoh2A03;

@@ -35,24 +35,46 @@
 use serde::{Deserialize, Serialize};
 
 const LENGTHS: [u8; 32] = [
-    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28,
-    32, 30,
+    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
+    192, 24, 72, 26, 16, 28, 32, 30,
 ];
-const DUTIES: [[u8; 8]; 4] = [[0, 1, 0, 0, 0, 0, 0, 0], [0, 1, 1, 0, 0, 0, 0, 0], [0, 1, 1, 1, 1, 0, 0, 0], [1, 0, 0, 1, 1, 1, 1, 1]];
-const TRIANGLE: [u8; 32] = [15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-const NOISE_PERIODS: [u16; 16] = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068];
-const DMC_RATES: [u16; 16] = [428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54];
+const DUTIES: [[u8; 8]; 4] = [
+    [0, 1, 0, 0, 0, 0, 0, 0],
+    [0, 1, 1, 0, 0, 0, 0, 0],
+    [0, 1, 1, 1, 1, 0, 0, 0],
+    [1, 0, 0, 1, 1, 1, 1, 1],
+];
+const TRIANGLE: [u8; 32] = [
+    15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+    13, 14, 15,
+];
+const NOISE_PERIODS: [u16; 16] = [
+    4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
+];
+const DMC_RATES: [u16; 16] = [
+    428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
+];
 
 /// The frame counter's steps, in CPU cycles from its start, mode 0's and
 /// mode 1's; and what each clocks: a quarter frame, a half, or nothing.
-const STEPS: [[u32; 6]; 2] = [[7457, 14913, 22371, 29828, 29829, 29830], [7457, 14913, 22371, 29829, 37281, 37282]];
+const STEPS: [[u32; 6]; 2] = [
+    [7457, 14913, 22371, 29828, 29829, 29830],
+    [7457, 14913, 22371, 29829, 37281, 37282],
+];
 #[derive(Clone, Copy, PartialEq)]
 enum Frame {
     Quarter,
     Half,
     None,
 }
-const FRAMES: [Frame; 6] = [Frame::Quarter, Frame::Half, Frame::Quarter, Frame::None, Frame::Half, Frame::None];
+const FRAMES: [Frame; 6] = [
+    Frame::Quarter,
+    Frame::Half,
+    Frame::Quarter,
+    Frame::None,
+    Frame::Half,
+    Frame::None,
+];
 
 /// A length counter, and its load and halt to come, at the cycle's end.
 #[derive(Default, Serialize, Deserialize)]
@@ -136,7 +158,11 @@ impl Envelope {
     }
 
     fn output(&self) -> u8 {
-        if self.constant { self.volume } else { self.decay }
+        if self.constant {
+            self.volume
+        } else {
+            self.decay
+        }
     }
 }
 
@@ -223,7 +249,10 @@ impl Pulse {
     }
 
     fn output(&self) -> u8 {
-        if self.muted() || self.length.counter == 0 || DUTIES[self.duty as usize][self.step as usize] == 0 {
+        if self.muted()
+            || self.length.counter == 0
+            || DUTIES[self.duty as usize][self.step as usize] == 0
+        {
             0
         } else {
             self.envelope.output()
@@ -329,7 +358,11 @@ impl Noise {
     }
 
     fn output(&self) -> u8 {
-        if self.shift & 1 != 0 || self.length.counter == 0 { 0 } else { self.envelope.output() }
+        if self.shift & 1 != 0 || self.length.counter == 0 {
+            0
+        } else {
+            self.envelope.output()
+        }
     }
 }
 
@@ -412,7 +445,11 @@ impl Dmc {
     /// The byte read for it, by DMA.
     fn fill(&mut self, byte: u8) {
         self.buffer = Some(byte);
-        self.address = if self.address == 0xFFFF { 0x8000 } else { self.address + 1 };
+        self.address = if self.address == 0xFFFF {
+            0x8000
+        } else {
+            self.address + 1
+        };
         self.remaining -= 1;
         if self.remaining == 0 {
             if self.looping {
@@ -448,9 +485,22 @@ pub struct Apu {
 impl Apu {
     pub fn new() -> Self {
         let mut apu = Apu {
-            pulses: [Pulse::default(), Pulse { second: true, ..Pulse::default() }],
+            pulses: [
+                Pulse::default(),
+                Pulse {
+                    second: true,
+                    ..Pulse::default()
+                },
+            ],
             triangle: Triangle::default(),
-            noise: Noise { short: false, period: NOISE_PERIODS[0], timer: 0, shift: 1, envelope: Envelope::default(), length: Length::default() },
+            noise: Noise {
+                short: false,
+                period: NOISE_PERIODS[0],
+                timer: 0,
+                shift: 1,
+                envelope: Envelope::default(),
+                length: Length::default(),
+            },
             dmc: Dmc {
                 irq_enabled: false,
                 looping: false,
@@ -492,7 +542,11 @@ impl Apu {
     /// as $4017 was last written, once it's let go.
     pub fn reset(&mut self) {
         let [first, second] = &mut self.pulses;
-        for length in [&mut first.length, &mut second.length, &mut self.noise.length] {
+        for length in [
+            &mut first.length,
+            &mut second.length,
+            &mut self.noise.length,
+        ] {
             *length = Length::default();
         }
         self.triangle.length.enabled = false;
@@ -511,9 +565,18 @@ impl Apu {
     /// the frame and DMC IRQ flags; bit 5 the bus's, `open_bus`. The frame
     /// IRQ flag cleared.
     pub fn status(&mut self, open_bus: u8) -> u8 {
-        let lengths = [&self.pulses[0].length, &self.pulses[1].length, &self.triangle.length, &self.noise.length];
-        let mut status = lengths.iter().enumerate().fold(0, |status, (n, length)| status | ((length.counter > 0) as u8) << n);
-        status |= ((self.dmc.remaining > 0) as u8) << 4 | (self.frame_irq as u8) << 6 | (self.dmc.irq as u8) << 7;
+        let lengths = [
+            &self.pulses[0].length,
+            &self.pulses[1].length,
+            &self.triangle.length,
+            &self.noise.length,
+        ];
+        let mut status = lengths.iter().enumerate().fold(0, |status, (n, length)| {
+            status | ((length.counter > 0) as u8) << n
+        });
+        status |= ((self.dmc.remaining > 0) as u8) << 4
+            | (self.frame_irq as u8) << 6
+            | (self.dmc.irq as u8) << 7;
         self.frame_irq = false;
         status | (open_bus & 0x20)
     }
@@ -582,7 +645,12 @@ impl Apu {
         self.noise.cycle();
         self.dmc.cycle();
         let [first, second] = &mut self.pulses;
-        for length in [&mut first.length, &mut second.length, &mut self.triangle.length, &mut self.noise.length] {
+        for length in [
+            &mut first.length,
+            &mut second.length,
+            &mut self.triangle.length,
+            &mut self.noise.length,
+        ] {
             length.settle();
         }
     }
@@ -596,7 +664,11 @@ impl Apu {
             }
             let frame = FRAMES[self.frame_step];
             if frame != Frame::None && self.block == 0 {
-                if frame == Frame::Half { self.half_frame() } else { self.quarter_frame() }
+                if frame == Frame::Half {
+                    self.half_frame()
+                } else {
+                    self.quarter_frame()
+                }
                 self.block = 2;
             }
             self.frame_step += 1;
@@ -634,10 +706,22 @@ impl Apu {
     /// The channels mixed, as the 2A03's two DACs do: 0 to 1.
     pub fn output(&self) -> f32 {
         let pulses = (self.pulses[0].output() + self.pulses[1].output()) as f32;
-        let pulse = if pulses == 0.0 { 0.0 } else { 95.88 / (8128.0 / pulses + 100.0) };
-        let (triangle, noise, dmc) = (self.triangle.output() as f32, self.noise.output() as f32, self.dmc.output as f32);
+        let pulse = if pulses == 0.0 {
+            0.0
+        } else {
+            95.88 / (8128.0 / pulses + 100.0)
+        };
+        let (triangle, noise, dmc) = (
+            self.triangle.output() as f32,
+            self.noise.output() as f32,
+            self.dmc.output as f32,
+        );
         let sum = triangle / 8227.0 + noise / 12241.0 + dmc / 22638.0;
-        let tnd = if sum == 0.0 { 0.0 } else { 159.79 / (1.0 / sum + 100.0) };
+        let tnd = if sum == 0.0 {
+            0.0
+        } else {
+            159.79 / (1.0 / sum + 100.0)
+        };
         pulse + tnd
     }
 }

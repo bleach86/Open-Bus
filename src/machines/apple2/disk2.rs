@@ -87,7 +87,11 @@ impl Disk2 {
     /// The card with its two PROMs, as dumped: P5 and P6, 256 bytes each.
     pub fn new(p5: Vec<u8>, p6: &[u8]) -> Result<Disk2, String> {
         if p5.len() != 256 || p6.len() != 256 {
-            return Err(format!("P5 and P6 are 256 bytes, not {} and {}", p5.len(), p6.len()));
+            return Err(format!(
+                "P5 and P6 are 256 bytes, not {} and {}",
+                p5.len(),
+                p6.len()
+            ));
         }
         Ok(Disk2 {
             boot_rom: p5,
@@ -220,7 +224,9 @@ impl Disk2 {
     /// The bits in a turn at `half_track` of its disk: its track's, or a
     /// turn's of none.
     fn track_len(&self, half_track: usize) -> usize {
-        self.disk().and_then(|disk| disk.track(half_track)).map_or(REVOLUTION_BITS, Vec::len)
+        self.disk()
+            .and_then(|disk| disk.track(half_track))
+            .map_or(REVOLUTION_BITS, Vec::len)
     }
 
     /// Whether the drive senses write protect: the disk's notch covered;
@@ -267,7 +273,11 @@ impl Disk2 {
             if drive.step == 8 {
                 drive.step = 0;
                 if writing {
-                    drive.disk.as_mut().unwrap().write_bit(half_track, at, change);
+                    drive
+                        .disk
+                        .as_mut()
+                        .unwrap()
+                        .write_bit(half_track, at, change);
                 }
                 self.flux_change = false;
                 let len = self.track_len(half_track);
@@ -284,12 +294,12 @@ impl Disk2 {
         let next = self.sequencer[address as usize];
         self.state = next & 0xF0;
         match next & 0x0F {
-            0x0..=0x7 => self.data = 0,                                 // clear
-            0x9 => self.data <<= 1,                                     // shift in a 0
+            0x0..=0x7 => self.data = 0, // clear
+            0x9 => self.data <<= 1,     // shift in a 0
             0xA | 0xE => self.data = self.data >> 1 | (self.write_protected() as u8) << 7, // shift in write protect
-            0xB | 0xF => self.data = self.bus,                          // load
-            0xD => self.data = self.data << 1 | 1,                      // shift in a 1
-            _ => {}                                                     // nothing
+            0xB | 0xF => self.data = self.bus,                                             // load
+            0xD => self.data = self.data << 1 | 1, // shift in a 1
+            _ => {}                                // nothing
         }
 
         // The write signal, the state's top bit: each change a flux change.
@@ -306,7 +316,11 @@ impl Disk2 {
         let drive = self.drive_mut();
         drive.window = (drive.window << 1 | bit) & 0x0F;
         let window = drive.window;
-        if window != 0 { window & 0x02 != 0 } else { self.noise() }
+        if window != 0 {
+            window & 0x02 != 0
+        } else {
+            self.noise()
+        }
     }
 
     /// The amplifier's noise: a 1, 3 times in 10; by xorshift.
@@ -329,7 +343,8 @@ fn logical_order(p6: &[u8]) -> [u8; 256] {
     let mut table = [0; 256];
     for (physical, &entry) in p6.iter().enumerate() {
         let bit = |n: usize| (physical >> n) & 1;
-        let logical = bit(7) << 7 | bit(6) << 6 | bit(0) << 5 | bit(5) << 4 | bit(4) | (physical & 0x0E);
+        let logical =
+            bit(7) << 7 | bit(6) << 6 | bit(0) << 5 | bit(5) << 4 | bit(4) | (physical & 0x0E);
         table[logical] = entry;
     }
     table

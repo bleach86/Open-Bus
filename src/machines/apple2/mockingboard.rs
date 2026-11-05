@@ -20,7 +20,10 @@ pub struct Mockingboard {
 
 impl Mockingboard {
     pub fn new() -> Self {
-        Mockingboard { vias: [Via6522::new(), Via6522::new()], ays: [Ay38910::new(), Ay38910::new()] }
+        Mockingboard {
+            vias: [Via6522::new(), Via6522::new()],
+            ays: [Ay38910::new(), Ay38910::new()],
+        }
     }
 
     /// The 6522 at `addr`: the first below $C480, the second from it.
@@ -51,6 +54,7 @@ impl Mockingboard {
             return;
         }
         let (bc1, bdir) = (pins & 0x01 != 0, pins & 0x02 != 0);
+
         via.pa_in = ay.bus(bdir, bc1, via.port_a()).unwrap_or(0xFF);
     }
 

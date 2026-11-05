@@ -64,7 +64,10 @@ fn main() {
     let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32]";
     match args.get(1).map(String::as_str) {
         Some("nes") => {
-            let rom = args[2..].iter().find(|arg| !arg.starts_with("--")).expect(usage);
+            let rom = args[2..]
+                .iter()
+                .find(|arg| !arg.starts_with("--"))
+                .expect(usage);
             let overscan = match args.iter().find_map(|arg| arg.strip_prefix("--overscan=")) {
                 Some(dots) => dots.parse().ok().filter(|&dots| dots <= 32).expect(usage),
                 None => 8,
@@ -72,10 +75,16 @@ fn main() {
             machines::nes::run(rom, args.iter().any(|arg| arg == "--fullscreen"), overscan);
         }
         Some(machine @ ("apple2" | "apple2e")) => {
-            let files: Vec<&String> = args[2..].iter().filter(|arg| !arg.starts_with("--")).collect();
+            let files: Vec<&String> = args[2..]
+                .iter()
+                .filter(|arg| !arg.starts_with("--"))
+                .collect();
             let rom = files.first().expect(usage);
             let text = args.iter().any(|arg| arg == "--text");
-            let mockingboards = match args.iter().find_map(|arg| arg.strip_prefix("--mockingboards=")) {
+            let mockingboards = match args
+                .iter()
+                .find_map(|arg| arg.strip_prefix("--mockingboards="))
+            {
                 Some(count) => count.parse().ok().filter(|&count| count <= 2).expect(usage),
                 None => 1,
             };
@@ -95,10 +104,22 @@ fn main() {
             let disks: Vec<&str> = files[1..].iter().map(|disk| disk.as_str()).collect();
             let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
             let monitor = match args.iter().find_map(|arg| arg.strip_prefix("--monitor=")) {
-                Some(name) => *Monitor::ALL.iter().find(|monitor| monitor.name() == name).expect(usage),
+                Some(name) => *Monitor::ALL
+                    .iter()
+                    .find(|monitor| monitor.name() == name)
+                    .expect(usage),
                 None => Monitor::Colour,
             };
-            machines::apple2::run(model, rom, &disks, mockingboards, variant, monitor, text, fullscreen);
+            machines::apple2::run(
+                model,
+                rom,
+                &disks,
+                mockingboards,
+                variant,
+                monitor,
+                text,
+                fullscreen,
+            );
         }
         _ => machines::basic::run(),
     }

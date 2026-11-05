@@ -65,11 +65,19 @@ enum Format {
     Sectors(&'static [usize; 16], &'static str),
     /// A .woz: its map's quarter-tracks between the half-tracks, its INFO
     /// and its META, if it had one.
-    Woz { quarters: Vec<u8>, info: Vec<u8>, meta: Option<Vec<u8>> },
+    Woz {
+        quarters: Vec<u8>,
+        info: Vec<u8>,
+        meta: Option<Vec<u8>>,
+    },
 }
 
 /// A .dsk's or .po's format, saved: which it is.
-fn save_sectors<S: Serializer>(_order: &&'static [usize; 16], kind: &&'static str, serializer: S) -> Result<S::Ok, S::Error> {
+fn save_sectors<S: Serializer>(
+    _order: &&'static [usize; 16],
+    kind: &&'static str,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
     kind.serialize(serializer)
 }
 
@@ -80,7 +88,11 @@ fn save_sectors<S: Serializer>(_order: &&'static [usize; 16], kind: &&'static st
 enum SavedFormat {
     Nib,
     Sectors(String),
-    Woz { quarters: Vec<u8>, info: Vec<u8>, meta: Option<Vec<u8>> },
+    Woz {
+        quarters: Vec<u8>,
+        info: Vec<u8>,
+        meta: Option<Vec<u8>>,
+    },
 }
 
 impl<'de> Deserialize<'de> for Format {
@@ -92,7 +104,15 @@ impl<'de> Deserialize<'de> for Format {
                 ".po" => Format::Sectors(&PRODOS_ORDER, ".po"),
                 _ => return Err(D::Error::custom(format!("{kind}: not a .dsk or .po"))),
             },
-            SavedFormat::Woz { quarters, info, meta } => Format::Woz { quarters, info, meta },
+            SavedFormat::Woz {
+                quarters,
+                info,
+                meta,
+            } => Format::Woz {
+                quarters,
+                info,
+                meta,
+            },
         })
     }
 }
@@ -108,11 +128,15 @@ pub const TRANSLATE: [u8; 64] = [
 
 /// The sector of a .dsk track at each physical sector, the order they pass
 /// the head: DOS 3.3's interleave.
-pub const DOS_ORDER: [usize; 16] = [0x0, 0x7, 0xE, 0x6, 0xD, 0x5, 0xC, 0x4, 0xB, 0x3, 0xA, 0x2, 0x9, 0x1, 0x8, 0xF];
+pub const DOS_ORDER: [usize; 16] = [
+    0x0, 0x7, 0xE, 0x6, 0xD, 0x5, 0xC, 0x4, 0xB, 0x3, 0xA, 0x2, 0x9, 0x1, 0x8, 0xF,
+];
 
 /// The same for a .po: ProDOS's, its 512-byte blocks each two sectors, a
 /// physical sector apart.
-pub const PRODOS_ORDER: [usize; 16] = [0x0, 0x8, 0x1, 0x9, 0x2, 0xA, 0x3, 0xB, 0x4, 0xC, 0x5, 0xD, 0x6, 0xE, 0x7, 0xF];
+pub const PRODOS_ORDER: [usize; 16] = [
+    0x0, 0x8, 0x1, 0x9, 0x2, 0xA, 0x3, 0xB, 0x4, 0xC, 0x5, 0xD, 0x6, 0xE, 0x7, 0xF,
+];
 
 /// The volume a rebuilt disk's address fields have: DOS 3.3's own.
 const VOLUME: u8 = 254;
@@ -125,19 +149,32 @@ const KINDS: [&str; 5] = ["dsk", "do", "po", "nib", "woz"];
 /// other files left out; or an .m3u playlist's, an image a line, from the
 /// playlist's folder, lines starting # left out.
 pub fn images(path: &Path) -> Result<Vec<PathBuf>, String> {
-    let extension = path.extension().map_or(String::new(), |kind| kind.to_string_lossy().to_lowercase());
+    let extension = path
+        .extension()
+        .map_or(String::new(), |kind| kind.to_string_lossy().to_lowercase());
     if path.is_dir() {
         let entries = std::fs::read_dir(path).map_err(|e| e.to_string())?;
         let mut images: Vec<PathBuf> = entries
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-            .filter(|file| file.extension().is_some_and(|kind| KINDS.contains(&kind.to_string_lossy().to_lowercase().as_str())))
+            .filter(|file| {
+                file.extension().is_some_and(|kind| {
+                    KINDS.contains(&kind.to_string_lossy().to_lowercase().as_str())
+                })
+            })
             .collect();
-        images.sort_by_key(|file| name_order(&file.file_name().unwrap_or_default().to_string_lossy()));
+        images.sort_by_key(|file| {
+            name_order(&file.file_name().unwrap_or_default().to_string_lossy())
+        });
         Ok(images)
     } else if extension == "m3u" {
         let list = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let folder = path.parent().unwrap_or(Path::new(""));
-        Ok(list.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')).map(|line| folder.join(line)).collect())
+        Ok(list
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| folder.join(line))
+            .collect())
     } else {
         Ok(vec![path.to_path_buf()])
     }
@@ -155,7 +192,11 @@ fn name_order(name: &str) -> Vec<(u64, String)> {
             run.push(c);
             chars.next();
         }
-        order.push(if digits { (run.parse().unwrap_or(u64::MAX), String::new()) } else { (0, run.to_lowercase()) });
+        order.push(if digits {
+            (run.parse().unwrap_or(u64::MAX), String::new())
+        } else {
+            (0, run.to_lowercase())
+        });
     }
     order
 }
@@ -165,7 +206,9 @@ impl Disk {
     /// .nib or .woz; write protected if the file is read only.
     pub fn open(path: &Path) -> Result<Disk, String> {
         let image = std::fs::read(path).map_err(|e| e.to_string())?;
-        let kind = path.extension().map_or(String::new(), |kind| kind.to_string_lossy().to_lowercase());
+        let kind = path
+            .extension()
+            .map_or(String::new(), |kind| kind.to_string_lossy().to_lowercase());
         let mut disk = match kind.as_str() {
             "dsk" | "do" => Disk::from_dsk(&image),
             "po" => Disk::from_po(&image),
@@ -173,7 +216,10 @@ impl Disk {
             "woz" => Disk::from_woz(&image),
             _ => Err("not a .dsk, .do, .po, .nib or .woz".to_string()),
         }?;
-        let read_only = std::fs::metadata(path).map_err(|e| e.to_string())?.permissions().readonly();
+        let read_only = std::fs::metadata(path)
+            .map_err(|e| e.to_string())?
+            .permissions()
+            .readonly();
         disk.write_protected |= read_only;
         disk.path = Some(path.to_path_buf());
         Ok(disk)
@@ -182,7 +228,11 @@ impl Disk {
     /// A .nib: 35 tracks of 6,656 bytes, as they are on the disk.
     pub fn from_nib(image: &[u8]) -> Result<Disk, String> {
         if image.len() != TRACKS * NIB_TRACK {
-            return Err(format!("a .nib is {} bytes, not {}", TRACKS * NIB_TRACK, image.len()));
+            return Err(format!(
+                "a .nib is {} bytes, not {}",
+                TRACKS * NIB_TRACK,
+                image.len()
+            ));
         }
         let tracks = image.chunks(NIB_TRACK).map(|track| {
             let in_field = fields(track);
@@ -211,32 +261,52 @@ impl Disk {
     }
 
     /// 35 tracks of 16 sectors, in `order`: a `kind` of image.
-    fn from_sectors(image: &[u8], order: &'static [usize; 16], kind: &'static str) -> Result<Disk, String> {
+    fn from_sectors(
+        image: &[u8],
+        order: &'static [usize; 16],
+        kind: &'static str,
+    ) -> Result<Disk, String> {
         if image.len() != TRACKS * SECTORS_TRACK {
-            return Err(format!("a {kind} is {} bytes, not {}", TRACKS * SECTORS_TRACK, image.len()));
+            return Err(format!(
+                "a {kind} is {} bytes, not {}",
+                TRACKS * SECTORS_TRACK,
+                image.len()
+            ));
         }
-        let tracks = image.chunks(SECTORS_TRACK).enumerate().map(|(track, sectors)| {
-            let mut bits = Vec::new();
-            sync(&mut bits, 48);
-            for (physical, &sector) in order.iter().enumerate() {
-                for byte in address_field(VOLUME, track as u8, physical as u8) {
-                    push_byte(&mut bits, byte);
+        let tracks = image
+            .chunks(SECTORS_TRACK)
+            .enumerate()
+            .map(|(track, sectors)| {
+                let mut bits = Vec::new();
+                sync(&mut bits, 48);
+                for (physical, &sector) in order.iter().enumerate() {
+                    for byte in address_field(VOLUME, track as u8, physical as u8) {
+                        push_byte(&mut bits, byte);
+                    }
+                    sync(&mut bits, 6);
+                    let data: &[u8; 256] = sectors[sector * 256..(sector + 1) * 256]
+                        .try_into()
+                        .unwrap();
+                    for byte in data_field(data) {
+                        push_byte(&mut bits, byte);
+                    }
+                    sync(&mut bits, 27);
                 }
-                sync(&mut bits, 6);
-                let data: &[u8; 256] = sectors[sector * 256..(sector + 1) * 256].try_into().unwrap();
-                for byte in data_field(data) {
-                    push_byte(&mut bits, byte);
-                }
-                sync(&mut bits, 27);
-            }
-            bits
-        });
-        Ok(Disk::whole_tracks(tracks.collect(), Format::Sectors(order, kind)))
+                bits
+            });
+        Ok(Disk::whole_tracks(
+            tracks.collect(),
+            Format::Sectors(order, kind),
+        ))
     }
 
     /// The track under the head at `half_track`, if one is: its bits.
     pub fn track(&self, half_track: usize) -> Option<&Vec<u8>> {
-        self.half_tracks.get(half_track).copied().flatten().map(|track| &self.tracks[track])
+        self.half_tracks
+            .get(half_track)
+            .copied()
+            .flatten()
+            .map(|track| &self.tracks[track])
     }
 
     /// Bit `bit` of the track at `half_track` written: a flux change, or
@@ -246,10 +316,14 @@ impl Disk {
         let track = match self.half_tracks[half_track] {
             Some(track) => track,
             None => {
-                let track = self.tracks.iter().position(Vec::is_empty).unwrap_or_else(|| {
-                    self.tracks.push(Vec::new());
-                    self.tracks.len() - 1
-                });
+                let track = self
+                    .tracks
+                    .iter()
+                    .position(Vec::is_empty)
+                    .unwrap_or_else(|| {
+                        self.tracks.push(Vec::new());
+                        self.tracks.len() - 1
+                    });
                 self.tracks[track] = vec![0; REVOLUTION_BITS];
                 self.half_tracks[half_track] = Some(track);
                 track
@@ -263,8 +337,17 @@ impl Disk {
 
     /// A disk with `tracks` under the head at whole tracks, none between.
     fn whole_tracks(tracks: Vec<Vec<u8>>, format: Format) -> Disk {
-        let half_tracks = (0..2 * tracks.len()).map(|half| (half % 2 == 0).then_some(half / 2)).collect();
-        Disk { tracks, half_tracks, write_protected: false, written: false, format, path: None }
+        let half_tracks = (0..2 * tracks.len())
+            .map(|half| (half % 2 == 0).then_some(half / 2))
+            .collect();
+        Disk {
+            tracks,
+            half_tracks,
+            write_protected: false,
+            written: false,
+            format,
+            path: None,
+        }
     }
 
     /// The disk as an image of the kind it was read from.
@@ -272,7 +355,11 @@ impl Disk {
         match &self.format {
             Format::Nib => self.to_nib(),
             Format::Sectors(order, kind) => self.to_sectors(order, kind),
-            Format::Woz { quarters, info, meta } => Ok(self.to_woz(quarters, info, meta.as_deref())),
+            Format::Woz {
+                quarters,
+                info,
+                meta,
+            } => Ok(self.to_woz(quarters, info, meta.as_deref())),
         }
     }
 
@@ -280,9 +367,14 @@ impl Disk {
     fn to_nib(&self) -> Result<Vec<u8>, String> {
         let mut image = Vec::new();
         for track in 0..TRACKS {
-            let bytes = self.track(2 * track).map_or(Vec::new(), |bits| turn_of_bytes(bits));
+            let bytes = self
+                .track(2 * track)
+                .map_or(Vec::new(), |bits| turn_of_bytes(bits));
             if bytes.len() > NIB_TRACK {
-                return Err(format!("track {track} is {} bytes, more than a .nib's {NIB_TRACK}", bytes.len()));
+                return Err(format!(
+                    "track {track} is {} bytes, more than a .nib's {NIB_TRACK}",
+                    bytes.len()
+                ));
             }
             image.extend(&bytes);
             image.resize((track + 1) * NIB_TRACK, 0xFF);
@@ -294,9 +386,13 @@ impl Disk {
     fn to_sectors(&self, order: &[usize; 16], kind: &str) -> Result<Vec<u8>, String> {
         let mut image = vec![0; TRACKS * SECTORS_TRACK];
         for track in 0..TRACKS {
-            let sectors = self.track(2 * track).map_or([None; 16], |bits| read_sectors(bits, track as u8));
+            let sectors = self
+                .track(2 * track)
+                .map_or([None; 16], |bits| read_sectors(bits, track as u8));
             for (physical, data) in sectors.iter().enumerate() {
-                let data = data.ok_or(format!("track {track}, sector {physical}, doesn't read: not a {kind}'s"))?;
+                let data = data.ok_or(format!(
+                    "track {track}, sector {physical}, doesn't read: not a {kind}'s"
+                ))?;
                 let at = track * SECTORS_TRACK + order[physical] * 256;
                 image[at..at + 256].copy_from_slice(&data);
             }
@@ -310,7 +406,12 @@ impl Disk {
     fn to_woz(&self, quarters: &[u8], old_info: &[u8], meta: Option<&[u8]>) -> Vec<u8> {
         let tmap: Vec<u8> = (0..160)
             .map(|quarter| match quarter % 2 {
-                0 => self.half_tracks.get(quarter / 2).copied().flatten().map_or(0xFF, |track| track as u8),
+                0 => self
+                    .half_tracks
+                    .get(quarter / 2)
+                    .copied()
+                    .flatten()
+                    .map_or(0xFF, |track| track as u8),
                 _ => quarters[quarter],
             })
             .collect();
@@ -318,15 +419,32 @@ impl Disk {
         let mut data = Vec::new();
         for n in 0..WOZ2_ENTRIES {
             let bits = self.tracks.get(n).map_or(&[][..], Vec::as_slice);
-            let mut bytes: Vec<u8> = bits.chunks(8).map(|byte| byte.iter().enumerate().map(|(i, &bit)| bit << (7 - i)).sum()).collect();
+            let mut bytes: Vec<u8> = bits
+                .chunks(8)
+                .map(|byte| {
+                    byte.iter()
+                        .enumerate()
+                        .map(|(i, &bit)| bit << (7 - i))
+                        .sum()
+                })
+                .collect();
             bytes.resize(bytes.len().div_ceil(512) * 512, 0);
-            let start = if bits.is_empty() { 0 } else { 3 + data.len() / 512 };
+            let start = if bits.is_empty() {
+                0
+            } else {
+                3 + data.len() / 512
+            };
             entries.extend((start as u16).to_le_bytes());
             entries.extend(((bytes.len() / 512) as u16).to_le_bytes());
             entries.extend((bits.len() as u32).to_le_bytes());
             data.extend(bytes);
         }
-        let largest = self.tracks.iter().map(|bits| bits.len().div_ceil(8).div_ceil(512)).max().unwrap_or(0);
+        let largest = self
+            .tracks
+            .iter()
+            .map(|bits| bits.len().div_ceil(8).div_ceil(512))
+            .max()
+            .unwrap_or(0);
         let mut info = vec![0; 60];
         info[..5].copy_from_slice(&[2, 1, self.write_protected as u8, old_info[3], old_info[4]]);
         info[5..37].copy_from_slice(&format!("{:<32}", "cpu_emu").into_bytes());
@@ -338,8 +456,14 @@ impl Disk {
         }
         info[44..46].copy_from_slice(&(largest as u16).to_le_bytes());
 
-        let chunk = |id: &[u8], body: &[u8]| [id, &(body.len() as u32).to_le_bytes(), body].concat();
-        let mut body = [chunk(b"INFO", &info), chunk(b"TMAP", &tmap), chunk(b"TRKS", &[entries, data].concat())].concat();
+        let chunk =
+            |id: &[u8], body: &[u8]| [id, &(body.len() as u32).to_le_bytes(), body].concat();
+        let mut body = [
+            chunk(b"INFO", &info),
+            chunk(b"TMAP", &tmap),
+            chunk(b"TRKS", &[entries, data].concat()),
+        ]
+        .concat();
         if let Some(meta) = meta {
             body.extend(chunk(b"META", meta));
         }
@@ -367,7 +491,9 @@ impl Disk {
         let mut at = 12;
         while at + 8 <= image.len() {
             let size = u32::from_le_bytes(image[at + 4..at + 8].try_into().unwrap()) as usize;
-            let body = image.get(at + 8..at + 8 + size).ok_or("a chunk cut short")?;
+            let body = image
+                .get(at + 8..at + 8 + size)
+                .ok_or("a chunk cut short")?;
             match &image[at..at + 4] {
                 b"INFO" => info = Some(body),
                 b"TMAP" => tmap = Some(body),
@@ -386,10 +512,13 @@ impl Disk {
         if info[1] != 1 {
             return Err("not a 5.25\" disk".to_string());
         }
-        let u16_at = |bytes: &[u8], at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]) as usize;
+        let u16_at =
+            |bytes: &[u8], at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]) as usize;
 
         let tracks: Option<Vec<Vec<u8>>> = if version == 1 {
-            trks.chunks_exact(WOZ1_TRACK).map(|track| bits(&track[..6646], u16_at(track, 6648))).collect()
+            trks.chunks_exact(WOZ1_TRACK)
+                .map(|track| bits(&track[..6646], u16_at(track, 6648)))
+                .collect()
         } else {
             trks.get(..WOZ2_ENTRIES * 8)
                 .ok_or("its TRKS cut short")?
@@ -406,12 +535,29 @@ impl Disk {
         let half_tracks = (0..WOZ_HALF_TRACKS)
             .map(|half| match tmap.get(2 * half).copied() {
                 None | Some(0xFF) => Ok(None),
-                Some(track) if tracks.get(track as usize).is_some_and(|bits| !bits.is_empty()) => Ok(Some(track as usize)),
+                Some(track)
+                    if tracks
+                        .get(track as usize)
+                        .is_some_and(|bits| !bits.is_empty()) =>
+                {
+                    Ok(Some(track as usize))
+                }
                 Some(track) => Err(format!("its map has track {track}, which it hasn't")),
             })
             .collect::<Result<_, _>>()?;
-        let format = Format::Woz { quarters: tmap[..160].to_vec(), info: info.to_vec(), meta };
-        Ok(Disk { tracks, half_tracks, write_protected: info[2] != 0, written: false, format, path: None })
+        let format = Format::Woz {
+            quarters: tmap[..160].to_vec(),
+            info: info.to_vec(),
+            meta,
+        };
+        Ok(Disk {
+            tracks,
+            half_tracks,
+            write_protected: info[2] != 0,
+            written: false,
+            format,
+            path: None,
+        })
     }
 }
 
@@ -447,12 +593,22 @@ fn read_sectors(bits: &[u8], track: u8) -> [Option<[u8; 256]>; 16] {
         if bytes[at..at + 3] != [0xD5, 0xAA, 0x96] {
             continue;
         }
-        let (volume, on, sector, sum) = (four_and_four(at + 3), four_and_four(at + 5), four_and_four(at + 7), four_and_four(at + 9));
-        if volume ^ on ^ sector != sum || on != track || sector > 15 || sectors[sector as usize].is_some() {
+        let (volume, on, sector, sum) = (
+            four_and_four(at + 3),
+            four_and_four(at + 5),
+            four_and_four(at + 7),
+            four_and_four(at + 9),
+        );
+        if volume ^ on ^ sector != sum
+            || on != track
+            || sector > 15
+            || sectors[sector as usize].is_some()
+        {
             continue;
         }
         // The data field: within the gap after, as DOS looks for it.
-        let data = (at + 14..(at + 14 + 32).min(bytes.len().saturating_sub(348))).find(|&d| bytes[d..d + 3] == [0xD5, 0xAA, 0xAD]);
+        let data = (at + 14..(at + 14 + 32).min(bytes.len().saturating_sub(348)))
+            .find(|&d| bytes[d..d + 3] == [0xD5, 0xAA, 0xAD]);
         if let Some(data) = data.and_then(|d| data_from_field(&bytes[d + 3..d + 348])) {
             sectors[sector as usize] = Some(data);
         }
@@ -484,7 +640,11 @@ fn data_from_field(field: &[u8]) -> Option<[u8; 256]> {
 /// The first `count` bits of `bytes`, from the first byte's top bit; none
 /// if it hasn't as many.
 fn bits(bytes: &[u8], count: usize) -> Option<Vec<u8>> {
-    (count <= bytes.len() * 8).then(|| (0..count).map(|i| (bytes[i / 8] >> (7 - i % 8)) & 1).collect())
+    (count <= bytes.len() * 8).then(|| {
+        (0..count)
+            .map(|i| (bytes[i / 8] >> (7 - i % 8)) & 1)
+            .collect()
+    })
 }
 
 /// Which of a .nib track's bytes are in a field: from an address field's
@@ -546,7 +706,13 @@ pub fn data_field(data: &[u8; 256]) -> Vec<u8> {
     let swap = |b: u8| ((b & 1) << 1) | ((b >> 1) & 1);
     let mut values = [0u8; 342];
     for i in 0..86 {
-        values[i] = swap(data[i]) | swap(data[i + 86]) << 2 | if i + 172 < 256 { swap(data[i + 172]) << 4 } else { 0 };
+        values[i] = swap(data[i])
+            | swap(data[i + 86]) << 2
+            | if i + 172 < 256 {
+                swap(data[i + 172]) << 4
+            } else {
+                0
+            };
     }
     for i in 0..256 {
         values[86 + i] = data[i] >> 2;

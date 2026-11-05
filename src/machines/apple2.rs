@@ -21,8 +21,8 @@ pub mod disk2;
 pub mod disk_image;
 pub mod hard_disk;
 pub mod iie;
-pub mod mockingboard;
 pub mod language_card;
+pub mod mockingboard;
 pub mod save_state;
 pub mod video;
 
@@ -40,8 +40,8 @@ mod tests {
     mod save_state;
 }
 
-use crate::cpu::{Variant, CPU};
 use crate::cpu::bus::Bus;
+use crate::cpu::{CPU, Variant};
 use crate::host::display::{Display, Joystick, Key, SAMPLE_RATE};
 use crate::host::terminal::Terminal;
 use crate::host::window::Window;
@@ -63,8 +63,8 @@ const CYCLES_PER_PADDLE_STEP: u64 = 11;
 
 /// How loud the speaker is, of the host's full volume; and each of the
 /// Mockingboard's voices, at its loudest.
-pub const VOLUME: f32 = 0.15;
-const VOICE_VOLUME: f32 = 0.25;
+pub const VOLUME: f32 = 0.35;
+const VOICE_VOLUME: f32 = 0.75;
 /// How fast the speaker's cone settles back, left still: a sample's share.
 const SETTLE: f32 = 0.995;
 
@@ -204,7 +204,11 @@ impl Apple2 {
     /// $DFFF, and its EF ROM's, $E000 to $FFFF; its video ROM's 4K; its
     /// language card built in.
     pub fn new_iie(cd: &[u8], ef: &[u8], characters: Vec<u8>) -> Self {
-        assert_eq!((cd.len(), ef.len()), (0x2000, 0x2000), "the CD and EF ROMs are 8K each");
+        assert_eq!(
+            (cd.len(), ef.len()),
+            (0x2000, 0x2000),
+            "the CD and EF ROMs are 8K each"
+        );
         let mut apple = Apple2::new([&cd[0x1000..], ef].concat());
         apple.iie = Some(iie::Iie::new(cd[..0x1000].to_vec(), characters));
         apple.language_card = Some(language_card::LanguageCard::with_aux());
@@ -267,12 +271,16 @@ impl Apple2 {
 
     /// Whether a key is held down: the IIe's keyboard tells, at $C010.
     fn any_key_down(&self) -> bool {
-        self.display.as_ref().is_some_and(|display| display.key_down())
+        self.display
+            .as_ref()
+            .is_some_and(|display| display.key_down())
     }
 
     /// The joystick, from the window: centred, without one.
     fn joystick(&self) -> Joystick {
-        self.display.as_ref().map_or(Joystick::CENTRED, |display| display.joystick())
+        self.display
+            .as_ref()
+            .map_or(Joystick::CENTRED, |display| display.joystick())
     }
 
     /// The paddles' timers started, at $C070: each to run as long as its
@@ -324,7 +332,11 @@ impl Apple2 {
     /// terminal, held RESET_FRAMES. While it is, the cards are held reset,
     /// and the CPU.
     fn reset_key(&mut self) {
-        self.reset_held = self.display.as_ref().is_some_and(|display| display.reset_held()) || self.reset_frames > 0;
+        self.reset_held = self
+            .display
+            .as_ref()
+            .is_some_and(|display| display.reset_held())
+            || self.reset_frames > 0;
         self.reset_frames = self.reset_frames.saturating_sub(1);
         if self.reset_held {
             if let Some(card) = &mut self.language_card {
@@ -361,7 +373,8 @@ impl Apple2 {
                 4 => self.state_wanted = Some(save_state::Wanted::Load),
                 8 => {
                     self.monitor = self.monitor.next();
-                    self.notice = Some((format!("Monitor: {}", self.monitor.name()), NOTICE_FRAMES));
+                    self.notice =
+                        Some((format!("Monitor: {}", self.monitor.name()), NOTICE_FRAMES));
                 }
                 9 => self.change_disk(0),
                 10 => self.change_disk(1),
@@ -381,7 +394,10 @@ impl Apple2 {
         }
         self.save_disk(drive, true);
         let other = self.in_drive[1 - drive];
-        let mut choices: Vec<Option<usize>> = (0..self.disks.len()).filter(|&n| Some(n) != other).map(Some).collect();
+        let mut choices: Vec<Option<usize>> = (0..self.disks.len())
+            .filter(|&n| Some(n) != other)
+            .map(Some)
+            .collect();
         if drive == 1 {
             choices.push(None);
         }
@@ -389,23 +405,33 @@ impl Apple2 {
             return;
         }
         // The one after the one in; the first, if it's none of them.
-        let at = match choices.iter().position(|&choice| choice == self.in_drive[drive]) {
+        let at = match choices
+            .iter()
+            .position(|&choice| choice == self.in_drive[drive])
+        {
             Some(at) => (at + 1) % choices.len(),
             None => 0,
         };
         let disk = choices[at].and_then(|n| {
-            Disk::open(&self.disks[n]).map_err(|e| eprintln!("{}: {e}", self.disks[n].display())).ok()
+            Disk::open(&self.disks[n])
+                .map_err(|e| eprintln!("{}: {e}", self.disks[n].display()))
+                .ok()
         });
         self.in_drive[drive] = choices[at].filter(|_| disk.is_some());
         self.disk2.as_mut().unwrap().drives[drive].disk = disk;
         self.show_disks();
-        self.notice = Some((format!("Drive {}: {}", drive + 1, self.disk_name(drive)), NOTICE_FRAMES));
+        self.notice = Some((
+            format!("Drive {}: {}", drive + 1, self.disk_name(drive)),
+            NOTICE_FRAMES,
+        ));
     }
 
     /// The name of drive `drive`'s disk, its image's; or empty.
     fn disk_name(&self, drive: usize) -> String {
         match self.in_drive[drive] {
-            Some(n) => self.disks[n].file_stem().map_or(String::new(), |name| name.to_string_lossy().into_owned()),
+            Some(n) => self.disks[n]
+                .file_stem()
+                .map_or(String::new(), |name| name.to_string_lossy().into_owned()),
             None => "empty".to_string(),
         }
     }
@@ -413,9 +439,17 @@ impl Apple2 {
     /// What's in the drives, by their images' names: in the window's
     /// title, or under the terminal's screen.
     fn show_disks(&mut self) {
-        self.status = format!("Drive 1: {}   Drive 2: {}", self.disk_name(0), self.disk_name(1));
+        self.status = format!(
+            "Drive 1: {}   Drive 2: {}",
+            self.disk_name(0),
+            self.disk_name(1)
+        );
         if let Some(display) = &mut self.display {
-            let name = if self.iie.is_some() { "Apple //e" } else { "Apple ][" };
+            let name = if self.iie.is_some() {
+                "Apple //e"
+            } else {
+                "Apple ]["
+            };
             display.title(&format!("{name}   {}", self.status));
         }
         self.shown.clear(); // the terminal's drawn again
@@ -431,12 +465,18 @@ impl Apple2 {
         if card.turning(drive) && !now {
             return;
         }
-        let Some(disk) = card.drives[drive].disk.as_mut().filter(|disk| disk.written) else { return };
-        let Some(path) = disk.path.clone() else { return };
+        let Some(disk) = card.drives[drive].disk.as_mut().filter(|disk| disk.written) else {
+            return;
+        };
+        let Some(path) = disk.path.clone() else {
+            return;
+        };
         disk.written = false;
         let saving = path.with_extension("saving");
         let saved = disk.to_image().and_then(|image| {
-            std::fs::write(&saving, image).and_then(|_| std::fs::rename(&saving, &path)).map_err(|e| e.to_string())
+            std::fs::write(&saving, image)
+                .and_then(|_| std::fs::rename(&saving, &path))
+                .map_err(|e| e.to_string())
         });
         if let Err(e) = saved {
             eprintln!("{}: not saved: {e}", path.display());
@@ -454,7 +494,13 @@ impl Apple2 {
 
     /// The soft switches, for the video circuit.
     fn switches(&self) -> video::Switches {
-        let switches = video::Switches { graphics: self.graphics, mixed: self.mixed, page2: self.page2, hires: self.hires, ..Default::default() };
+        let switches = video::Switches {
+            graphics: self.graphics,
+            mixed: self.mixed,
+            page2: self.page2,
+            hires: self.hires,
+            ..Default::default()
+        };
         match &self.iie {
             None => switches,
             Some(iie) => video::Switches {
@@ -499,7 +545,8 @@ impl Apple2 {
     fn floating_bus(&self) -> u8 {
         let cycle = self.frame_cycle();
         let line_cycles = CYCLES_PER_LINE as usize;
-        let address = video::scanner_address(self.switches(), cycle / line_cycles, cycle % line_cycles);
+        let address =
+            video::scanner_address(self.switches(), cycle / line_cycles, cycle % line_cycles);
         self.ram[address]
     }
 
@@ -513,7 +560,9 @@ impl Apple2 {
     /// low while it is ($C019); TEXT, MIXED, PAGE2 and HIRES; ALTCHARSET
     /// and 80COL.
     fn iie_status(&self, addr: u16) -> bool {
-        let (Some(iie), Some(card)) = (&self.iie, &self.language_card) else { return false };
+        let (Some(iie), Some(card)) = (&self.iie, &self.language_card) else {
+            return false;
+        };
         match addr & 0x0F {
             0x1 => card.bank2,
             0x2 => card.read_ram,
@@ -575,7 +624,11 @@ impl Apple2 {
                 if addr == 0xC010 || written.is_some() {
                     self.keyboard = key;
                 }
-                let high = if addr == 0xC010 { self.any_key_down() } else { self.iie_status(addr) };
+                let high = if addr == 0xC010 {
+                    self.any_key_down()
+                } else {
+                    self.iie_status(addr)
+                };
                 (high as u8) << 7 | key
             }
             0xC010 => {
@@ -620,9 +673,21 @@ impl Apple2 {
                 }
                 floating
             }
-            0xC090 => self.clock.as_mut().and_then(|card| card.io(addr, written)).unwrap_or(floating),
-            0xC0E0 => self.disk2.as_mut().and_then(|card| card.io(addr, written)).unwrap_or(floating),
-            0xC0F0 => self.hard_disk.as_mut().and_then(|card| card.io(addr, written)).unwrap_or(floating),
+            0xC090 => self
+                .clock
+                .as_mut()
+                .and_then(|card| card.io(addr, written))
+                .unwrap_or(floating),
+            0xC0E0 => self
+                .disk2
+                .as_mut()
+                .and_then(|card| card.io(addr, written))
+                .unwrap_or(floating),
+            0xC0F0 => self
+                .hard_disk
+                .as_mut()
+                .and_then(|card| card.io(addr, written))
+                .unwrap_or(floating),
             _ => floating,
         }
     }
@@ -635,7 +700,11 @@ impl Apple2 {
         let start = video::text_address(switches.page2, row);
         let main = &self.ram[start..start + 40];
         match &self.iie {
-            Some(iie) if iie.col80 => iie.aux[start..start + 40].iter().zip(main).flat_map(|(&aux, &main)| [aux, main]).collect(),
+            Some(iie) if iie.col80 => iie.aux[start..start + 40]
+                .iter()
+                .zip(main)
+                .flat_map(|(&aux, &main)| [aux, main])
+                .collect(),
             _ => main.to_vec(),
         }
     }
@@ -644,7 +713,9 @@ impl Apple2 {
     #[cfg(test)]
     pub fn text(&self) -> Vec<String> {
         let lower = self.lower_case();
-        (0..24).map(|row| self.row(row).iter().map(|&b| glyph(b, lower)).collect()).collect()
+        (0..24)
+            .map(|row| self.row(row).iter().map(|&b| glyph(b, lower)).collect())
+            .collect()
     }
 
     /// Which of the screen's bytes are lower case: none on a II+; on a
@@ -725,7 +796,11 @@ impl Bus for Apple2 {
                 }
             }
             // The language card's RAM, if it is read; or the ROM.
-            _ => match self.language_card.as_ref().and_then(|card| card.read(addr, self.language_card_aux())) {
+            _ => match self
+                .language_card
+                .as_ref()
+                .and_then(|card| card.read(addr, self.language_card_aux()))
+            {
                 Some(value) => value,
                 None => self.rom[addr as usize - 0xD000],
             },
@@ -734,10 +809,18 @@ impl Bus for Apple2 {
 
     fn write(&mut self, addr: u16, value: u8) {
         match addr {
-            0x0000..=0xBFFF => match &mut self.iie {
-                Some(iie) if iie.is_aux(addr, true, self.page2, self.hires) => iie.aux[addr as usize] = value,
-                _ => self.ram[addr as usize] = value,
-            },
+            0x0000..=0xBFFF => {
+                let aux = self
+                    .iie
+                    .as_ref()
+                    .is_some_and(|iie| iie.is_aux(addr, true, self.page2, self.hires));
+
+                if aux {
+                    self.iie.as_mut().unwrap().aux[addr as usize] = value;
+                } else {
+                    self.ram[addr as usize] = value;
+                }
+            }
             0xC000..=0xC0FF => {
                 self.io(addr, Some(value));
             }
@@ -807,7 +890,11 @@ impl Bus for Apple2 {
             self.save_disk(0, false);
             self.save_disk(1, false);
             // The window closed: the disks saved, and off.
-            if self.display.as_ref().is_some_and(|display| display.closed()) {
+            if self
+                .display
+                .as_ref()
+                .is_some_and(|display| display.closed())
+            {
                 self.save_disk(0, true);
                 self.save_disk(1, true);
                 std::process::exit(0);
@@ -820,7 +907,10 @@ impl Bus for Apple2 {
     }
 
     fn irq(&self) -> bool {
-        self.mockingboards.iter().flatten().any(mockingboard::Mockingboard::irq)
+        self.mockingboards
+            .iter()
+            .flatten()
+            .any(mockingboard::Mockingboard::irq)
     }
 
     fn hand_back(&self) -> bool {
@@ -831,7 +921,9 @@ impl Bus for Apple2 {
 /// Whether the image at `path` is a hard disk's volume, not a floppy: a
 /// .hdv or .2mg, or a .po bigger than a floppy's 140K.
 fn is_volume(path: &Path) -> bool {
-    let kind = path.extension().map_or(String::new(), |kind| kind.to_string_lossy().to_lowercase());
+    let kind = path
+        .extension()
+        .map_or(String::new(), |kind| kind.to_string_lossy().to_lowercase());
     let size = std::fs::metadata(path).map_or(0, |file| file.len());
     matches!(kind.as_str(), "hdv" | "2mg") || (kind == "po" && size > 143_360)
 }
@@ -866,7 +958,8 @@ pub fn run(
     text: bool,
     fullscreen: bool,
 ) {
-    let read = |path: &Path| std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let read =
+        |path: &Path| std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let roms = Path::new(roms);
     let state = save_state::path(disks.first().map_or(roms, |disk| Path::new(disk)));
     let (mut apple, folder, title, size, own_variant) = match model {
@@ -876,13 +969,28 @@ pub fn run(
             let mut apple = Apple2::new(rom[rom.len() - 0x3000..].to_vec());
             apple.language_card = Some(language_card::LanguageCard::new());
             // Its 560 dots by 192 lines, shown 4:3: 840 by 576.
-            (apple, roms.parent().unwrap_or(Path::new(".")).to_path_buf(), "Apple ][", (840, 576), Variant::Nmos6502)
+            (
+                apple,
+                roms.parent().unwrap_or(Path::new(".")).to_path_buf(),
+                "Apple ][",
+                (840, 576),
+                Variant::Nmos6502,
+            )
         }
         Model::IIe | Model::IIeEnhanced => {
             let enhanced = model == Model::IIeEnhanced;
-            let [cd, ef, characters] = if enhanced { iie::ENHANCED_ROMS } else { iie::ROMS }.map(|name| read(&roms.join(name)));
+            let [cd, ef, characters] = if enhanced {
+                iie::ENHANCED_ROMS
+            } else {
+                iie::ROMS
+            }
+            .map(|name| read(&roms.join(name)));
             let apple = Apple2::new_iie(&cd, &ef, characters);
-            let variant = if enhanced { Variant::Synertek65C02 } else { Variant::Nmos6502 };
+            let variant = if enhanced {
+                Variant::Synertek65C02
+            } else {
+                Variant::Nmos6502
+            };
             // 80 columns' dots each a whole pixel: 1,120 by 768.
             (apple, roms.to_path_buf(), "Apple //e", (1120, 768), variant)
         }
@@ -897,26 +1005,44 @@ pub fn run(
         apple.terminal = Some(Terminal::new());
         print!("\x1B[2J"); // the screen cleared, for the Apple's
     } else {
-        apple.display = Some(Box::new(Window::new(title, video::PICTURE_WIDTH, video::HEIGHT, size, fullscreen)));
+        apple.display = Some(Box::new(Window::new(
+            title,
+            video::PICTURE_WIDTH,
+            video::HEIGHT,
+            size,
+            fullscreen,
+        )));
     }
     // The images, the hard disk's volumes from the Disk II's.
     let mut images = Vec::new();
     for disk in disks {
-        images.extend(disk_image::images(Path::new(disk)).unwrap_or_else(|e| panic!("{disk}: {e}")));
+        images
+            .extend(disk_image::images(Path::new(disk)).unwrap_or_else(|e| panic!("{disk}: {e}")));
     }
-    let (volumes, floppies): (Vec<PathBuf>, Vec<PathBuf>) = images.into_iter().partition(|image| is_volume(image));
+    let (volumes, floppies): (Vec<PathBuf>, Vec<PathBuf>) =
+        images.into_iter().partition(|image| is_volume(image));
     if !volumes.is_empty() {
-        assert!(volumes.len() <= 2, "the hard disk has two drives, not {}", volumes.len());
+        assert!(
+            volumes.len() <= 2,
+            "the hard disk has two drives, not {}",
+            volumes.len()
+        );
         let mut card = hard_disk::HardDisk::new();
         for (unit, volume) in card.units.iter_mut().zip(&volumes) {
-            *unit = Some(hard_disk::Volume::open(volume).unwrap_or_else(|e| panic!("{}: {e}", volume.display())));
+            *unit = Some(
+                hard_disk::Volume::open(volume)
+                    .unwrap_or_else(|e| panic!("{}: {e}", volume.display())),
+            );
         }
         apple.hard_disk = Some(card);
     }
     if !floppies.is_empty() {
         let beside = |name: &str| read(&folder.join(name));
-        let card = disk2::Disk2::new(beside("disk2-p5-341-0027.bin"), &beside("disk2-p6-341-0028.bin"))
-            .unwrap_or_else(|e| panic!("the Disk II's ROMs: {e}"));
+        let card = disk2::Disk2::new(
+            beside("disk2-p5-341-0027.bin"),
+            &beside("disk2-p6-341-0028.bin"),
+        )
+        .unwrap_or_else(|e| panic!("the Disk II's ROMs: {e}"));
         apple.disk2 = Some(card);
         // Each image opened, to know it can be; the first put in drive 1.
         for image in &floppies {
