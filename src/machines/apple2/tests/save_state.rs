@@ -15,10 +15,10 @@ mod tests {
     use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::disk_image::Disk;
     use crate::machines::apple2::hard_disk::{HardDisk, Volume};
-    use crate::machines::apple2::save_state::{self, restore, state, Wanted};
+    use crate::host::run::Host;
+    use crate::host::save_state::{self, restore, state};
     use crate::machines::apple2::{
         clock_card::ClockCard, iie, language_card::LanguageCard, mockingboard::Mockingboard, Apple2, CLOCK_HZ,
-        CYCLES_PER_FRAME,
     };
     use std::cell::RefCell;
     use std::collections::VecDeque;
@@ -62,46 +62,36 @@ mod tests {
     fn f2_saves_a_state_and_f4_loads_it_back() {
         let path = std::env::temp_dir().join(format!("cpu_emu_{}_keys.state", std::process::id()));
         let keys = Rc::new(RefCell::new(VecDeque::new()));
-        let mut apple = nops();
-        apple.display = Some(Box::new(Keys(keys.clone())));
-        let mut cpu = CPU::with_bus(apple);
-        cpu.clock_hz = u32::MAX; // as fast as it goes
+        let mut cpu = CPU::with_bus(nops());
         cpu.reset();
+        let mut host = Host::new(cpu, Box::new(Keys(keys.clone())), path.clone());
+        let notice = |host: &Host<Apple2>| host.notice.as_ref().unwrap().0.clone();
 
         // F4, none saved yet.
         keys.borrow_mut().push_back(4);
-        cpu.execute(2 * CYCLES_PER_FRAME);
-        assert_eq!(cpu.memory.state_wanted, Some(Wanted::Load), "F4: the run loop not handed back for it");
-        save_state::wanted(&mut cpu, &path);
-        assert_eq!(cpu.memory.notice.as_ref().unwrap().0, "No state saved");
+        host.frame();
+        assert_eq!(notice(&host), "No state saved");
 
-        // F2: handed back as the frame ends, after that instruction.
-        cpu.memory.ram[0x1234] = 0x5A;
+        // F2: between frames, the frame just begun.
+        host.cpu.memory.ram[0x1234] = 0x5A;
         keys.borrow_mut().push_back(2);
-        cpu.execute(2 * CYCLES_PER_FRAME);
-        assert_eq!(cpu.memory.state_wanted, Some(Wanted::Save), "F2: the run loop not handed back for it");
-        assert!(cpu.memory.cycle < 8, "not handed back as the frame ended: cycle {}", cpu.memory.cycle);
-        let (pc, clock) = (cpu.pc, cpu.clock);
-        save_state::wanted(&mut cpu, &path);
-        assert_eq!(cpu.memory.notice.as_ref().unwrap().0, "State saved");
+        host.frame();
+        assert_eq!(notice(&host), "State saved");
         assert!(path.exists(), "no state saved");
+        let (pc, clock) = (host.cpu.pc, host.cpu.clock);
 
-        // On, and changed; then F4: as it was, the window and ROM kept.
-        cpu.execute(CYCLES_PER_FRAME / 2);
-        cpu.memory.ram[0x1234] = 0;
-        cpu.a = 0x77;
+        // On, and changed; then F4: as it was, the ROM and picture kept.
+        host.frame();
+        host.cpu.memory.ram[0x1234] = 0;
+        host.cpu.a = 0x77;
         keys.borrow_mut().push_back(4);
-        cpu.execute(2 * CYCLES_PER_FRAME);
-        save_state::wanted(&mut cpu, &path);
-        assert_eq!(cpu.memory.notice.as_ref().unwrap().0, "State loaded");
+        host.frame();
+        assert_eq!(notice(&host), "State loaded");
+        let cpu = &host.cpu;
         assert_eq!((cpu.pc, cpu.clock, cpu.memory.ram[0x1234]), (pc, clock, 0x5A), "not as it was saved");
-        assert!(cpu.memory.display.is_some(), "the window not kept");
         assert_eq!((cpu.memory.rom.len(), cpu.memory.rom[0]), (0x3000, 0x11), "the ROM not kept");
         assert_eq!(cpu.memory.picture.len(), crate::machines::apple2::video::PICTURE_WIDTH * 192, "the picture not kept");
-        // The keys still work, the window's.
-        keys.borrow_mut().push_back(2);
-        cpu.execute(2 * CYCLES_PER_FRAME);
-        assert_eq!(cpu.memory.state_wanted, Some(Wanted::Save), "the keys gone");
+        assert!(host.frame(), "the window closed");
         std::fs::remove_file(&path).unwrap();
     }
 

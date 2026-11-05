@@ -39,10 +39,9 @@ pub trait Bus {
         false
     }
 
-    /// Whether the machine wants the CPU's run loop handed back to it,
-    /// between instructions: for the machine's state to be saved, say, or
-    /// another put in its place.
-    fn hand_back(&self) -> bool {
+    /// Whether a frame has ended since it was last asked: the CPU's run
+    /// loop handed back then, between instructions, to the host.
+    fn hand_back(&mut self) -> bool {
         false
     }
 }

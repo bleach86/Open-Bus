@@ -1,0 +1,78 @@
+//! What a machine is to the host: its bus, for the CPU, handing the run
+//! loop back as each frame ends (`Bus::hand_back`); and this, what the host
+//! needs of it between frames. The host (`host::run`) has the window, or
+//! the terminal; the machine only emulates its hardware, and has what the
+//! host gives it: the keys, the controls, the Reset button.
+
+use crate::cpu::bus::Bus;
+use crate::host::display::{Gamepad, Joystick, Key};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+
+/// A frame to show: `width` by `height` pixels, 0xRRGGBB each, a line at a
+/// time from the top.
+pub struct Picture<'a> {
+    pub pixels: &'a [u32],
+    pub width: usize,
+    pub height: usize,
+}
+
+/// The controls as they are this frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Input {
+    pub joystick: Joystick,
+    pub gamepad: Gamepad,
+    /// Whether a key is held down, any but the modifiers and the function
+    /// keys.
+    pub key_down: bool,
+}
+
+pub trait Machine: Bus + Serialize + DeserializeOwned {
+    /// The frame just ended, as it's seen.
+    fn picture(&mut self) -> Picture<'_>;
+
+    /// Its screen as text, for a terminal, with its escape sequences; if
+    /// it has one.
+    fn text_screen(&self) -> Option<String> {
+        None
+    }
+
+    /// What the window's called: which machine, and what's in it.
+    fn title(&self) -> String;
+
+    /// Its sound made from now on: not without a host to play it, a cost
+    /// the tests needn't pay.
+    fn sound_on(&mut self);
+
+    /// The samples made since they were last taken, at SAMPLE_RATE, each a
+    /// left then a right.
+    fn sound(&mut self) -> &mut Vec<f32>;
+
+    /// A key typed.
+    fn key(&mut self, _key: Key) {}
+
+    /// The controls, a frame at a time.
+    fn input(&mut self, input: Input);
+
+    /// A function key for the machine's own uses (F2 and F4 are the
+    /// host's): a notice of what it did, if it did anything.
+    fn function_key(&mut self, _key: u8) -> Option<String> {
+        None
+    }
+
+    /// The Reset button, as it is this frame: held, or not.
+    fn reset_button(&mut self, held: bool);
+
+    /// What it keeps, its disks' or its battery's, saved if it's due; and
+    /// all of it, `closing`.
+    fn keep_saved(&mut self, _closing: bool) {}
+
+    /// The machine, as a save state's header names it: its make, its ROMs,
+    /// whatever a state of it leaves out, for a state to be refused by
+    /// another.
+    fn identity(&self) -> String;
+
+    /// What a save state leaves out, taken from `running`, the machine it's
+    /// loaded into.
+    fn keep(&mut self, running: &mut Self);
+}

@@ -7,13 +7,13 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
     use crate::host::display::{Display, Key};
+    use crate::host::run::Host;
     use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::disk_image::Disk;
     use crate::machines::apple2::video::{HEIGHT, PICTURE_WIDTH};
-    use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME};
+    use crate::machines::apple2::{Apple2, CLOCK_HZ};
     use std::cell::RefCell;
     use std::path::{Path, PathBuf};
     use std::rc::Rc;
@@ -38,11 +38,13 @@ mod tests {
     }
 
     /// A window of the test's: function keys pressed, as the test says;
-    /// its title, kept.
-    struct Keys(Rc<RefCell<(Vec<u8>, String)>>);
+    /// its title, and the last picture it showed, kept.
+    struct Keys(Rc<RefCell<(Vec<u8>, String, Vec<u32>)>>);
 
     impl Display for Keys {
-        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
+        fn show(&mut self, pixels: &[u32], _: usize, _: usize) {
+            self.0.borrow_mut().2 = pixels.to_vec();
+        }
 
         fn key(&mut self) -> Option<Key> {
             None
@@ -69,54 +71,54 @@ mod tests {
     fn f9_and_f10_change_the_disks() {
         let paths = [image("a", 1), image("b", 2), image("c", 3)];
         let mut apple = Apple2::new(vec![0; 0x3000]);
-        let window = Rc::new(RefCell::new((Vec::new(), String::new())));
-        apple.display = Some(Box::new(Keys(window.clone())));
+        let window = Rc::new(RefCell::new((Vec::new(), String::new(), Vec::new())));
         apple.disk2 = Some(card());
         apple.disks = paths.to_vec();
         apple.change_disk(0);
+        let state = std::env::temp_dir().join("cpu_emu_no_state");
+        let mut host = Host::new(CPU::with_bus(apple), Box::new(Keys(window.clone())), state);
         // Each key seen as a frame ends.
-        let press = |apple: &mut Apple2, key: u8| {
+        let press = |host: &mut Host<Apple2>, key: u8| {
             window.borrow_mut().0.push(key);
-            for _ in 0..CYCLES_PER_FRAME {
-                apple.tick();
-            }
+            host.frame();
         };
-        let in_drives = |apple: &Apple2| apple.in_drive;
-        assert_eq!(in_drives(&apple), [Some(0), None]);
+        let in_drives = |host: &Host<Apple2>| host.cpu.memory.in_drive;
+        host.frame();
+        assert_eq!(in_drives(&host), [Some(0), None]);
         assert!(window.borrow().1.contains("Drive 1: cpu_emu_"), "the title: {}", window.borrow().1);
 
         // F9: drive 1 through each in turn.
         for want in [1, 2, 0] {
-            press(&mut apple, 9);
-            assert_eq!(in_drives(&apple), [Some(want), None], "drive 1, F9");
+            press(&mut host, 9);
+            assert_eq!(in_drives(&host), [Some(want), None], "drive 1, F9");
         }
         // F10: drive 2 through each not in drive 1, then none.
         for want in [Some(1), Some(2), None, Some(1)] {
-            press(&mut apple, 10);
-            assert_eq!(in_drives(&apple), [Some(0), want], "drive 2, F10");
+            press(&mut host, 10);
+            assert_eq!(in_drives(&host), [Some(0), want], "drive 2, F10");
         }
         // The disk put in, said over the picture's foot, for 3 seconds.
-        let band = |apple: &Apple2| apple.picture[(HEIGHT - 12) * PICTURE_WIDTH..].to_vec();
-        assert!(band(&apple)[..PICTURE_WIDTH].iter().all(|&dot| dot == 0), "no notice's band");
-        assert!(band(&apple).iter().any(|&dot| dot == 0xFFFFFF), "no notice's text");
-        for _ in 0..180 * CYCLES_PER_FRAME {
-            apple.tick();
+        let band = || window.borrow().2[(HEIGHT - 12) * PICTURE_WIDTH..].to_vec();
+        assert!(band()[..PICTURE_WIDTH].iter().all(|&dot| dot == 0), "no notice's band");
+        assert!(band().iter().any(|&dot| dot == 0xFFFFFF), "no notice's text");
+        for _ in 0..180 {
+            host.frame();
         }
-        assert!(apple.notice.is_none(), "the notice still there after 3 seconds");
+        assert!(host.notice.is_none(), "the notice still there after 3 seconds");
 
         // Drive 1 skips the one in drive 2.
-        press(&mut apple, 9);
-        assert_eq!(in_drives(&apple), [Some(2), Some(1)], "drive 1, past drive 2's");
-        let disk = apple.disk2.as_ref().unwrap().drives[0].disk.as_ref().unwrap();
+        press(&mut host, 9);
+        assert_eq!(in_drives(&host), [Some(2), Some(1)], "drive 1, past drive 2's");
+        let disk = host.cpu.memory.disk2.as_ref().unwrap().drives[0].disk.as_ref().unwrap();
         assert_eq!(disk.path.as_deref(), Some(paths[2].as_path()), "drive 1's disk not read from its image");
 
         // Written, a disk is saved as it's taken out.
         let saved = image("saved", 0);
         std::fs::remove_file(&saved).unwrap();
-        let disk = apple.disk2.as_mut().unwrap().drives[0].disk.as_mut().unwrap();
+        let disk = host.cpu.memory.disk2.as_mut().unwrap().drives[0].disk.as_mut().unwrap();
         disk.path = Some(saved.clone());
         disk.written = true;
-        press(&mut apple, 9);
+        press(&mut host, 9);
         assert!(saved.exists(), "the disk taken out not saved");
         for path in paths.iter().chain([&saved]) {
             std::fs::remove_file(path).unwrap();

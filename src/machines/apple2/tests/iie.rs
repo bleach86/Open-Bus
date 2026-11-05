@@ -10,17 +10,16 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::host::machine::{Input, Machine};
     use crate::cpu::bus::Bus;
     use crate::cpu::{Variant, CPU};
-    use crate::host::display::{Display, Joystick, Key};
+    use crate::host::display::Joystick;
     use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::disk_image::Disk;
     use crate::machines::apple2::iie::{ENHANCED_ROMS, ROMS};
     use crate::machines::apple2::video::{self, Monitor, Source, Switches, LORES, PICTURE_WIDTH};
     use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME, CYCLES_PER_LINE};
-    use std::cell::Cell;
     use std::path::{Path, PathBuf};
-    use std::rc::Rc;
 
     /// A character set of the test's: each character's every row its own
     /// code's low 6 bits lit, and its top bit as the 7th (stored inverted,
@@ -135,34 +134,17 @@ mod tests {
         assert_eq!((apple.read(0xC01E) & 0x80, apple.read(0xC01F) & 0x80), (0, 0), "ALTCHARSET, 80COL after RESET");
     }
 
-    /// A window of the test's: a key held, as the test says.
-    struct Held(Rc<Cell<bool>>);
-
-    impl Display for Held {
-        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
-
-        fn key(&mut self) -> Option<Key> {
-            None
-        }
-
-        fn key_down(&self) -> bool {
-            self.0.get()
-        }
-    }
-
     #[test]
     fn its_keyboard_at_c010_and_its_switches_read_back() {
         let mut apple = machine();
-        let held = Rc::new(Cell::new(false));
-        apple.display = Some(Box::new(Held(held.clone())));
         apple.press(b'a');
         assert_eq!(apple.read(0xC000), 0xE1, "a, lower case, bit 7 set");
         assert_eq!(apple.read(0xC011) & 0x7F, 0x61, "$C011: the key, too");
         assert_eq!(apple.read(0xC000), 0xE1, "the strobe cleared by $C011");
-        held.set(true);
+        apple.input(Input { key_down: true, ..Input::default() });
         assert_eq!(apple.read(0xC010), 0xE1, "$C010: a key down, bit 7, and the key");
         assert_eq!(apple.read(0xC000), 0x61, "the strobe not cleared by $C010");
-        held.set(false);
+        apple.input(Input::default());
         assert_eq!(apple.read(0xC010), 0x61, "$C010: no key down");
 
         // TEXT, MIXED, PAGE2, HIRES, ALTCHARSET, 80COL.
@@ -268,26 +250,6 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("roms/apple2")
     }
 
-    /// A window of the test's: the Solid-Apple key held if `self_test`, for
-    /// the self-test; its Reset key held as the test says.
-    struct Keys(Rc<Cell<bool>>, bool);
-
-    impl Display for Keys {
-        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
-
-        fn key(&mut self) -> Option<Key> {
-            None
-        }
-
-        fn joystick(&self) -> Joystick {
-            Joystick { buttons: [false, self.1, false], ..Joystick::CENTRED }
-        }
-
-        fn reset_held(&self) -> bool {
-            self.0.get()
-        }
-    }
-
     /// A IIe from its own ROMs, enhanced (its 65C02) or the first (its
     /// 6502), reset with the Solid-Apple key held if `self_test`; None
     /// without them.
@@ -298,11 +260,13 @@ mod tests {
         let mut cpu = CPU::with_bus(apple);
         cpu.variant = if enhanced { Variant::Synertek65C02 } else { Variant::Nmos6502 };
         cpu.clock_hz = u32::MAX; // as fast as it goes
-        let reset = Rc::new(Cell::new(true));
-        cpu.memory.display = Some(Box::new(Keys(reset.clone(), self_test)));
+        // The Solid-Apple key held if `self_test`, for the self-test.
+        let joystick = Joystick { buttons: [false, self_test, false], ..Joystick::CENTRED };
+        cpu.memory.input(Input { joystick, ..Input::default() });
+        cpu.memory.reset_button(true);
         cpu.reset();
         cpu.execute(3 * CYCLES_PER_FRAME); // RESET held, as the key is
-        reset.set(false);
+        cpu.memory.reset_button(false);
         Some(cpu)
     }
 

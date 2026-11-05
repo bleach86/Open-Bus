@@ -27,7 +27,8 @@
 //! two more at 20 kHz so that nothing above half the host's rate folds
 //! back in to be heard when it's sampled (a triangle's ultrasonic note,
 //! as games silence it); then sampled at the host's rate, and high-passed
-//! at 90 Hz and 440 Hz.
+//! at 90 Hz. Not at 440 Hz too, as the console's output is said to be: it
+//! takes the bass out of the triangle, and sounds bad.
 //!
 //! A controller, its 8 buttons latched while $4016's bit 0 is written 1,
 //! read a bit at a time (bit 0 of $4016 or $4017) once it's 0: A, B,
@@ -61,9 +62,14 @@ mod tests {
 
 use crate::cpu::bus::Bus;
 use crate::cpu::{CPU, Variant};
-use crate::host::display::{Display, Gamepad, SAMPLE_RATE};
+use crate::host::display::{Gamepad, SAMPLE_RATE};
+use crate::host::files;
+use crate::host::machine::{Input, Machine, Picture};
+use crate::host::run::Host;
+use crate::host::save_state;
+use crate::host::sound::{HighPass, LowPass, Sampler};
 use crate::host::window::Window;
-use crate::machines::save_state;
+use crate::host::zip::crc32;
 use apu::Apu;
 use cartridge::Cartridge;
 use ppu::Ppu;
@@ -77,15 +83,16 @@ pub const CLOCK_HZ: u32 = 1_789_773;
 const VOLUME: f32 = 0.85;
 
 /// The output's filters' corners: its low-passes', a cycle at a time; its
-/// high-passes', a sample at a time.
+/// high-pass's, a sample at a time.
 const LOW_PASSES: [f32; 3] = [14_000.0, 20_000.0, 20_000.0];
-const HIGH_PASSES: [f32; 2] = [90.0, 1.0];
+const HIGH_PASS: f32 = 90.0;
 
-/// A save state to be saved, or loaded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Wanted {
-    Save,
-    Load,
+/// Its sound, when it's made: the low-passes, a cycle at a time; the
+/// sampling; the high-pass.
+struct Sound {
+    low_passes: [LowPass; 3],
+    sampler: Sampler<1>,
+    high_pass: HighPass,
 }
 
 /// The DMC's DMA, a step at a time: its halt, its dummy cycle, then its
@@ -106,8 +113,8 @@ struct Dma {
     done: u16,
 }
 
-/// In a save state, all but its ROMs and the host's side, which the
-/// machine it's loaded into has.
+/// In a save state, all but its ROMs and what's the host's (the picture
+/// and sound, the controls), which the machine it's loaded into has.
 #[derive(Serialize, Deserialize)]
 pub struct Nes {
     pub ram: Vec<u8>,
@@ -128,18 +135,16 @@ pub struct Nes {
     /// The NMI and IRQ lines at the end of the last cycle, for the CPU.
     nmi_line: bool,
     irq_line: bool,
-    /// CPU cycles since power-on; and frames.
+    /// CPU cycles since power-on; frames, and whether one has ended, for
+    /// the host.
     pub cycles: u64,
     pub frames: u64,
-    pub reset_held: bool,
-    /// A save state wanted, by F2 or F4, the CPU's run loop handed back
-    /// for it.
     #[serde(skip)]
-    pub state_wanted: Option<Wanted>,
-    /// The window the picture is shown in, and the gamepad comes from; the
-    /// gamepad of the tests', without one.
+    frame_ended: bool,
+    reset_held: bool,
+    /// The game's name; the gamepad, as the host last gave it.
     #[serde(skip)]
-    pub display: Option<Box<dyn Display>>,
+    pub name: String,
     #[serde(skip)]
     pub gamepad: Gamepad,
     /// The PPU's colours; the dots or lines hidden at each edge, as a TV's
@@ -153,22 +158,11 @@ pub struct Nes {
     pub battery_file: Option<PathBuf>,
     #[serde(skip)]
     picture: Vec<u32>,
-    /// The sound: the low-passes' last outputs; the output summed over the
-    /// sample being made, and its cycles; how far into it, in parts of
-    /// CLOCK_HZ; the high-passes' last input and output each; the samples
-    /// made this frame.
+    /// Its sound, if it's made, and the samples made and not yet taken.
     #[serde(skip)]
-    low_passes: [f32; 3],
+    sound: Option<Sound>,
     #[serde(skip)]
-    sample_sum: f32,
-    #[serde(skip)]
-    sample_cycles: u32,
-    #[serde(skip)]
-    sample_phase: u32,
-    #[serde(skip)]
-    high_passes: [(f32, f32); 2],
-    #[serde(skip)]
-    sound: Vec<f32>,
+    samples: Vec<f32>,
 }
 
 impl Nes {
@@ -189,30 +183,23 @@ impl Nes {
             irq_line: false,
             cycles: 0,
             frames: 0,
+            frame_ended: false,
             reset_held: false,
-            state_wanted: None,
-            display: None,
+            name: String::new(),
             gamepad: Gamepad::default(),
             colours: palette::palette(),
             overscan: 0,
             battery_file: None,
             picture: Vec::new(),
-            low_passes: [0.0; 3],
-            sample_sum: 0.0,
-            sample_cycles: 0,
-            sample_phase: 0,
-            high_passes: [(0.0, 0.0); 2],
-            sound: Vec::new(),
+            sound: None,
+            samples: Vec::new(),
         }
     }
 
     /// The first controller's buttons, a bit each: A, B, Select, Start, Up,
     /// Down, Left, Right. A D-pad's opposites can't both be pressed.
     fn buttons(&self) -> u8 {
-        let pad = self
-            .display
-            .as_ref()
-            .map_or(self.gamepad, |display| display.gamepad());
+        let pad = self.gamepad;
         let (up, down) = (pad.up && !pad.down, pad.down && !pad.up);
         let (left, right) = (pad.left && !pad.right, pad.right && !pad.left);
         [pad.a, pad.b, pad.select, pad.start, up, down, left, right]
@@ -295,8 +282,7 @@ impl Nes {
     }
 
     /// The cartridge's battery-backed RAM saved to its file, if it's been
-    /// written: to a file beside it, then put in its place, so it's never
-    /// half saved.
+    /// written.
     fn save_battery(&mut self) {
         let Some(path) = &self.battery_file else {
             return;
@@ -305,107 +291,24 @@ impl Nes {
             return;
         }
         self.cartridge.written = false;
-        let saving = path.with_extension("srm.saving");
-        let saved = std::fs::write(&saving, &self.cartridge.prg_ram)
-            .and_then(|_| std::fs::rename(&saving, path));
-        if let Err(e) = saved {
+        if let Err(e) = files::save(path, &self.cartridge.prg_ram) {
             eprintln!("{}: not saved: {e}", path.display());
         }
     }
 
-    /// A frame done: shown; the function keys taken, and the Reset button,
-    /// the PPU reset while it's held.
-    fn frame(&mut self) {
-        self.frames += 1;
-        if let Some(display) = &mut self.display {
-            let (width, height) = seen(self.overscan);
-            self.picture.clear();
-            for line in self
-                .ppu
-                .frame
-                .chunks(ppu::WIDTH)
-                .skip(self.overscan)
-                .take(height)
-            {
-                let dots = &line[self.overscan..self.overscan + width];
-                self.picture
-                    .extend(dots.iter().map(|&colour| self.colours[colour as usize]));
-            }
-            display.show(&self.picture, width, height);
-            while let Some(key) = display.function_key() {
-                match key {
-                    2 => self.state_wanted = Some(Wanted::Save),
-                    4 => self.state_wanted = Some(Wanted::Load),
-                    _ => {}
-                }
-            }
-            self.reset_held = display.reset_held();
-            if display.closed() {
-                self.save_battery();
-                std::process::exit(0);
-            }
-        }
-        if self.frames % 60 == 0 {
-            self.save_battery();
-        }
-        if let Some(display) = &mut self.display {
-            display.play(&self.sound);
-            self.sound.clear();
-        }
-        if self.reset_held {
-            self.ppu.reset();
-            (self.dma, self.dmc_dma, self.halted) = (None, None, false);
-        }
-    }
-
-    /// A cycle of sound: the output through the low-passes, summed; a
-    /// sample made when one is due, the sum's average through the
-    /// high-passes, in both channels.
+    /// A cycle of sound: the output through the low-passes; a sample made
+    /// when one is due, their average through the high-pass, in both
+    /// channels.
     fn sound_cycle(&mut self) {
-        let dt = 1.0 / CLOCK_HZ as f32;
-        let mut output = self.apu.output();
-        for (n, last) in self.low_passes.iter_mut().enumerate() {
-            let rc = 1.0 / (2.0 * std::f32::consts::PI * LOW_PASSES[n]);
-            *last += dt / (rc + dt) * (output - *last);
-            output = *last;
+        let Some(sound) = &mut self.sound else { return };
+        let output = sound
+            .low_passes
+            .iter_mut()
+            .fold(self.apu.output(), |output, low_pass| low_pass.filter(output));
+        if let Some([sample]) = sound.sampler.cycle([output]) {
+            let sample = sound.high_pass.filter(sample);
+            self.samples.extend([sample * VOLUME; 2]);
         }
-        self.sample_sum += output;
-        self.sample_cycles += 1;
-        self.sample_phase += SAMPLE_RATE;
-        if self.sample_phase < CLOCK_HZ {
-            return;
-        }
-        self.sample_phase -= CLOCK_HZ;
-        let mut sample = self.sample_sum / self.sample_cycles as f32;
-        (self.sample_sum, self.sample_cycles) = (0.0, 0);
-        let dt = 1.0 / SAMPLE_RATE as f32;
-        for (n, (last_in, last_out)) in self.high_passes.iter_mut().enumerate() {
-            let rc = 1.0 / (2.0 * std::f32::consts::PI * HIGH_PASSES[n]);
-            let out = rc / (rc + dt) * (*last_out + sample - *last_in);
-            (*last_in, *last_out) = (sample, out);
-            sample = out;
-        }
-        self.sound.extend([sample * VOLUME; 2]);
-    }
-
-    /// The machine, as a state's header names it: the NES, its game (a
-    /// checksum of its ROMs).
-    fn machine(&self) -> String {
-        let roms = [&self.cartridge.prg_rom[..], &self.cartridge.chr_rom[..]].concat();
-        format!("NES, ROMs {:08X}", crate::host::zip::crc32(&roms))
-    }
-
-    /// What a save state leaves out, taken from `running`, the machine
-    /// it's loaded into: its ROMs and the host's side.
-    fn keep(&mut self, running: &mut Nes) {
-        self.cartridge.take_roms(&mut running.cartridge);
-        self.display = running.display.take();
-        self.gamepad = running.gamepad;
-        self.colours = std::mem::take(&mut running.colours);
-        self.overscan = running.overscan;
-        self.battery_file = running.battery_file.take();
-        self.picture = std::mem::take(&mut running.picture);
-        self.ppu.frame = std::mem::take(&mut running.ppu.frame);
     }
 }
 
@@ -462,12 +365,11 @@ impl Bus for Nes {
         if self.dmc_dma.is_none() && self.apu.dmc_wants().is_some() {
             self.dmc_dma = Some(DmcStep::Halt);
         }
-        if self.display.is_some() {
-            self.sound_cycle();
-        }
+        self.sound_cycle();
         if self.ppu.frame_ready {
             self.ppu.frame_ready = false;
-            self.frame();
+            self.frames += 1;
+            self.frame_ended = true;
         }
     }
 
@@ -497,8 +399,84 @@ impl Bus for Nes {
         wanted
     }
 
-    fn hand_back(&self) -> bool {
-        self.state_wanted.is_some()
+    fn hand_back(&mut self) -> bool {
+        std::mem::take(&mut self.frame_ended)
+    }
+}
+
+impl Machine for Nes {
+    /// Its frame in colour, what's seen of it.
+    fn picture(&mut self) -> Picture<'_> {
+        let (width, height) = seen(self.overscan);
+        self.picture.clear();
+        let lines = self.ppu.frame.chunks(ppu::WIDTH).skip(self.overscan);
+        for line in lines.take(height) {
+            let dots = &line[self.overscan..self.overscan + width];
+            self.picture
+                .extend(dots.iter().map(|&colour| self.colours[colour as usize]));
+        }
+        Picture {
+            pixels: &self.picture,
+            width,
+            height,
+        }
+    }
+
+    fn title(&self) -> String {
+        format!("NES   {}", self.name)
+    }
+
+    fn sound_on(&mut self) {
+        self.sound = Some(Sound {
+            low_passes: LOW_PASSES.map(|corner| LowPass::new(corner, CLOCK_HZ)),
+            sampler: Sampler::new(CLOCK_HZ),
+            high_pass: HighPass::new(HIGH_PASS, SAMPLE_RATE),
+        });
+    }
+
+    fn sound(&mut self) -> &mut Vec<f32> {
+        &mut self.samples
+    }
+
+    fn input(&mut self, input: Input) {
+        self.gamepad = input.gamepad;
+    }
+
+    /// Held, the PPU's reset, and the CPU and APU held so.
+    fn reset_button(&mut self, held: bool) {
+        self.reset_held = held;
+        if held {
+            self.ppu.reset();
+            (self.dma, self.dmc_dma, self.halted) = (None, None, false);
+        }
+    }
+
+    /// Its battery's RAM, a second after it's written.
+    fn keep_saved(&mut self, closing: bool) {
+        if closing || self.frames % 60 == 0 {
+            self.save_battery();
+        }
+    }
+
+    /// The NES, and a checksum of its game's ROMs: what a state of it
+    /// leaves out.
+    fn identity(&self) -> String {
+        let roms = [&self.cartridge.prg_rom[..], &self.cartridge.chr_rom[..]].concat();
+        format!("NES, ROMs {:08X}", crc32(&roms))
+    }
+
+    fn keep(&mut self, running: &mut Nes) {
+        use std::mem::take;
+        self.cartridge.take_roms(&mut running.cartridge);
+        self.name = take(&mut running.name);
+        self.gamepad = running.gamepad;
+        self.colours = take(&mut running.colours);
+        self.overscan = running.overscan;
+        self.battery_file = running.battery_file.take();
+        self.picture = take(&mut running.picture);
+        self.ppu.frame = take(&mut running.ppu.frame);
+        self.sound = running.sound.take();
+        self.samples = take(&mut running.samples);
     }
 }
 
@@ -513,36 +491,6 @@ pub fn image(path: &Path) -> Result<Vec<u8>, String> {
     }
     let (_, image) = crate::host::zip::file(&bytes, |name| name.to_lowercase().ends_with(".nes"))?;
     Ok(image)
-}
-
-/// The state wanted, if one is, saved to `path` or loaded from it.
-fn wanted(cpu: &mut CPU<Nes>, path: &Path) {
-    match cpu.memory.state_wanted.take() {
-        None => {}
-        Some(Wanted::Save) => {
-            let saving = path.with_extension("state.saving");
-            let saved = save_state::save(cpu, &cpu.memory.machine()).and_then(|state| {
-                std::fs::write(&saving, state)
-                    .and_then(|_| std::fs::rename(&saving, path))
-                    .map_err(|e| e.to_string())
-            });
-            if let Err(e) = saved {
-                eprintln!("{}: not saved: {e}", path.display());
-            }
-        }
-        Some(Wanted::Load) => {
-            let loaded = std::fs::read(path)
-                .map_err(|e| e.to_string())
-                .and_then(|state| save_state::load::<Nes>(&state, &cpu.memory.machine()));
-            match loaded {
-                Ok(mut loaded) => {
-                    loaded.memory.keep(&mut cpu.memory);
-                    *cpu = loaded;
-                }
-                Err(e) => eprintln!("{}: not loaded: {e}", path.display()),
-            }
-        }
-    }
 }
 
 /// What's seen of the picture, `overscan` hidden at each edge: its width
@@ -568,7 +516,7 @@ pub fn run(rom: &str, fullscreen: bool, overscan: usize) {
         }
         nes.battery_file = Some(file);
     }
-    let name = path
+    nes.name = path
         .file_stem()
         .map_or(String::new(), |name| name.to_string_lossy().into_owned());
     // Its dots and lines seen, each dot 8:7 as a TV shows it, 3 times over:
@@ -579,24 +527,11 @@ pub fn run(rom: &str, fullscreen: bool, overscan: usize) {
         (width as f32 * 8.0 / 7.0 * 3.0).round() as u32,
         height as u32 * 3,
     );
-    nes.display = Some(Box::new(Window::new(
-        &format!("NES   {name}"),
-        width,
-        height,
-        size,
-        fullscreen,
-    )));
-    let state: PathBuf = path.with_file_name(format!(
-        "{}.state",
-        path.file_name().unwrap().to_string_lossy()
-    ));
+    let window = Window::new(&nes.title(), width, height, size, fullscreen);
 
     let mut cpu = CPU::with_bus(nes);
     cpu.variant = Variant::Ricoh2A03;
     cpu.clock_hz = CLOCK_HZ;
     cpu.reset();
-    loop {
-        cpu.execute_forever();
-        wanted(&mut cpu, &state);
-    }
+    Host::new(cpu, Box::new(window), save_state::path(path)).run();
 }

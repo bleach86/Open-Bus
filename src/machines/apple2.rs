@@ -23,7 +23,6 @@ pub mod hard_disk;
 pub mod iie;
 pub mod language_card;
 pub mod mockingboard;
-pub mod save_state;
 pub mod video;
 
 #[cfg(test)]
@@ -42,12 +41,18 @@ mod tests {
 
 use crate::cpu::bus::Bus;
 use crate::cpu::{CPU, Variant};
-use crate::host::display::{Display, Joystick, Key, SAMPLE_RATE};
+use crate::host::display::{Display, Joystick, Key};
+use crate::host::files;
+use crate::host::machine::{Input, Machine, Picture};
+use crate::host::run::Host;
+use crate::host::save_state;
+use crate::host::sound::{HighPass, Sampler};
 use crate::host::terminal::Terminal;
 use crate::host::window::Window;
+use crate::host::zip::crc32;
 use disk_image::Disk;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
 /// The 14.31818 MHz crystal's, on average: a cycle is 14 of its ticks, but
@@ -71,16 +76,18 @@ const SETTLE: f32 = 0.995;
 /// The flashing characters' half period.
 const FLASH_FRAMES: u32 = 16;
 
-/// The Reset key pressed in the terminal, which has no key let go: held 6
-/// frames, a tenth of a second.
-const RESET_FRAMES: u32 = 6;
+/// Its sound, when it's made: the cone's place and the voices, left and
+/// right, a sample at a time; the settling of each channel.
+struct Sound {
+    sampler: Sampler<3>,
+    settle: [HighPass; 2],
+}
 
-/// How long a notice is shown over the picture: 3 seconds.
-const NOTICE_FRAMES: u32 = 180;
-
-/// In a save state, all but its ROMs and the host's side (its window or
-/// terminal, the picture and sound, what's shown), which the machine it's
-/// loaded into has.
+/// In a save state, all but its ROMs and what's the host's (the picture
+/// and sound, the keys and controls), which the machine it's loaded into
+/// has; and the hard disk's volumes, written to their images as they go.
+/// The disks in the drives are in it, bit by bit: loaded, they're as they
+/// were when it was saved, and saved to their images when next written.
 #[derive(Serialize, Deserialize)]
 pub struct Apple2 {
     pub ram: Vec<u8>,
@@ -88,8 +95,14 @@ pub struct Apple2 {
     pub rom: Vec<u8>,
     /// The keyboard: the last key, bit 7 set until $C010 clears it.
     pub keyboard: u8,
+    /// The keys typed, as its keyboard has them, not yet taken; and the
+    /// controls, as the host last gave them.
     #[serde(skip)]
-    pub terminal: Option<Terminal>,
+    keys: VecDeque<u8>,
+    #[serde(skip)]
+    joystick: Joystick,
+    #[serde(skip)]
+    key_down: bool,
     /// The IIe's own, on a IIe.
     pub iie: Option<iie::Iie>,
     /// The language card, in slot 0; the IIe's built in.
@@ -105,20 +118,6 @@ pub struct Apple2 {
     /// and F10; and which is in each drive.
     pub disks: Vec<PathBuf>,
     pub in_drive: [Option<usize>; 2],
-    /// What's in the drives, said under the terminal's screen; and a
-    /// notice over the window's picture, a disk put in, and the frames
-    /// more it's shown.
-    #[serde(skip)]
-    status: String,
-    #[serde(skip)]
-    notice: Option<(String, u32)>,
-    /// A save state to be saved or loaded, by F2 or F4, the CPU's run loop
-    /// handed back for it.
-    #[serde(skip)]
-    pub state_wanted: Option<save_state::Wanted>,
-    /// The window the picture is shown in, and the keys come from.
-    #[serde(skip)]
-    pub display: Option<Box<dyn Display>>,
     /// The picture, as far as this frame has drawn it; and the monitor
     /// it's shown on, colour or monochrome.
     #[serde(skip)]
@@ -132,28 +131,22 @@ pub struct Apple2 {
     pub hires: bool,
     /// The speaker's cone: out, or in. $C030 flips it.
     speaker: bool,
-    /// The cycles of the sample being made, and how many the cone was out;
-    /// how far into a sample it is, in parts of CLOCK_HZ; the speaker's
-    /// settling; and the samples made this frame.
-    sample_cycles: u32,
-    sample_out: u32,
-    sample_voices: (f32, f32),
-    sample_phase: u32,
-    settle: [(f32, f32); 2],
+    /// Its sound, if it's made, and the samples made and not yet taken.
     #[serde(skip)]
-    sound: Vec<f32>,
+    sound: Option<Sound>,
+    #[serde(skip)]
+    samples: Vec<f32>,
     /// When each paddle's timer runs out, started by $C070.
     paddle_until: [u64; 4],
-    /// The Reset key held, and the frames a terminal's press holds it on for.
+    /// The Reset key held.
     reset_held: bool,
-    reset_frames: u32,
-    /// Cycles since power-on; cycles into the frame, and frames.
+    /// Cycles since power-on; cycles into the frame, and frames; and
+    /// whether a frame has ended, for the host.
     now: u64,
     cycle: u32,
     pub frames: u32,
-    /// The screen as last drawn in the terminal.
     #[serde(skip)]
-    shown: String,
+    frame_ended: bool,
 }
 
 impl Apple2 {
@@ -164,7 +157,9 @@ impl Apple2 {
             ram: vec![0; 0xC000],
             rom,
             keyboard: 0,
-            terminal: None,
+            keys: VecDeque::new(),
+            joystick: Joystick::CENTRED,
+            key_down: false,
             iie: None,
             language_card: None,
             clock: None,
@@ -173,10 +168,6 @@ impl Apple2 {
             hard_disk: None,
             disks: Vec::new(),
             in_drive: [None, None],
-            status: String::new(),
-            notice: None,
-            state_wanted: None,
-            display: None,
             picture: vec![0; video::PICTURE_WIDTH * video::HEIGHT],
             monitor: video::Monitor::Colour,
             graphics: false,
@@ -184,19 +175,14 @@ impl Apple2 {
             page2: false,
             hires: false,
             speaker: false,
-            sample_cycles: 0,
-            sample_out: 0,
-            sample_voices: (0.0, 0.0),
-            sample_phase: 0,
-            settle: [(-VOLUME, 0.0); 2], // the cone in, at rest
-            sound: Vec::new(),
+            sound: None,
+            samples: Vec::new(),
             paddle_until: [0; 4],
             reset_held: false,
-            reset_frames: 0,
             now: 0,
             cycle: 0,
             frames: 0,
-            shown: String::new(),
+            frame_ended: false,
         }
     }
 
@@ -221,41 +207,13 @@ impl Apple2 {
         self.keyboard = key | 0x80;
     }
 
-    /// The next key from the terminal, as the Apple's keyboard has it:
-    /// Return for Enter, ← for Backspace and the left arrow, → for the
-    /// right, upper case letters; another escape sequence, nothing. A IIe's
-    /// has lower case, Delete for Backspace, and up and down too.
-    fn terminal_key(&mut self) -> Option<u8> {
+    /// A key, as the Apple's keyboard has it: ← for Backspace and the left
+    /// arrow, → for the right, upper case letters; up and down, which it
+    /// hasn't, nothing. A IIe's has lower case, Delete for Backspace, and ↑
+    /// and ↓, Ctrl-K and Ctrl-J.
+    fn keyboard_key(&self, key: Key) -> Option<u8> {
         let iie = self.iie.is_some();
-        let terminal = self.terminal.as_ref()?;
-        let key = terminal.key()?;
         Some(match key {
-            b'\n' | b'\r' => 0x0D,
-            0x7F if iie => 0x7F,
-            0x7F => 0x08,
-            b'a'..=b'z' if !iie => key - 0x20,
-            0x1B => match terminal.key() {
-                Some(b'[') | Some(b'O') => match terminal.key()? {
-                    b'D' => 0x08,
-                    b'C' => 0x15,
-                    b'A' if iie => 0x0B,
-                    b'B' if iie => 0x0A,
-                    _ => return None,
-                },
-                Some(_) => return None,
-                None => 0x1B, // Esc on its own
-            },
-            _ => key,
-        })
-    }
-
-    /// The next key from the window, as the Apple's keyboard has it: ← for
-    /// Backspace and the left arrow, → for the right, upper case letters;
-    /// up and down, which it hasn't, nothing. A IIe's has lower case,
-    /// Delete for Backspace, and ↑ and ↓, Ctrl-K and Ctrl-J.
-    fn display_key(&mut self) -> Option<u8> {
-        let iie = self.iie.is_some();
-        Some(match self.display.as_mut()?.key()? {
             Key::Char(b'\n') => 0x0D,
             Key::Char(0x08 | 0x7F) if iie => 0x7F,
             Key::Char(0x7F) => 0x08,
@@ -269,25 +227,11 @@ impl Apple2 {
         })
     }
 
-    /// Whether a key is held down: the IIe's keyboard tells, at $C010.
-    fn any_key_down(&self) -> bool {
-        self.display
-            .as_ref()
-            .is_some_and(|display| display.key_down())
-    }
-
-    /// The joystick, from the window: centred, without one.
-    fn joystick(&self) -> Joystick {
-        self.display
-            .as_ref()
-            .map_or(Joystick::CENTRED, |display| display.joystick())
-    }
-
     /// The paddles' timers started, at $C070: each to run as long as its
     /// position, 0 to 255; the stick's two across and down, and the other
     /// two, with nothing on them, as far as they go.
     fn start_paddles(&mut self) {
-        let joystick = self.joystick();
+        let joystick = self.joystick;
         let position = |axis: f32| ((axis.clamp(-1.0, 1.0) + 1.0) * 127.5).round() as u64;
         let positions = [position(joystick.x), position(joystick.y), 255, 255];
         for (until, position) in self.paddle_until.iter_mut().zip(positions) {
@@ -295,91 +239,24 @@ impl Apple2 {
         }
     }
 
-    /// A cycle of sound: where the cone is; a sample made when one is due,
-    /// the cone's place averaged over its cycles, from -1 to 1, then let
-    /// settle back to the middle, as the speaker's cone does when it's left
-    /// still.
+    /// A cycle of sound: where the cone is, and the voices; a sample made
+    /// when one is due, the cone's place averaged over its cycles, from -1
+    /// to 1: the speaker in both channels, the Mockingboards' voices each
+    /// in theirs, let settle back to the middle, as the speaker's cone does
+    /// when it's left still, and an amplifier's output.
     fn sound_cycle(&mut self) {
-        self.sample_cycles += 1;
-        self.sample_out += self.speaker as u32;
+        let Some(sound) = &mut self.sound else { return };
+        let mut voices = (0.0, 0.0);
         for card in self.mockingboards.iter().flatten() {
             let (left, right) = card.output();
-            self.sample_voices.0 += left;
-            self.sample_voices.1 += right;
+            voices.0 += left;
+            voices.1 += right;
         }
-        self.sample_phase += SAMPLE_RATE;
-        if self.sample_phase >= CLOCK_HZ {
-            self.sample_phase -= CLOCK_HZ;
-            let cycles = self.sample_cycles as f32;
-            let place = 2.0 * self.sample_out as f32 / cycles - 1.0;
-            // The speaker in both channels, the Mockingboards' voices each in
-            // theirs, their output let settle too, as an amplifier's.
-            let (left, right) = self.sample_voices;
-            for (channel, voices) in [left, right].into_iter().enumerate() {
-                let level = place * VOLUME + voices / cycles * VOICE_VOLUME;
-                let (last_level, last) = self.settle[channel];
-                let sample = level - last_level + SETTLE * last;
-                self.settle[channel] = (level, sample);
-                self.sound.push(sample);
-            }
-            self.sample_cycles = 0;
-            self.sample_out = 0;
-            self.sample_voices = (0.0, 0.0);
-        }
-    }
-
-    /// The Reset key, as a frame ends: held in the window; pressed in the
-    /// terminal, held RESET_FRAMES. While it is, the cards are held reset,
-    /// and the CPU.
-    fn reset_key(&mut self) {
-        self.reset_held = self
-            .display
-            .as_ref()
-            .is_some_and(|display| display.reset_held())
-            || self.reset_frames > 0;
-        self.reset_frames = self.reset_frames.saturating_sub(1);
-        if self.reset_held {
-            if let Some(card) = &mut self.language_card {
-                card.reset();
-            }
-            if let Some(iie) = &mut self.iie {
-                iie.reset();
-            }
-            if let Some(card) = &mut self.disk2 {
-                card.reset();
-            }
-            for card in self.mockingboards.iter_mut().flatten() {
-                card.reset();
-            }
-        }
-    }
-
-    /// The function keys pressed, as a frame ends, in the window or the
-    /// terminal: F2, the machine's state saved; F4, loaded back; F8, the
-    /// next monitor, colour or monochrome; F9, the next disk in drive 1;
-    /// F10, the next in drive 2, or none; F12, in the terminal, the Reset
-    /// key.
-    fn function_keys(&mut self) {
-        let mut keys = Vec::new();
-        if let Some(terminal) = &self.terminal {
-            keys.extend(std::iter::from_fn(|| terminal.function_key()));
-        }
-        if let Some(display) = &mut self.display {
-            keys.extend(std::iter::from_fn(|| display.function_key()));
-        }
-        for key in keys {
-            match key {
-                2 => self.state_wanted = Some(save_state::Wanted::Save),
-                4 => self.state_wanted = Some(save_state::Wanted::Load),
-                8 => {
-                    self.monitor = self.monitor.next();
-                    self.notice =
-                        Some((format!("Monitor: {}", self.monitor.name()), NOTICE_FRAMES));
-                }
-                9 => self.change_disk(0),
-                10 => self.change_disk(1),
-                12 => self.reset_frames = RESET_FRAMES,
-                _ => {}
+        let place = if self.speaker { 1.0 } else { -1.0 };
+        if let Some([place, left, right]) = sound.sampler.cycle([place, voices.0, voices.1]) {
+            for (settle, voices) in sound.settle.iter_mut().zip([left, right]) {
+                let level = place * VOLUME + voices * VOICE_VOLUME;
+                self.samples.push(settle.filter(level));
             }
         }
     }
@@ -387,11 +264,9 @@ impl Apple2 {
     /// The disk in drive `drive` (0 or 1) taken out, saved if it has been
     /// written, and the next of the disks put in, read from its image: of
     /// those not in the other drive, in turn, and for drive 2, none after
-    /// the last.
-    fn change_disk(&mut self, drive: usize) {
-        if self.disk2.is_none() {
-            return;
-        }
+    /// the last. A notice of it, if there was a disk to change.
+    fn change_disk(&mut self, drive: usize) -> Option<String> {
+        self.disk2.as_ref()?;
         self.save_disk(drive, true);
         let other = self.in_drive[1 - drive];
         let mut choices: Vec<Option<usize>> = (0..self.disks.len())
@@ -402,7 +277,7 @@ impl Apple2 {
             choices.push(None);
         }
         if choices.is_empty() {
-            return;
+            return None;
         }
         // The one after the one in; the first, if it's none of them.
         let at = match choices
@@ -419,11 +294,7 @@ impl Apple2 {
         });
         self.in_drive[drive] = choices[at].filter(|_| disk.is_some());
         self.disk2.as_mut().unwrap().drives[drive].disk = disk;
-        self.show_disks();
-        self.notice = Some((
-            format!("Drive {}: {}", drive + 1, self.disk_name(drive)),
-            NOTICE_FRAMES,
-        ));
+        Some(format!("Drive {}: {}", drive + 1, self.disk_name(drive)))
     }
 
     /// The name of drive `drive`'s disk, its image's; or empty.
@@ -436,30 +307,23 @@ impl Apple2 {
         }
     }
 
-    /// What's in the drives, by their images' names: in the window's
-    /// title, or under the terminal's screen.
-    fn show_disks(&mut self) {
-        self.status = format!(
+    /// What's in the drives, by their images' names, if it has any: in the
+    /// window's title, or under the terminal's screen.
+    fn status(&self) -> String {
+        if self.disk2.is_none() {
+            return String::new();
+        }
+        format!(
             "Drive 1: {}   Drive 2: {}",
             self.disk_name(0),
             self.disk_name(1)
-        );
-        if let Some(display) = &mut self.display {
-            let name = if self.iie.is_some() {
-                "Apple //e"
-            } else {
-                "Apple ]["
-            };
-            display.title(&format!("{name}   {}", self.status));
-        }
-        self.shown.clear(); // the terminal's drawn again
+        )
     }
 
     /// Drive `drive`'s disk saved to its image, if it has been written:
     /// once it has stopped turning, so once what was writing it has
     /// finished, as DOS or a game lets the motor go when it has; or, `now`,
-    /// taken out or the machine going off. Saved to a file beside it, then
-    /// put in its place, so the image is never half saved.
+    /// taken out or the machine going off.
     fn save_disk(&mut self, drive: usize, now: bool) {
         let Some(card) = &mut self.disk2 else { return };
         if card.turning(drive) && !now {
@@ -472,12 +336,9 @@ impl Apple2 {
             return;
         };
         disk.written = false;
-        let saving = path.with_extension("saving");
-        let saved = disk.to_image().and_then(|image| {
-            std::fs::write(&saving, image)
-                .and_then(|_| std::fs::rename(&saving, &path))
-                .map_err(|e| e.to_string())
-        });
+        let saved = disk
+            .to_image()
+            .and_then(|image| files::save(&path, &image).map_err(|e| e.to_string()));
         if let Err(e) = saved {
             eprintln!("{}: not saved: {e}", path.display());
         }
@@ -610,7 +471,7 @@ impl Apple2 {
             }
             0xC000 => {
                 if self.keyboard & 0x80 == 0 {
-                    if let Some(key) = self.terminal_key().or_else(|| self.display_key()) {
+                    if let Some(key) = self.keys.pop_front() {
                         self.press(key);
                     }
                 }
@@ -625,7 +486,7 @@ impl Apple2 {
                     self.keyboard = key;
                 }
                 let high = if addr == 0xC010 {
-                    self.any_key_down()
+                    self.key_down
                 } else {
                     self.iie_status(addr)
                 };
@@ -657,7 +518,7 @@ impl Apple2 {
             // paddles, while their timers run; the cassette input, not.
             0xC060 => {
                 let high = match addr & 7 {
-                    button @ 1..=3 => self.joystick().buttons[button as usize - 1],
+                    button @ 1..=3 => self.joystick.buttons[button as usize - 1],
                     paddle @ 4..=7 => self.now < self.paddle_until[paddle as usize - 4],
                     _ => false,
                 };
@@ -724,39 +585,6 @@ impl Apple2 {
         self.iie.as_ref().map(|iie| iie.altcharset)
     }
 
-    /// The text screen in the terminal, if it has changed: inverse in
-    /// reverse video (below $40), and flashing (below $80) too while the
-    /// flash is on.
-    fn draw(&mut self) {
-        let flash_on = (self.frames / FLASH_FRAMES) % 2 == 0;
-        let mut screen = String::from("\x1B[H");
-        let lower = self.lower_case();
-        for row in 0..24 {
-            let mut reversed = false;
-            for b in self.row(row) {
-                let reverse = b < 0x40 || (b < 0x80 && flash_on);
-                if reverse != reversed {
-                    screen.push_str(if reverse { "\x1B[7m" } else { "\x1B[0m" });
-                    reversed = reverse;
-                }
-                screen.push(glyph(b, lower));
-            }
-            if reversed {
-                screen.push_str("\x1B[0m");
-            }
-            if row < 23 {
-                screen.push('\n');
-            }
-        }
-        if !self.status.is_empty() {
-            screen.push_str(&format!("\n\x1B[0m\x1B[K{}", self.status));
-        }
-        if screen != self.shown {
-            print!("{screen}");
-            let _ = std::io::stdout().flush();
-            self.shown = screen;
-        }
-    }
 }
 
 /// A screen byte's character: the II+'s 64, upper case letters and
@@ -852,9 +680,7 @@ impl Bus for Apple2 {
         for card in self.mockingboards.iter_mut().flatten() {
             card.tick();
         }
-        if self.display.is_some() {
-            self.sound_cycle();
-        }
+        self.sound_cycle();
         self.now += 1;
         self.cycle += 1;
         // A line ended: drawn, if it is one of those seen.
@@ -864,41 +690,11 @@ impl Bus for Apple2 {
                 self.draw_line(y);
             }
         }
-        // The frame ended: shown.
+        // The frame ended: over to the host.
         if self.cycle == CYCLES_PER_FRAME {
             self.cycle = 0;
             self.frames += 1;
-            // A notice over the picture, the next frame's lines drawing
-            // over it again.
-            if let Some((text, frames)) = &mut self.notice {
-                video::notice(&mut self.picture, text);
-                *frames -= 1;
-                if *frames == 0 {
-                    self.notice = None;
-                }
-            }
-            if let Some(display) = &mut self.display {
-                display.show(&self.picture, video::PICTURE_WIDTH, video::HEIGHT);
-                display.play(&self.sound);
-                self.sound.clear();
-            }
-            if self.terminal.is_some() {
-                self.draw();
-            }
-            self.function_keys();
-            self.reset_key();
-            self.save_disk(0, false);
-            self.save_disk(1, false);
-            // The window closed: the disks saved, and off.
-            if self
-                .display
-                .as_ref()
-                .is_some_and(|display| display.closed())
-            {
-                self.save_disk(0, true);
-                self.save_disk(1, true);
-                std::process::exit(0);
-            }
+            self.frame_ended = true;
         }
     }
 
@@ -913,8 +709,174 @@ impl Bus for Apple2 {
             .any(mockingboard::Mockingboard::irq)
     }
 
-    fn hand_back(&self) -> bool {
-        self.state_wanted.is_some()
+    fn hand_back(&mut self) -> bool {
+        std::mem::take(&mut self.frame_ended)
+    }
+}
+
+impl Machine for Apple2 {
+    fn picture(&mut self) -> Picture<'_> {
+        Picture {
+            pixels: &self.picture,
+            width: video::PICTURE_WIDTH,
+            height: video::HEIGHT,
+        }
+    }
+
+    /// The text screen: inverse in reverse video (below $40), and flashing
+    /// (below $80) too while the flash is on; what's in the drives under it.
+    fn text_screen(&self) -> Option<String> {
+        let flash_on = (self.frames / FLASH_FRAMES) % 2 == 0;
+        let mut screen = String::from("\x1B[H");
+        let lower = self.lower_case();
+        for row in 0..24 {
+            let mut reversed = false;
+            for b in self.row(row) {
+                let reverse = b < 0x40 || (b < 0x80 && flash_on);
+                if reverse != reversed {
+                    screen.push_str(if reverse { "\x1B[7m" } else { "\x1B[0m" });
+                    reversed = reverse;
+                }
+                screen.push(glyph(b, lower));
+            }
+            if reversed {
+                screen.push_str("\x1B[0m");
+            }
+            if row < 23 {
+                screen.push('\n');
+            }
+        }
+        let status = self.status();
+        if !status.is_empty() {
+            screen.push_str(&format!("\n\x1B[0m\x1B[K{status}"));
+        }
+        Some(screen)
+    }
+
+    fn title(&self) -> String {
+        let name = if self.iie.is_some() {
+            "Apple //e"
+        } else {
+            "Apple ]["
+        };
+        match self.status() {
+            status if status.is_empty() => name.to_string(),
+            status => format!("{name}   {status}"),
+        }
+    }
+
+    fn sound_on(&mut self) {
+        // The cone in, at rest.
+        let settle = || HighPass::settled(SETTLE, -VOLUME);
+        self.sound = Some(Sound {
+            sampler: Sampler::new(CLOCK_HZ),
+            settle: [settle(), settle()],
+        });
+    }
+
+    fn sound(&mut self) -> &mut Vec<f32> {
+        &mut self.samples
+    }
+
+    fn key(&mut self, key: Key) {
+        self.keys.extend(self.keyboard_key(key));
+    }
+
+    fn input(&mut self, input: Input) {
+        self.joystick = input.joystick;
+        self.key_down = input.key_down;
+    }
+
+    /// F8, the next monitor, colour or monochrome; F9, the next disk in
+    /// drive 1; F10, the next in drive 2, or none.
+    fn function_key(&mut self, key: u8) -> Option<String> {
+        match key {
+            8 => {
+                self.monitor = self.monitor.next();
+                Some(format!("Monitor: {}", self.monitor.name()))
+            }
+            9 => self.change_disk(0),
+            10 => self.change_disk(1),
+            _ => None,
+        }
+    }
+
+    /// Held, the cards are held reset, and the CPU.
+    fn reset_button(&mut self, held: bool) {
+        self.reset_held = held;
+        if held {
+            if let Some(card) = &mut self.language_card {
+                card.reset();
+            }
+            if let Some(iie) = &mut self.iie {
+                iie.reset();
+            }
+            if let Some(card) = &mut self.disk2 {
+                card.reset();
+            }
+            for card in self.mockingboards.iter_mut().flatten() {
+                card.reset();
+            }
+        }
+    }
+
+    /// The disks written saved, once they've stopped; or all of them,
+    /// the machine going off.
+    fn keep_saved(&mut self, closing: bool) {
+        self.save_disk(0, closing);
+        self.save_disk(1, closing);
+    }
+
+    /// Which Apple, a checksum of its ROMs (the Disk II's too), and the hard
+    /// disk's volumes: what a state of it leaves out.
+    fn identity(&self) -> String {
+        let mut roms = self.rom.clone();
+        if let Some(iie) = &self.iie {
+            roms.extend(&iie.internal_rom);
+            roms.extend(&iie.characters);
+        }
+        if let Some(card) = &self.disk2 {
+            card.roms().iter().for_each(|rom| roms.extend(*rom));
+        }
+        let name = if self.iie.is_some() {
+            "Apple //e"
+        } else {
+            "Apple ]["
+        };
+        let mut machine = format!("{name}, ROMs {:08X}", crc32(&roms));
+        if self.disk2.is_some() {
+            machine += ", a Disk II";
+        }
+        let units = self.hard_disk.iter().flat_map(|card| card.units.iter());
+        for volume in units.flatten() {
+            let path = std::fs::canonicalize(&volume.path).unwrap_or_else(|_| volume.path.clone());
+            machine += &format!(", the hard disk's {}", path.display());
+        }
+        machine
+    }
+
+    fn keep(&mut self, running: &mut Apple2) {
+        use std::mem::take;
+        self.rom = take(&mut running.rom);
+        self.picture = take(&mut running.picture);
+        self.monitor = running.monitor;
+        self.sound = running.sound.take();
+        self.samples = take(&mut running.samples);
+        self.joystick = running.joystick;
+        self.key_down = running.key_down;
+        if let (Some(iie), Some(running)) = (&mut self.iie, &mut running.iie) {
+            iie.internal_rom = take(&mut running.internal_rom);
+            iie.characters = take(&mut running.characters);
+        }
+        if let (Some(card), Some(running)) = (&mut self.disk2, &mut running.disk2) {
+            card.take_roms(running);
+        }
+        if let (Some(card), Some(running)) = (&mut self.hard_disk, &mut running.hard_disk) {
+            card.units = take(&mut running.units);
+        }
+        if let (Some(card), Some(running)) = (&mut self.clock, &running.clock) {
+            card.fixed = running.fixed;
+        }
     }
 }
 
@@ -1001,19 +963,19 @@ pub fn run(
         *card = Some(mockingboard::Mockingboard::new());
     }
 
-    if text {
-        apple.terminal = Some(Terminal::new());
-        print!("\x1B[2J"); // the screen cleared, for the Apple's
+    let display: Box<dyn Display> = if text {
+        Box::new(Terminal::new())
     } else {
-        apple.display = Some(Box::new(Window::new(
+        Box::new(Window::new(
             title,
             video::PICTURE_WIDTH,
             video::HEIGHT,
             size,
             fullscreen,
-        )));
-    }
+        ))
+    };
     // The images, the hard disk's volumes from the Disk II's.
+    let mut notice = None;
     let mut images = Vec::new();
     for disk in disks {
         images
@@ -1049,16 +1011,16 @@ pub fn run(
             Disk::open(image).unwrap_or_else(|e| panic!("{}: {e}", image.display()));
         }
         apple.disks = floppies;
-        apple.change_disk(0);
+        notice = apple.change_disk(0);
     }
 
     let mut cpu = CPU::with_bus(apple);
     cpu.clock_hz = CLOCK_HZ;
     cpu.variant = variant.unwrap_or(own_variant);
     cpu.reset();
-    // Run, handed back for a save state, saved or loaded, then on.
-    loop {
-        cpu.execute_forever();
-        save_state::wanted(&mut cpu, &state);
+    let mut host = Host::new(cpu, display, state);
+    if let Some(text) = notice {
+        host.say(text);
     }
+    host.run();
 }

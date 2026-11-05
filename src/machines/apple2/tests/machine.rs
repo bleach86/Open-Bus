@@ -6,16 +6,15 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::host::machine::{Input, Machine};
     use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::language_card::LanguageCard;
     use crate::machines::apple2::video::{self, Monitor, Source, LORES, Switches, HEIGHT, PICTURE_WIDTH, WIDTH};
     use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME, CYCLES_PER_LINE, VOLUME};
     use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
-    use crate::host::display::{Display, Joystick, Key};
-    use std::cell::{Cell, RefCell};
+    use crate::host::display::Joystick;
     use std::path::Path;
-    use std::rc::Rc;
 
     const BLACK: u32 = 0x000000;
     const WHITE: u32 = 0xFFFFFF;
@@ -177,21 +176,6 @@ mod tests {
         assert_eq!(cpu.memory.frames, 0, "a frame: 4,000 cycles are less");
     }
 
-    /// A window of the test's: its Reset key held as the test says.
-    struct ResetKey(Rc<Cell<bool>>);
-
-    impl Display for ResetKey {
-        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
-
-        fn key(&mut self) -> Option<Key> {
-            None
-        }
-
-        fn reset_held(&self) -> bool {
-            self.0.get()
-        }
-    }
-
     #[test]
     fn the_reset_key_holds_the_cpu_and_cards_then_starts_over() {
         let roms = Path::new(env!("CARGO_MANIFEST_DIR")).join("roms");
@@ -200,8 +184,6 @@ mod tests {
             return;
         };
         let mut apple = Apple2::new(rom);
-        let held = Rc::new(Cell::new(false));
-        apple.display = Some(Box::new(ResetKey(held.clone())));
         apple.language_card = Some(LanguageCard::new());
         apple.disk2 = Some(Disk2::new(vec![0; 256], &[0; 256]).unwrap());
         let mut cpu = CPU::with_bus(apple);
@@ -212,8 +194,8 @@ mod tests {
         cpu.memory.read(0xC0E9); // the drive's motor on
         cpu.memory.write(0x0400, 0xA0); // HELLO's H rubbed out
 
-        // Held: seen as the frame ends; then nothing runs.
-        held.set(true);
+        // Held: nothing runs.
+        cpu.memory.reset_button(true);
         cpu.execute(CYCLES_PER_FRAME);
         let pc = cpu.pc;
         cpu.execute(CYCLES_PER_FRAME);
@@ -225,7 +207,7 @@ mod tests {
         assert_eq!(&cpu.memory.text()[0][..5], " ELLO");
 
         // Let go: from the reset vector, HELLO again.
-        held.set(false);
+        cpu.memory.reset_button(false);
         cpu.execute(CYCLES_PER_FRAME + 2_000);
         assert_eq!(&cpu.memory.text()[0][..5], "HELLO", "not started over");
     }
@@ -307,25 +289,9 @@ mod tests {
         assert_eq!(picture_line(&ram, mixed, 160)[0], WHITE, "text at 160: the inverse space");
     }
 
-    /// A window of the test's: the frames shown, kept.
-    struct Shown(Rc<RefCell<Vec<Vec<u32>>>>);
-
-    impl Display for Shown {
-        fn show(&mut self, pixels: &[u32], width: usize, height: usize) {
-            assert_eq!((width, height), (PICTURE_WIDTH, HEIGHT));
-            self.0.borrow_mut().push(pixels.to_vec());
-        }
-
-        fn key(&mut self) -> Option<Key> {
-            None
-        }
-    }
-
     #[test]
     fn each_line_is_drawn_as_the_switches_are_then() {
         let mut apple = machine();
-        let frames = Rc::new(RefCell::new(Vec::new()));
-        apple.display = Some(Box::new(Shown(frames.clone())));
         for addr in 0x0400..0x0800 {
             apple.write(addr, 0xA0); // text: spaces
         }
@@ -341,14 +307,16 @@ mod tests {
         for _ in 100 * CYCLES_PER_LINE..CYCLES_PER_FRAME - 1 {
             apple.tick();
         }
-        assert!(frames.borrow().is_empty(), "shown before the frame's end");
+        assert!(!apple.hand_back(), "handed back before the frame's end");
         apple.tick();
+        assert!(apple.hand_back(), "not handed back at the frame's end");
+        assert!(!apple.hand_back(), "handed back twice");
 
-        let frames = frames.borrow();
-        assert_eq!(frames.len(), 1, "a frame shown");
+        let picture = apple.picture();
+        assert_eq!((picture.width, picture.height), (PICTURE_WIDTH, HEIGHT));
         // Each of a 40 column mode's dots two of the picture's.
-        assert!(frames[0].chunks(2).all(|pair| pair[0] == pair[1]), "a dot not shown twice");
-        let at = |x: usize, y: usize| frames[0][y * PICTURE_WIDTH + 2 * x];
+        assert!(picture.pixels.chunks(2).all(|pair| pair[0] == pair[1]), "a dot not shown twice");
+        let at = |x: usize, y: usize| picture.pixels[y * PICTURE_WIDTH + 2 * x];
         assert_eq!(at(0, 0), WHITE, "line 0: text, the inverse space");
         assert_eq!(at(0, 99), BLACK, "line 99: text, a space");
         assert_eq!(at(0, 128), LORES[0x0], "line 128: low-res, row 16's top: black");
@@ -356,27 +324,12 @@ mod tests {
         assert_eq!(at(7, 132), LORES[0xA], "line 132: the next block's, $A0's, grey");
     }
 
-    /// A window of the test's with a joystick held as it says.
-    struct Stick(Joystick);
-
-    impl Display for Stick {
-        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
-
-        fn key(&mut self) -> Option<Key> {
-            None
-        }
-
-        fn joystick(&self) -> Joystick {
-            self.0
-        }
-    }
-
     #[test]
     fn the_paddles_time_the_sticks_position() {
         let mut apple = machine();
         // Left and down: paddle 0 at 0, paddle 1 at 255.
         let stick = Joystick { x: -1.0, y: 1.0, buttons: [false; 3] };
-        apple.display = Some(Box::new(Stick(stick)));
+        apple.input(Input { joystick: stick, ..Input::default() });
         apple.read(0xC070);
         assert_eq!(apple.read(0xC064) & 0x80, 0, "paddle 0, at 0: still counting");
         for _ in 0..255 * 11 - 1 {
@@ -387,7 +340,7 @@ mod tests {
         assert_eq!(apple.read(0xC065) & 0x80, 0, "paddle 1: still counting after 255 steps");
 
         // Centred: 128, started again by a write.
-        apple.display = Some(Box::new(Stick(Joystick::CENTRED)));
+        apple.input(Input::default());
         apple.write(0xC070, 0);
         for _ in 0..128 * 11 - 1 {
             apple.tick();
@@ -402,33 +355,17 @@ mod tests {
         let mut apple = machine();
         assert_eq!(apple.read(0xC061) & 0x80, 0, "a button without a joystick");
         let stick = Joystick { buttons: [true, false, true], ..Joystick::CENTRED };
-        apple.display = Some(Box::new(Stick(stick)));
+        apple.input(Input { joystick: stick, ..Input::default() });
         assert_eq!(apple.read(0xC061) & 0x80, 0x80, "button 0");
         assert_eq!(apple.read(0xC062) & 0x80, 0, "button 1");
         assert_eq!(apple.read(0xC063) & 0x80, 0x80, "button 2");
-    }
-
-    /// A window of the test's: the sound it's given, kept.
-    struct Heard(Rc<RefCell<Vec<f32>>>);
-
-    impl Display for Heard {
-        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
-
-        fn key(&mut self) -> Option<Key> {
-            None
-        }
-
-        fn play(&mut self, samples: &[f32]) {
-            self.0.borrow_mut().extend_from_slice(samples);
-        }
     }
 
     /// 60 frames of the machine, $C030 read every `flip` cycles (0, never):
     /// the sound it played.
     fn sound(flip: u32) -> Vec<f32> {
         let mut apple = machine();
-        let heard = Rc::new(RefCell::new(Vec::new()));
-        apple.display = Some(Box::new(Heard(heard.clone())));
+        apple.sound_on();
         for cycle in 1..=60 * CYCLES_PER_FRAME {
             apple.tick();
             if flip != 0 && cycle % flip == 0 {
@@ -436,7 +373,7 @@ mod tests {
             }
         }
         // In stereo, a left sample then a right: the speaker in both.
-        let (left, right): (Vec<f32>, Vec<f32>) = heard.take().chunks(2).map(|frame| (frame[0], frame[1])).unzip();
+        let (left, right): (Vec<f32>, Vec<f32>) = apple.sound().chunks(2).map(|frame| (frame[0], frame[1])).unzip();
         assert_eq!(left, right, "the speaker not the same in both channels");
         left
     }
@@ -468,13 +405,12 @@ mod tests {
         assert!(sound(0).iter().all(|&s| s == 0.0), "a sound without a flip");
         // Flipped once, at the start: a click, then nothing.
         let mut apple = machine();
-        let heard = Rc::new(RefCell::new(Vec::new()));
-        apple.display = Some(Box::new(Heard(heard.clone())));
+        apple.sound_on();
         apple.read(0xC030);
         for _ in 0..10 * CYCLES_PER_FRAME {
             apple.tick();
         }
-        let samples = heard.take();
+        let samples = apple.sound();
         assert!(samples[0].abs() > VOLUME, "no click: the cone in to out, twice the volume");
         assert!(samples[samples.len() - 100..].iter().all(|s| s.abs() < 0.001), "still sounding");
     }
@@ -518,34 +454,13 @@ mod tests {
         assert_eq!(shown(&ram, hires, Monitor::Colour, 0)[0], LORES[3], "colour not as it was");
     }
 
-    /// A window of the test's: function keys pressed, as the test says.
-    struct FunctionKeys(Rc<RefCell<Vec<u8>>>);
-
-    impl Display for FunctionKeys {
-        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
-
-        fn key(&mut self) -> Option<Key> {
-            None
-        }
-
-        fn function_key(&mut self) -> Option<u8> {
-            let keys = &mut self.0.borrow_mut();
-            (!keys.is_empty()).then(|| keys.remove(0))
-        }
-    }
-
     #[test]
     fn f8_switches_the_monitor() {
         let mut apple = machine();
-        let keys = Rc::new(RefCell::new(Vec::new()));
-        apple.display = Some(Box::new(FunctionKeys(keys.clone())));
         for want in [Monitor::White, Monitor::Green, Monitor::Amber, Monitor::Colour] {
-            keys.borrow_mut().push(8);
-            for _ in 0..CYCLES_PER_FRAME {
-                apple.tick();
-            }
+            let notice = apple.function_key(8).expect("no notice of it");
             assert_eq!(apple.monitor, want, "F8");
-            assert!(apple.picture[(HEIGHT - 12) * PICTURE_WIDTH..].iter().any(|&dot| dot == WHITE), "no notice of it");
+            assert_eq!(notice, format!("Monitor: {}", want.name()));
         }
     }
 }

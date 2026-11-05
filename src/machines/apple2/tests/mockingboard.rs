@@ -7,14 +7,12 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::host::machine::Machine;
     use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
-    use crate::host::display::{Display, Key};
     use crate::machines::apple2::mockingboard::Mockingboard;
     use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME};
-    use std::cell::RefCell;
     use std::path::Path;
-    use std::rc::Rc;
 
     /// An Apple with the card, and a ROM of NOPs.
     fn machine() -> Apple2 {
@@ -164,29 +162,13 @@ mod tests {
         }
     }
 
-    /// A window of the test's: the sound played, kept.
-    struct Heard(Rc<RefCell<Vec<f32>>>);
-
-    impl Display for Heard {
-        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
-
-        fn key(&mut self) -> Option<Key> {
-            None
-        }
-
-        fn play(&mut self, samples: &[f32]) {
-            self.0.borrow_mut().extend_from_slice(samples);
-        }
-    }
-
     #[test]
     fn its_tone_is_heard() {
         let Some((mut cpu, _)) = program() else { return };
-        let heard = Rc::new(RefCell::new(Vec::new()));
-        cpu.memory.display = Some(Box::new(Heard(heard.clone())));
+        cpu.memory.sound_on();
         cpu.execute(60 * CYCLES_PER_FRAME);
         // In stereo: the first AY's tone on the left, nothing on the right.
-        let (left, right): (Vec<f32>, Vec<f32>) = heard.take().chunks(2).map(|frame| (frame[0], frame[1])).unzip();
+        let (left, right): (Vec<f32>, Vec<f32>) = cpu.memory.sound().chunks(2).map(|frame| (frame[0], frame[1])).unzip();
         assert!(right[800..].iter().all(|sample| sample.abs() < 0.001), "the first AY heard on the right");
         // The tone, period $123: clock / (16 x 291), its level crossing the
         // middle twice a cycle (after the first frame's settling).

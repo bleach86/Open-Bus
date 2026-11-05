@@ -12,10 +12,19 @@ mod chips {
     }
 }
 
-/// The host's side: its window, sound and controls, and its terminal.
+/// The host's side: what drives a machine, a frame at a time, and all that
+/// any machine shares: its window, sound and controls, its terminal, its
+/// notices, its save states.
 mod host {
     pub mod clock;
     pub mod display;
+    pub mod files;
+    pub mod font;
+    pub mod machine;
+    pub mod notice;
+    pub mod run;
+    pub mod save_state;
+    pub mod sound;
     pub mod terminal;
     pub mod window;
     pub mod zip;
@@ -23,6 +32,8 @@ mod host {
     #[cfg(test)]
     mod tests {
         mod clock;
+        mod notice;
+        mod run;
         mod zip;
     }
 }
@@ -32,7 +43,6 @@ mod machines {
     pub mod apple2;
     pub mod basic;
     pub mod nes;
-    pub mod save_state;
 }
 
 /// The machine to run: `cpu_emu` for this one, with BASIC; `cpu_emu apple2

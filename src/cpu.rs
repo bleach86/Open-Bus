@@ -187,7 +187,6 @@ impl<B: Bus> CPU<B> {
         self.stopped = false;
     }
 
-    /// Run, until the machine wants the run loop handed back.
     pub fn execute_forever(&mut self) {
         let cycles = u32::MAX;
 
@@ -197,6 +196,36 @@ impl<B: Bus> CPU<B> {
     #[allow(dead_code)]
     pub fn execute(&mut self, cycles: u32) {
         self.execute_inner(cycles, false);
+    }
+
+    /// A frame: run, as fast as it goes, until the machine hands the run
+    /// loop back as the frame ends. Its host keeps it to time.
+    pub fn run_frame(&mut self) {
+        while !self.memory.hand_back() {
+            self.run_step();
+        }
+    }
+
+    /// What's next: an instruction and its interrupt, or a cycle of waiting,
+    /// held or stopped.
+    fn run_step(&mut self) {
+        // RESET held: the 6502 only reads, a cycle at a time, until it's
+        // let go; then it resets, and runs on from the reset vector.
+        if self.memory.reset_held() {
+            self.read_byte(self.pc);
+            self.in_reset = true;
+        } else if self.in_reset {
+            self.in_reset = false;
+            self.reset();
+        } else if self.jammed.is_some() {
+            self.jammed_cycle();
+        } else if self.stopped {
+            self.advance_clock(); // its clock going, nothing on its bus
+        } else if self.waiting {
+            self.wait_cycle();
+        } else {
+            self.step();
+        }
     }
 
     /// The run loop: an instruction at a time, for `cycles` cycles. As on
@@ -211,28 +240,7 @@ impl<B: Bus> CPU<B> {
         while run_forever || total_cycles < cycles as u64 {
             let cycle_start = self.clock;
 
-            // RESET held: the 6502 only reads, a cycle at a time, until it's
-            // let go; then it resets, and runs on from the reset vector.
-            if self.memory.reset_held() {
-                self.read_byte(self.pc);
-                self.in_reset = true;
-            } else if self.in_reset {
-                self.in_reset = false;
-                self.reset();
-            } else if self.jammed.is_some() {
-                self.jammed_cycle();
-            } else if self.stopped {
-                self.advance_clock(); // its clock going, nothing on its bus
-            } else if self.waiting {
-                self.wait_cycle();
-            } else {
-                self.step();
-            }
-
-            // The machine wants it back, between instructions.
-            if self.memory.hand_back() {
-                break;
-            }
+            self.run_step();
 
             let used = self.clock.wrapping_sub(cycle_start) as u64;
             total_cycles += used;

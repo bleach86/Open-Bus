@@ -11,7 +11,7 @@
 
 use std::fs::OpenOptions;
 use std::io::{Seek, SeekFrom, Write};
-use crate::machines::save_state;
+use crate::host::save_state;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 

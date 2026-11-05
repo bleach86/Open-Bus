@@ -6,16 +6,14 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::host::machine::Machine;
     use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
     use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::disk_image::Disk;
     use crate::machines::apple2::language_card::LanguageCard;
-    use crate::host::display::{Display, Key};
     use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME};
-    use std::cell::Cell;
     use std::path::Path;
-    use std::rc::Rc;
 
     /// The machine with the card, and a ROM of $11s at $D000 and $22s at $E000 up.
     fn machine() -> Apple2 {
@@ -169,21 +167,6 @@ mod tests {
         line(cpu, 0) == prompt
     }
 
-    /// A window of the test's: its Reset key held as the test says.
-    struct ResetKey(Rc<Cell<bool>>);
-
-    impl Display for ResetKey {
-        fn show(&mut self, _: &[u32], _: usize, _: usize) {}
-
-        fn key(&mut self) -> Option<Key> {
-            None
-        }
-
-        fn reset_held(&self) -> bool {
-            self.0.get()
-        }
-    }
-
     #[test]
     fn dos_loads_integer_basic_into_it() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("roms/apple2");
@@ -202,8 +185,6 @@ mod tests {
         let mut apple = Apple2::new(rom);
         apple.language_card = Some(LanguageCard::new());
         apple.disk2 = Some(card);
-        let reset = Rc::new(Cell::new(false));
-        apple.display = Some(Box::new(ResetKey(reset.clone())));
         let mut cpu = CPU::with_bus(apple);
         cpu.clock_hz = u32::MAX; // as fast as it goes
         cpu.reset();
@@ -224,10 +205,10 @@ mod tests {
 
         // Reset: the card reads the ROM, and the ROM's reset goes to DOS's,
         // which switches it back in for Integer BASIC.
-        reset.set(true);
+        cpu.memory.reset_button(true);
         cpu.execute(2 * CYCLES_PER_FRAME);
         assert!(!cpu.memory.language_card.as_ref().unwrap().read_ram, "the card not reset");
-        reset.set(false);
+        cpu.memory.reset_button(false);
         cpu.execute(CYCLES_PER_FRAME);
         assert!(run_until(&mut cpu, ">", 1), "not back to Integer BASIC: {:#?}", cpu.memory.text());
         assert_eq!(cpu.memory.ram[0x25], 23, "the prompt not reset's, at the bottom: {:#?}", cpu.memory.text());

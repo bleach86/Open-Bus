@@ -35,7 +35,7 @@
 //! bit decaying to 0 if it isn't driven 1 again for 600 ms or so.
 
 use super::cartridge::Cartridge;
-use crate::machines::save_state;
+use crate::host::save_state;
 use serde::{Deserialize, Serialize};
 
 pub const WIDTH: usize = 256;

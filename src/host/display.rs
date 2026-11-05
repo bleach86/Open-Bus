@@ -4,12 +4,20 @@ pub const SAMPLE_RATE: u32 = 48_000;
 pub const CHANNELS: usize = 2;
 
 /// Where a machine's picture and sound go, and its keys and joystick come
-/// from: the host's window. A machine without one (its tests) shows and
-/// plays nothing.
+/// from: the host's window, or its terminal.
 pub trait Display {
     /// A finished frame: `width` by `height` pixels, 0xRRGGBB each, a line
     /// at a time from the top.
     fn show(&mut self, pixels: &[u32], width: usize, height: usize);
+
+    /// Whether it shows text alone, a machine's text screen, not a picture;
+    /// and plays nothing.
+    fn text_only(&self) -> bool {
+        false
+    }
+
+    /// A machine's text screen, with its escape sequences.
+    fn text(&mut self, _text: &str) {}
 
     /// The next key pressed, if there is one; the machine makes of it what
     /// its own keyboard would.
@@ -61,7 +69,7 @@ pub trait Display {
 
 /// A joystick as the host has it: its stick, -1 to 1 each way, right and
 /// down positive; and its buttons, pressed.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Joystick {
     pub x: f32,
     pub y: f32,

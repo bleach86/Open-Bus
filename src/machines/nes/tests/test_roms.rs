@@ -9,6 +9,7 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::host::machine::Machine;
     use crate::cpu::{Variant, CPU};
     use crate::machines::nes::cartridge::Cartridge;
     use crate::machines::nes::{self, Nes, CLOCK_HZ};
@@ -76,10 +77,13 @@ mod tests {
             }
             if asked_at.is_some_and(|at| cpu.clock - at > CLOCK_HZ / 20) && reset_at.is_none() && !let_go {
                 reset_at = Some(cpu.clock);
-                cpu.memory.reset_held = true;
+                cpu.memory.reset_button(true);
+            }
+            if reset_at.is_some() {
+                cpu.memory.reset_button(true);
             }
             if reset_at.is_some_and(|at| cpu.clock - at > CLOCK_HZ / 10) {
-                cpu.memory.reset_held = false;
+                cpu.memory.reset_button(false);
                 (reset_at, let_go) = (None, true);
             }
             if status < 0x80 {

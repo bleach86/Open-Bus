@@ -8,10 +8,11 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::host::machine::Machine;
     use crate::cpu::CPU;
     use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::disk_image::Disk;
-    use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME};
+    use crate::machines::apple2::{Apple2, CLOCK_HZ};
     use std::path::{Path, PathBuf};
 
     fn dir() -> PathBuf {
@@ -167,12 +168,13 @@ mod tests {
         cpu.memory.disk2.as_mut().unwrap().drives[0].disk.as_mut().unwrap().path = Some(file.clone());
         type_in(&mut cpu, b"NEW\r10 PRINT \"SAVED ON DISK\"\rSAVE TEST\rCATALOG\r");
         assert!(run_until(&mut cpu, " TEST", 10), "TEST not in the catalog: {:#?}", cpu.memory.text());
+        cpu.memory.keep_saved(false);
         assert!(!file.exists(), "saved while the disk was still turning");
         // Saved at the frame's end after the drive stops.
         while cpu.memory.disk2.as_ref().unwrap().spinning() {
             cpu.execute(100_000);
         }
-        cpu.execute(2 * CYCLES_PER_FRAME);
+        cpu.memory.keep_saved(false);
 
         let image = std::fs::read(&file).expect("the image not saved");
         std::fs::remove_file(&file).unwrap();
