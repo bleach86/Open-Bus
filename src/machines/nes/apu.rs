@@ -389,6 +389,18 @@ struct Dmc {
     bits: u8,
     silent: bool,
     irq: bool,
+    /// Cycles till a start or a stop takes effect, or a sample's end does:
+    /// a state's lost at most a DMA's timing, keeping them.
+    #[serde(skip)]
+    start_delay: u8,
+    #[serde(skip)]
+    stop_delay: u8,
+    /// Whether this cycle emptied its buffer; whether the last filled it,
+    /// too late for an output cycle ending on this one to see.
+    #[serde(skip)]
+    emptied: bool,
+    #[serde(skip)]
+    filled: bool,
 }
 
 impl Dmc {
@@ -413,7 +425,29 @@ impl Dmc {
         self.remaining = self.sample_length;
     }
 
+    /// Started or stopped by a write of $4015, on a get cycle or a put:
+    /// neither happens until the get of the APU cycle after next.
+    fn enable(&mut self, on: bool, get: bool) {
+        let delay = if get { 4 } else { 3 };
+        if on && self.remaining == 0 {
+            self.restart();
+            self.start_delay = delay;
+            self.stop_delay = 0; // a sample's end, no more
+        } else if !on && self.remaining > 0 && self.stop_delay == 0 {
+            self.stop_delay = delay;
+        }
+    }
+
     fn cycle(&mut self) {
+        self.emptied = false;
+        let filled = std::mem::take(&mut self.filled);
+        self.start_delay = self.start_delay.saturating_sub(1);
+        if self.stop_delay > 0 {
+            self.stop_delay -= 1;
+            if self.stop_delay == 0 {
+                self.remaining = 0;
+            }
+        }
         if self.timer > 0 {
             self.timer -= 1;
             return;
@@ -432,36 +466,51 @@ impl Dmc {
         self.bits -= 1;
         if self.bits == 0 {
             self.bits = 8;
-            match self.buffer.take() {
+            match self.buffer.take_if(|_| !filled) {
                 Some(byte) => {
                     self.silent = false;
                     self.shift = byte;
+                    self.emptied = true;
                 }
                 None => self.silent = true,
             }
         }
     }
 
-    /// The address of the byte it wants read, if it does: its buffer
-    /// empty, and more of the sample.
-    fn wants(&self) -> Option<u16> {
-        (self.buffer.is_none() && self.remaining > 0).then_some(self.address)
+    /// Whether it wants a byte read: its buffer empty, it's started, and
+    /// more of the sample. Or its buffer's emptied just as it's stopping:
+    /// its DMA will only get as far as its halt.
+    fn wants(&self) -> bool {
+        self.buffer.is_none()
+            && self.start_delay == 0
+            && (self.remaining > 0 || self.emptied && self.stopping())
     }
 
-    /// The byte read for it, by DMA.
+    /// Whether it stops on the next cycle.
+    fn stopping(&self) -> bool {
+        self.stop_delay == 1
+    }
+
+    /// The byte read for it, by DMA. A sample's end stops it as a write
+    /// to $4015 would, a get having been a cycle before such a write's put.
     fn fill(&mut self, byte: u8) {
         self.buffer = Some(byte);
+        self.filled = true;
         self.address = if self.address == 0xFFFF {
             0x8000
         } else {
             self.address + 1
         };
+        if self.remaining == 0 {
+            return; // stopped in the DMA's last cycles
+        }
         self.remaining -= 1;
         if self.remaining == 0 {
             if self.looping {
                 self.restart();
-            } else if self.irq_enabled {
-                self.irq = true;
+            } else {
+                self.stop_delay = 4;
+                self.irq |= self.irq_enabled;
             }
         }
     }
@@ -489,6 +538,14 @@ pub struct Apu {
     block: u8,
     /// The last value written to $4017, for RESET.
     last_4017: u8,
+    /// Cycles till a read of $4015 clears the frame counter's flag.
+    #[serde(skip)]
+    frame_irq_clear: u8,
+    /// The flag as $4015 shows it while IRQs are inhibited: 2 cycles a
+    /// frame anyway. That pulls no IRQ: games inhibit it and use the CPU's
+    /// IRQ for their mappers, and none's disturbed on a real console.
+    #[serde(skip)]
+    frame_irq_glimpse: bool,
 }
 
 impl Apu {
@@ -526,6 +583,10 @@ impl Apu {
                 bits: 8,
                 silent: true,
                 irq: false,
+                start_delay: 0,
+                stop_delay: 0,
+                emptied: false,
+                filled: false,
             },
             mode: 0,
             irq_inhibit: false,
@@ -536,6 +597,8 @@ impl Apu {
             write_delay: 0,
             block: 0,
             last_4017: 0,
+            frame_irq_clear: 0,
+            frame_irq_glimpse: false,
         };
         // At power-on, as if $4017 had been written 0 9 to 12 cycles before
         // the CPU's first instruction, its reset's 7 cycles before it: so 2
@@ -561,6 +624,7 @@ impl Apu {
         }
         self.triangle.length.enabled = false;
         self.dmc.remaining = 0;
+        self.dmc.stop_delay = 0;
         self.dmc.irq = false;
         self.frame_irq = false;
         self.write_frame_counter(self.last_4017, false);
@@ -574,7 +638,7 @@ impl Apu {
     /// $4015 read: each length counter's not 0, the DMC's sample not done,
     /// the frame and DMC IRQ flags; bit 5 the bus's, `open_bus`. The frame
     /// IRQ flag cleared.
-    pub fn status(&mut self, open_bus: u8) -> u8 {
+    pub fn status(&mut self, open_bus: u8, get: bool) -> u8 {
         let lengths = [
             &self.pulses[0].length,
             &self.pulses[1].length,
@@ -585,9 +649,11 @@ impl Apu {
             status | ((length.counter > 0) as u8) << n
         });
         status |= ((self.dmc.remaining > 0) as u8) << 4
-            | (self.frame_irq as u8) << 6
+            | ((self.frame_irq || self.frame_irq_glimpse) as u8) << 6
             | (self.dmc.irq as u8) << 7;
-        self.frame_irq = false;
+        if self.frame_irq_clear == 0 {
+            self.frame_irq_clear = if get { 2 } else { 1 };
+        }
         status | (open_bus & 0x20)
     }
 
@@ -606,11 +672,7 @@ impl Apu {
                 self.triangle.length.enable(value & 0x04 != 0);
                 self.noise.length.enable(value & 0x08 != 0);
                 self.dmc.irq = false;
-                if value & 0x10 == 0 {
-                    self.dmc.remaining = 0;
-                } else if self.dmc.remaining == 0 {
-                    self.dmc.restart();
-                }
+                self.dmc.enable(value & 0x10 != 0, odd);
             }
             0x4017 => self.write_frame_counter(value, odd),
             _ => {}
@@ -660,6 +722,10 @@ impl Apu {
     /// A CPU cycle: the frame counter, the channels' timers; then the
     /// length counters' loads and halts.
     pub fn cycle(&mut self) {
+        if self.frame_irq_clear > 0 {
+            self.frame_irq_clear -= 1;
+            self.frame_irq &= self.frame_irq_clear > 0;
+        }
         self.frame_counter();
         for pulse in &mut self.pulses {
             pulse.cycle();
@@ -682,8 +748,9 @@ impl Apu {
         self.frame_cycle += 1;
         let mode = self.mode as usize;
         if self.frame_cycle == STEPS[self.region as usize][mode][self.frame_step] {
-            if mode == 0 && self.frame_step >= 3 && !self.irq_inhibit {
-                self.frame_irq = true;
+            if mode == 0 && self.frame_step >= 3 {
+                self.frame_irq |= !self.irq_inhibit;
+                self.frame_irq_glimpse = self.irq_inhibit && self.frame_step < 5;
             }
             let frame = FRAMES[self.frame_step];
             if frame != Frame::None && self.block == 0 {
@@ -716,9 +783,20 @@ impl Apu {
         self.block = self.block.saturating_sub(1);
     }
 
-    /// The address the DMC wants read, if it does.
-    pub fn dmc_wants(&self) -> Option<u16> {
+    /// Whether the DMC wants a byte read.
+    pub fn dmc_wants(&self) -> bool {
         self.dmc.wants()
+    }
+
+    /// Whether the DMC stops on the next cycle: a DMA of it halted on this
+    /// one goes no further.
+    pub fn dmc_stopping(&self) -> bool {
+        self.dmc.stopping()
+    }
+
+    /// Where the DMC reads its next byte.
+    pub fn dmc_address(&self) -> u16 {
+        self.dmc.address
     }
 
     /// The DMC's byte, read for it.

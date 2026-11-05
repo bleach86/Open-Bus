@@ -5,7 +5,8 @@
 //! then DE B0 61; then its text), the 2005 ones at $F8, or the PPU's at
 //! $F0 (1 passed, else the number of the check that failed). They're in roms/nes/tests/ (not part
 //! of the repository, from github.com/christopherpow/nes-test-roms);
-//! without them, the tests say so and pass.
+//! without them, the tests say so and pass. And AccuracyCoin, beside them:
+//! a score, which isn't to go down.
 
 #[cfg(test)]
 mod tests {
@@ -304,6 +305,26 @@ mod tests {
         roms.extend(named("cpu_reset", &["ram_after_reset", "registers"]));
         roms.push("ppu_read_buffer/test_ppu_read_buffer.nes".to_string());
         run_all(&strs(&roms), newer_passes);
+    }
+
+    /// What AccuracyCoin passes of its 147, all but what the PPU's left.
+    const ACCURACY_COIN: u8 = 132;
+
+    #[test]
+    fn accuracy_coin_keeps_its_score() {
+        let path = dir().parent().unwrap().join("AccuracyCoin.nes");
+        let Some(mut cpu) = nes(&path) else {
+            eprintln!("nes test: no AccuracyCoin in roms/nes/tests/");
+            return;
+        };
+        // Up to "run every test" at the top of its menu, and Start.
+        for (tenths, up, start) in [(10, false, false), (2, true, false), (2, false, false), (2, false, true), (900, false, false)] {
+            cpu.memory.gamepad.up = up;
+            cpu.memory.gamepad.start = start;
+            cpu.execute(tenths * CLOCK_HZ / 10);
+        }
+        let (passed, ran) = (cpu.memory.ram[0x38], cpu.memory.ram[0x37]);
+        assert!(ran == 147 && passed >= ACCURACY_COIN, "{passed} of {ran}, not {ACCURACY_COIN}");
     }
 
     #[test]

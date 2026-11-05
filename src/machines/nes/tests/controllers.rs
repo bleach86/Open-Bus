@@ -1,5 +1,6 @@
 //! The controllers: each latched and read a bit at a time from its own
-//! register, whichever's held, and the second no different from the first.
+//! register, whichever's held, and the second no different from the first;
+//! and when a write of $4016 reaches them.
 
 #[cfg(test)]
 mod tests {
@@ -15,10 +16,17 @@ mod tests {
         Nes::new(Cartridge::new(&image).unwrap())
     }
 
+    /// $4016 written, and the time for it to reach the controllers.
+    fn write(nes: &mut Nes, value: u8) {
+        nes.write(0x4016, value);
+        nes.tick();
+        nes.tick();
+    }
+
     /// $4016 strobed, then eight reads of `register`, a bit each.
     fn read(nes: &mut Nes, register: u16) -> [u8; 8] {
-        nes.write(0x4016, 1);
-        nes.write(0x4016, 0);
+        write(nes, 1);
+        write(nes, 0);
         [0; 8].map(|_| nes.read(register) & 1)
     }
 
@@ -37,8 +45,8 @@ mod tests {
         let mut nes = nes();
         nes.gamepad = Gamepad { a: true, ..Gamepad::default() };
         nes.gamepad_2 = Gamepad { a: true, b: true, ..Gamepad::default() };
-        nes.write(0x4016, 1);
-        nes.write(0x4016, 0);
+        write(&mut nes, 1);
+        write(&mut nes, 0);
         assert_eq!(nes.read(0x4016) & 1, 1, "the first's A");
         assert_eq!(nes.read(0x4016) & 1, 0, "the first's B");
         assert_eq!(nes.read(0x4017) & 1, 1, "the second's A, after the first's B");
@@ -65,9 +73,41 @@ mod tests {
     fn while_latching_each_reads_its_a() {
         let mut nes = nes();
         nes.gamepad_2 = Gamepad { a: true, ..Gamepad::default() };
-        nes.write(0x4016, 1);
+        write(&mut nes, 1);
         for _ in 0..4 {
             assert_eq!((nes.read(0x4016) & 1, nes.read(0x4017) & 1), (0, 1));
         }
+    }
+
+    /// A 1 written to $4016 for a cycle, as DEC $4016 does, its value's
+    /// bit 0 set, starting on a get or not: what's then read of A, held.
+    fn strobe_for_a_cycle(on_a_get: bool) -> u8 {
+        let mut nes = nes();
+        read(&mut nes, 0x4016); // nothing latched but 1s from here
+        nes.gamepad = Gamepad { a: true, ..Gamepad::default() };
+        if (nes.cycles % 2 == 1) != on_a_get {
+            nes.tick();
+        }
+        nes.write(0x4016, 1);
+        nes.tick();
+        nes.write(0x4016, 0);
+        nes.tick();
+        nes.tick();
+        nes.read(0x4016) & 1
+    }
+
+    #[test]
+    fn a_strobe_of_a_cycle_from_a_get_to_a_put_is_seen() {
+        assert_eq!(strobe_for_a_cycle(true), 1, "A latched");
+    }
+
+    #[test]
+    fn a_strobe_of_a_cycle_from_a_put_to_a_get_is_not() {
+        let unlatched = {
+            let mut nes = nes();
+            read(&mut nes, 0x4016);
+            nes.read(0x4016) & 1
+        };
+        assert_eq!(strobe_for_a_cycle(false), unlatched, "the 1s after the 8th");
     }
 }

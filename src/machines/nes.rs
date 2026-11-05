@@ -20,7 +20,11 @@
 //! its cycles go on beside OAM DMA's, but for its get, which OAM DMA waits
 //! for, a cycle more to line up again: 2 more cycles; 1 or 3 at OAM DMA's
 //! end. On a halted cycle neither does anything with, the CPU's read is
-//! made again.
+//! made again. A start or stop of the DMC's by a write of $4015 takes 3 or
+//! 4 cycles to arrive, and a sample's end as long: a DMA caught by one gets
+//! no further than its halt, or if the CPU's writing, doesn't happen. DMA
+//! reads are on the external bus alone, and answered by the APU's registers
+//! only if the CPU was reading them when it was halted; see `dma_read`.
 //!
 //! Its sound, the APU's, through the filters the NES's own output has: a
 //! low-pass at 14 kHz, on the signal as it is, a cycle at a time, with
@@ -31,7 +35,9 @@
 //! takes the bass out of the triangle, and sounds bad.
 //!
 //! A controller, its 8 buttons latched while $4016's bit 0 is written 1,
-//! read a bit at a time (bit 0 of $4016 or $4017) once it's 0: A, B,
+//! as a put cycle begins, so that a 1 written on a put and gone by the get
+//! after is never seen; read a bit at a time (bit 0 of $4016 or $4017) once
+//! it's 0: A, B,
 //! Select, Start, Up, Down, Left, Right; then 1s. The first is the
 //! window's first gamepad and its keys; the second, its second gamepad.
 //!
@@ -151,6 +157,12 @@ pub struct Nes {
     #[serde(skip)]
     frame_ended: bool,
     reset_held: bool,
+    /// What's on the chip's own data bus, which every read and write of the
+    /// CPU's puts there, and DMA's don't; and $4016's bit 0, as last written.
+    #[serde(skip)]
+    internal_bus: u8,
+    #[serde(skip)]
+    strobe_written: bool,
     /// Its region, from its game: a state's loaded into one of the same.
     #[serde(skip)]
     pub region: Region,
@@ -194,6 +206,8 @@ impl Nes {
             cartridge,
             shifts: [0; 2],
             strobe: false,
+            strobe_written: false,
+            internal_bus: 0,
             open_bus: 0,
             dma: None,
             dmc_dma: None,
@@ -249,7 +263,7 @@ impl Nes {
         match addr {
             0x0000..=0x1FFF => self.ram[addr as usize & 0x7FF],
             0x2000..=0x3FFF => self.ppu.read_register(addr, &mut self.cartridge),
-            0x4015 => self.apu.status(self.open_bus),
+            0x4015 => self.apu.status(self.internal_bus, self.cycles % 2 == 1),
             0x4016 | 0x4017 => self.controller(addr as usize - 0x4016) | (self.open_bus & 0xE0),
             0x4000..=0x401F => self.open_bus,
             _ => self.cartridge.cpu_read(addr).unwrap_or(self.open_bus),
@@ -267,11 +281,8 @@ impl Nes {
             Some(DmcStep::Halt) => self.dmc_dma = Some(DmcStep::Dummy),
             Some(DmcStep::Dummy) => self.dmc_dma = Some(DmcStep::Get),
             Some(DmcStep::Get) if get => {
-                if let Some(addr) = self.apu.dmc_wants() {
-                    let byte = self.cpu_read(addr);
-                    self.open_bus = byte;
-                    self.apu.dmc_fill(byte);
-                }
+                let byte = self.dma_read(self.apu.dmc_address());
+                self.apu.dmc_fill(byte);
                 self.dmc_dma = None;
                 busy = true;
             }
@@ -281,12 +292,12 @@ impl Nes {
             match dma.value {
                 None if get => {
                     let addr = (dma.page as u16) << 8 | dma.done;
-                    let value = self.cpu_read(addr);
-                    self.open_bus = value;
+                    let value = self.dma_read(addr);
                     self.dma.as_mut().unwrap().value = Some(value);
                     busy = true;
                 }
                 Some(value) if !get => {
+                    self.open_bus = value;
                     self.ppu.dma_write(value);
                     let dma = self.dma.as_mut().unwrap();
                     dma.value = None;
@@ -303,10 +314,37 @@ impl Nes {
         // cycle, so a read of a register isn't made again.
         let register = (0x2000..0x4020).contains(&self.halted_on);
         if !busy && !(self.region == Region::Pal && register && self.dma.is_none()) {
-            let value = self.cpu_read(self.halted_on);
-            self.open_bus = value;
+            self.read(self.halted_on);
         }
         self.halted = self.dma.is_some() || self.dmc_dma.is_some();
+    }
+
+    /// A byte read by DMA, on the external bus alone. Only its address's low
+    /// 5 bits are the DMA's: the rest stay the CPU's, so the APU's registers
+    /// answer it, in their mirrors everywhere, if the CPU was reading them,
+    /// and not otherwise, even at their own address. $4015's is read inside
+    /// the chip, the bus left as it is but for its open bit. A controller's
+    /// bits 0 to 4 win on the bus, for the CPU to see, against anything
+    /// driving it; that, not they, is what the DMA gets.
+    fn dma_read(&mut self, addr: u16) -> u8 {
+        let driving = match addr {
+            0x4000..=0x401F => None,
+            0x4020..=0xFFFF => self.cartridge.cpu_read(addr),
+            _ => Some(self.cpu_read(addr)),
+        };
+        self.open_bus = driving.unwrap_or(self.open_bus);
+        if self.halted_on & 0xFFE0 != 0x4000 {
+            return self.open_bus;
+        }
+        match 0x4000 | (addr & 0x1F) {
+            0x4015 => self.apu.status(self.open_bus, self.cycles % 2 == 1),
+            register @ (0x4016 | 0x4017) => {
+                let bits = self.controller(register as usize - 0x4016);
+                self.open_bus = self.open_bus & 0xE0 | bits;
+                driving.unwrap_or(self.open_bus)
+            }
+            _ => self.open_bus,
+        }
     }
 
     /// The cartridge's battery-backed RAM saved to its file, if it's been
@@ -346,11 +384,13 @@ impl Bus for Nes {
         if addr != 0x4015 {
             self.open_bus = value;
         }
+        self.internal_bus = value;
         value
     }
 
     fn write(&mut self, addr: u16, value: u8) {
         self.open_bus = value;
+        self.internal_bus = value;
         match addr {
             0x0000..=0x1FFF => self.ram[addr as usize & 0x7FF] = value,
             0x2000..=0x3FFF => {
@@ -365,12 +405,7 @@ impl Bus for Nes {
                     done: 0,
                 })
             }
-            0x4016 => {
-                self.strobe = value & 1 != 0;
-                if self.strobe {
-                    self.latch();
-                }
-            }
+            0x4016 => self.strobe_written = value & 1 != 0,
             0x4000..=0x4017 => self.apu.write(addr, value, self.cycles % 2 == 1),
             0x4018..=0x401F => {}
             _ => self.cartridge.cpu_write(addr, value, self.cycles),
@@ -393,10 +428,20 @@ impl Bus for Nes {
         for _ in 1..self.region.dots(self.cycles) {
             self.ppu.tick(&mut self.cartridge);
         }
+        // A write of $4016 only reaches the controllers as a put begins.
+        if self.cycles % 2 == 0 {
+            self.strobe = self.strobe_written;
+            if self.strobe {
+                self.latch();
+            }
+        }
+        if self.dmc_dma == Some(DmcStep::Halt) && !self.apu.dmc_wants() {
+            self.dmc_dma = None; // stopped before it could halt the CPU
+        }
         if self.halted {
             self.dma_cycle();
         }
-        if self.dmc_dma.is_none() && self.apu.dmc_wants().is_some() {
+        if self.dmc_dma.is_none() && self.apu.dmc_wants() {
             self.dmc_dma = Some(DmcStep::Halt);
         }
         self.sound_cycle();
@@ -420,16 +465,18 @@ impl Bus for Nes {
     }
 
     /// Halted on a read of `addr`: its cycle the DMC's halt, if it's
-    /// waiting for one, the CPU not halted already.
+    /// waiting for one, the CPU not halted already; and all of its DMA,
+    /// if the DMC stops on the next cycle.
     fn halt(&mut self, addr: u16) -> bool {
         let wanted = self.dma.is_some() || self.dmc_dma.is_some();
         if wanted && !self.halted {
             self.halted_on = addr;
             if self.dmc_dma == Some(DmcStep::Halt) {
-                self.dmc_dma = Some(DmcStep::Dummy);
+                let aborted = self.apu.dmc_stopping();
+                self.dmc_dma = (!aborted).then_some(DmcStep::Dummy);
             }
         }
-        self.halted = wanted;
+        self.halted = self.dma.is_some() || self.dmc_dma.is_some();
         wanted
     }
 
