@@ -50,6 +50,35 @@
 //! it's read too, a half not read reading 0 while the other is.
 //!
 //! 7, AxROM: a 32K bank, and which 1K all four nametables are.
+//!
+//! 11, Color Dreams: a 32K bank (bits 0 and 1) and an 8K bank of CHR (bits
+//! 4 to 7). Its bus conflicts only as NES 2.0's submapper 2 says: a plain
+//! header doesn't say which board it is, and a game of a board without
+//! them doesn't run with them.
+//!
+//! 34: two boards unrelated. BNROM (NES 2.0's submapper 2, or up to 8K of
+//! CHR): a 32K bank, with bus conflicts. NINA-001 (submapper 1, or more
+//! CHR): at $7FFD a 32K bank, at $7FFE and $7FFF the 4K banks of CHR at
+//! $0000 and $1000, the writes going to the PRG RAM under them too.
+//!
+//! 66, GxROM: a 32K bank (bits 4 and 5) and an 8K bank of CHR (bits 0 and
+//! 1), with bus conflicts.
+//!
+//! 71, Camerica: a 16K bank at $8000, written at $C000 up, the last fixed
+//! at $C000. Fire Hawk's board has which 1K all four nametables are too,
+//! written at $9000: not at $8000, which games on the others write.
+//!
+//! 79, NINA-03 and 06: a register where the address is 010x xxx1 xxxx
+//! xxxx, $4100 and every other 256 bytes to $5FFF: a 32K bank (bit 3) and
+//! an 8K bank of CHR (bits 0 to 2).
+//!
+//! 144: Color Dreams' board with a resistor put in the way of D0, Death
+//! Race's, its ROM's bit 0 always winning; known by its ROM too, its
+//! header often saying 11.
+//!
+//! Bus conflicts: on a board whose register is written with its ROM still
+//! driving the bus, the bits it holds low win; the register's given what
+//! was written ANDed with the ROM's byte there.
 
 use serde::{Deserialize, Serialize};
 
@@ -113,9 +142,54 @@ pub struct Mmc3 {
     a12_low_since: Option<u64>,
 }
 
+/// What a board's register gets of a write, with its ROM's `rom` there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Conflicts {
+    None,
+    And,
+    /// As And, but the ROM's bit 0 is all that bit gets: mapper 144's.
+    RomD0,
+}
+
+impl Conflicts {
+    fn on(self, value: u8, rom: u8) -> u8 {
+        match self {
+            Conflicts::None => value,
+            Conflicts::And => value & rom,
+            Conflicts::RomD0 => (value | 1) & rom,
+        }
+    }
+}
+
+/// A board's two banks: 32K of PRG and 8K of CHR; and writing them's bus
+/// conflicts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Banks {
+    prg: u8,
+    chr: u8,
+    conflicts: Conflicts,
+}
+
+impl Banks {
+    fn new(conflicts: Conflicts) -> Banks {
+        Banks { prg: 0, chr: 0, conflicts }
+    }
+}
+
+/// NINA-001's registers: its 32K bank, and its two 4K banks of CHR.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Nina001 {
+    prg: u8,
+    chr: [u8; 2],
+}
+
 /// The MMC6's games, by their ROMs' CRC-32: StarTropics, and StarTropics
 /// II.
 const MMC6_GAMES: [u32; 2] = [0x8891_29CB, 0xD054_FFB0];
+
+/// Mapper 144's game by its ROM's CRC-32, for a header saying 11: Death
+/// Race.
+const MAPPER_144_GAMES: [u32; 1] = [0x5CAA_3E61];
 
 /// How long A12 must be low, in PPU dots, for its rise to clock MMC3's
 /// IRQ counter: about three CPU cycles. Not between a line's sprites'
@@ -131,6 +205,12 @@ pub enum Mapper {
     Cnrom(u8),
     Mmc3(Mmc3),
     Axrom(u8),
+    ColorDreams(Banks),
+    Camerica(u8),
+    Nina03(Banks),
+    Gxrom(Banks),
+    Bnrom(u8),
+    Nina001(Nina001),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -180,14 +260,15 @@ impl Cartridge {
             prg_ram_size = sizes(header[10]);
             chr_ram_size = sizes(header[11]);
         }
+        let submapper = if nes2 { header[8] >> 4 } else { 0 };
         let start = HEADER + if header[6] & 0x04 != 0 { TRAINER } else { 0 };
         let prg_rom = image.get(start..start + prg_size).ok_or("its PRG ROM cut short")?.to_vec();
         let chr_rom = image.get(start + prg_size..start + prg_size + chr_size).ok_or("its CHR ROM cut short")?.to_vec();
         if prg_rom.is_empty() {
             return Err("no PRG ROM".to_string());
         }
-        let mmc6 = number == 4
-            && ((nes2 && header[8] >> 4 == 1) || MMC6_GAMES.contains(&crate::host::zip::crc32(&[&prg_rom[..], &chr_rom[..]].concat())));
+        let rom_crc = crate::host::zip::crc32(&[&prg_rom[..], &chr_rom[..]].concat());
+        let mmc6 = number == 4 && ((nes2 && header[8] >> 4 == 1) || MMC6_GAMES.contains(&rom_crc));
         if mmc6 && !nes2 {
             prg_ram_size = 0x400;
         }
@@ -216,6 +297,15 @@ impl Cartridge {
                 a12_low_since: None,
             }),
             7 => Mapper::Axrom(0),
+            11 if MAPPER_144_GAMES.contains(&rom_crc) => Mapper::ColorDreams(Banks::new(Conflicts::RomD0)),
+            11 if nes2 && submapper == 2 => Mapper::ColorDreams(Banks::new(Conflicts::And)),
+            11 => Mapper::ColorDreams(Banks::new(Conflicts::None)),
+            144 => Mapper::ColorDreams(Banks::new(Conflicts::RomD0)),
+            34 if submapper == 1 || (submapper != 2 && chr_size > CHR_BANK) => Mapper::Nina001(Nina001::default()),
+            34 => Mapper::Bnrom(0),
+            66 => Mapper::Gxrom(Banks::new(Conflicts::And)),
+            71 => Mapper::Camerica(0),
+            79 => Mapper::Nina03(Banks::new(Conflicts::None)),
             _ => return Err(format!("mapper {number}, which isn't here yet")),
         };
         let chr_ram = if chr_rom.is_empty() { vec![0; chr_ram_size.max(CHR_BANK)] } else { Vec::new() };
@@ -247,8 +337,10 @@ impl Cartridge {
         let in_16k = |bank: usize| bank * PRG_BANK + (addr & 0x3FFF);
         let offset = match &self.mapper {
             Mapper::Nrom | Mapper::Cnrom(_) => addr - 0x8000,
-            Mapper::Uxrom(bank) => in_16k(if addr < 0xC000 { *bank as usize } else { last_16k }),
-            Mapper::Axrom(bank) => (*bank as usize) * 0x8000 + (addr & 0x7FFF),
+            Mapper::Uxrom(bank) | Mapper::Camerica(bank) => in_16k(if addr < 0xC000 { *bank as usize } else { last_16k }),
+            Mapper::Axrom(bank) | Mapper::Bnrom(bank) => (*bank as usize) * 0x8000 + (addr & 0x7FFF),
+            Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.prg as usize * 0x8000 + (addr & 0x7FFF),
+            Mapper::Nina001(nina) => nina.prg as usize * 0x8000 + (addr & 0x7FFF),
             Mapper::Mmc1(mmc1) => {
                 // On 512K boards, CHR bank 0's bit 4 picks which 256K.
                 let outer = if len > 0x40000 { mmc1.chr[0] as usize & 0x10 } else { 0 };
@@ -279,8 +371,10 @@ impl Cartridge {
     fn chr_offset(&self, addr: u16) -> usize {
         let addr = addr as usize;
         let offset = match &self.mapper {
-            Mapper::Nrom | Mapper::Uxrom(_) | Mapper::Axrom(_) => addr,
+            Mapper::Nrom | Mapper::Uxrom(_) | Mapper::Axrom(_) | Mapper::Camerica(_) | Mapper::Bnrom(_) => addr,
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
+            Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.chr as usize * CHR_BANK + addr,
+            Mapper::Nina001(nina) => nina.chr[addr >> 12] as usize * 0x1000 + (addr & 0x0FFF),
             Mapper::Mmc1(mmc1) => match mmc1.control & 0x10 {
                 0 => (mmc1.chr[0] as usize & 0x1E) * 0x1000 + addr,
                 _ => mmc1.chr[addr >> 12] as usize * 0x1000 + (addr & 0x0FFF),
@@ -341,7 +435,20 @@ impl Cartridge {
     /// A write to $4020 to $FFFF, on CPU cycle `cycle`: its PRG RAM, or its
     /// mapper's registers.
     pub fn cpu_write(&mut self, addr: u16, value: u8, cycle: u64) {
+        if let (0x4020..=0x5FFF, Mapper::Nina03(banks)) = (addr, &mut self.mapper) {
+            if addr & 0xE100 == 0x4100 {
+                (banks.prg, banks.chr) = ((value >> 3) & 1, value & 7);
+            }
+            return;
+        }
         if let 0x6000..=0x7FFF = addr {
+            if let Mapper::Nina001(nina) = &mut self.mapper {
+                match addr {
+                    0x7FFD => nina.prg = value & 1,
+                    0x7FFE | 0x7FFF => nina.chr[addr as usize & 1] = value & 0x0F,
+                    _ => {}
+                }
+            }
             let at = match &self.mapper {
                 Mapper::Mmc3(mmc3) if mmc3.mmc6 => self.mmc6_ram(mmc3, addr, true).flatten(),
                 _ => self.prg_ram_offset(addr, true),
@@ -356,13 +463,30 @@ impl Cartridge {
             return;
         }
         let four_screen = self.mirroring == Mirroring::FourScreen;
+        let rom = self.prg_rom[self.prg_offset(addr)];
         match &mut self.mapper {
-            Mapper::Nrom => {}
+            Mapper::Nrom | Mapper::Nina03(_) | Mapper::Nina001(_) => {}
             Mapper::Uxrom(bank) | Mapper::Cnrom(bank) => *bank = value,
             Mapper::Axrom(bank) => {
                 *bank = value & 7;
                 self.mirroring = if value & 0x10 != 0 { Mirroring::SingleUpper } else { Mirroring::SingleLower };
             }
+            Mapper::ColorDreams(banks) => {
+                let value = banks.conflicts.on(value, rom);
+                (banks.prg, banks.chr) = (value & 3, value >> 4);
+            }
+            Mapper::Gxrom(banks) => {
+                let value = banks.conflicts.on(value, rom);
+                (banks.prg, banks.chr) = ((value >> 4) & 3, value & 3);
+            }
+            Mapper::Bnrom(bank) => *bank = Conflicts::And.on(value, rom),
+            Mapper::Camerica(bank) => match addr {
+                0x9000..=0x9FFF => {
+                    self.mirroring = if value & 0x10 != 0 { Mirroring::SingleUpper } else { Mirroring::SingleLower };
+                }
+                0xC000.. => *bank = value & 0x0F,
+                _ => {}
+            },
             Mapper::Mmc1(mmc1) => {
                 let consecutive = mmc1.written == Some(cycle.wrapping_sub(1));
                 mmc1.written = Some(cycle);
