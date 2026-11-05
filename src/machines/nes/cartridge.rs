@@ -104,6 +104,15 @@
 //! sets its scroll every 8 lines from the IRQ, its writes only safely past
 //! dot 256 of the line if it's as late as that. No PRG RAM.
 //!
+//! 69, Sunsoft's FME-7: a command written at $8000 up, its parameter at
+//! $A000 up. 0 to 7, eight 1K banks of CHR; 9 to B, 8K of PRG at $8000,
+//! $A000 and $C000, the last fixed; C, the nametables (0, A10; 1, A11; 2
+//! and 3 one screen). 8, what's at $6000: an 8K bank of ROM, or with bit 6
+//! its PRG RAM, there if bit 7's set too. Its IRQ counts down every CPU
+//! cycle, its 16 bits set directly by E and F, D enabling the count and
+//! the line and acknowledging, the line held on going past 0. The
+//! Famicom's 5B has sound at $C000 up too; carts of this have none.
+//!
 //! Bus conflicts: on a board whose register is written with its ROM still
 //! driving the bus, the bits it holds low win; the register's given what
 //! was written ANDed with the ROM's byte there.
@@ -265,6 +274,20 @@ impl Rambo1 {
     }
 }
 
+/// FME-7's registers: the command; the CHR banks, 8K of PRG, and what's at
+/// $6000; its IRQ's counter, the count's and the line's enables, the line.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fme7 {
+    command: u8,
+    chr: [u8; 8],
+    prg: [u8; 3],
+    window: u8,
+    counter: u16,
+    counting: bool,
+    irq_enabled: bool,
+    irq: bool,
+}
+
 /// The boards MMC3's wired to differently.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Board {
@@ -331,6 +354,7 @@ pub enum Mapper {
     Nina001(Nina001),
     Mmc2(Mmc2),
     Rambo1(Rambo1),
+    Fme7(Fme7),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -442,6 +466,7 @@ impl Cartridge {
             34 if submapper == 1 || (submapper != 2 && chr_size > CHR_BANK) => Mapper::Nina001(Nina001::default()),
             34 => Mapper::Bnrom(0),
             64 => Mapper::Rambo1(Rambo1::default()),
+            69 => Mapper::Fme7(Fme7::default()),
             66 => Mapper::Gxrom(Banks::new(Conflicts::And)),
             71 => Mapper::Camerica(0),
             79 => Mapper::Nina03(Banks::new(Conflicts::None)),
@@ -500,6 +525,11 @@ impl Cartridge {
                 };
                 bank * 0x2000 + (addr & 0x1FFF)
             }
+            Mapper::Fme7(fme7) => {
+                let last_8k = len / 0x2000 - 1;
+                let bank = fme7.prg.get((addr - 0x8000) / 0x2000).map_or(last_8k, |&bank| bank as usize & 0x3F);
+                bank * 0x2000 + (addr & 0x1FFF)
+            }
             Mapper::Mmc2(mmc2) if addr < 0xA000 => mmc2.prg as usize * 0x2000 + (addr & 0x1FFF),
             Mapper::Mmc2(_) => len - 0x6000 + (addr - 0xA000),
             Mapper::Mmc1(mmc1) => {
@@ -537,6 +567,7 @@ impl Cartridge {
             Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.chr as usize * CHR_BANK + addr,
             Mapper::Nina001(nina) => nina.chr[addr >> 12] as usize * 0x1000 + (addr & 0x0FFF),
             Mapper::Rambo1(rambo) => rambo.chr_bank(addr) * 0x400 + (addr & 0x3FF),
+            Mapper::Fme7(fme7) => fme7.chr[addr >> 10] as usize * 0x400 + (addr & 0x3FF),
             Mapper::Mmc2(mmc2) => {
                 let table = addr >> 12;
                 mmc2.chr[table][mmc2.latch[table]] as usize * 0x1000 + (addr & 0x0FFF)
@@ -575,6 +606,7 @@ impl Cartridge {
             Mapper::Mmc1(mmc1) if mmc1.prg & 0x10 != 0 => None,
             Mapper::Mmc1(mmc1) if self.prg_ram.len() == 0x8000 => Some(((mmc1.chr[0] as usize >> 2) & 3) * 0x2000 + addr),
             Mapper::Mmc3(mmc3) if !mmc3.ram_enabled || (writing && mmc3.ram_protected) => None,
+            Mapper::Fme7(fme7) if fme7.window & 0xC0 != 0xC0 => None,
             _ => Some(addr % self.prg_ram.len()),
         }
     }
@@ -597,6 +629,10 @@ impl Cartridge {
         match addr {
             0x6000..=0x7FFF => match &self.mapper {
                 Mapper::Mmc3(mmc3) if mmc3.mmc6 => self.mmc6_ram(mmc3, addr, false).map(|at| at.map_or(0, |at| self.prg_ram[at])),
+                Mapper::Fme7(fme7) if fme7.window & 0x40 == 0 => {
+                    let at = (fme7.window as usize & 0x3F) * 0x2000 + (addr as usize & 0x1FFF);
+                    Some(self.prg_rom[at % self.prg_rom.len()])
+                }
                 _ => self.prg_ram_offset(addr, false).map(|at| self.prg_ram[at]),
             },
             0x8000..=0xFFFF => Some(self.prg_rom[self.prg_offset(addr)]),
@@ -665,6 +701,25 @@ impl Cartridge {
                 }
                 0xE000 => (rambo.irq_enabled, rambo.irq, rambo.irq_delay) = (false, false, 0),
                 0xE001 => rambo.irq_enabled = true,
+                _ => {}
+            },
+            Mapper::Fme7(fme7) => match addr {
+                0x8000..=0x9FFF => fme7.command = value & 0x0F,
+                0xA000..=0xBFFF => match fme7.command {
+                    command @ 0..=7 => fme7.chr[command as usize] = value,
+                    8 => fme7.window = value,
+                    command @ 9..=0xB => fme7.prg[command as usize - 9] = value,
+                    0xC => {
+                        self.mirroring = [Mirroring::Vertical, Mirroring::Horizontal, Mirroring::SingleLower, Mirroring::SingleUpper]
+                            [value as usize & 3];
+                    }
+                    0xD => {
+                        (fme7.counting, fme7.irq_enabled) = (value & 0x80 != 0, value & 1 != 0);
+                        fme7.irq = false;
+                    }
+                    0xE => fme7.counter = (fme7.counter & 0xFF00) | value as u16,
+                    _ => fme7.counter = (fme7.counter & 0x00FF) | (value as u16) << 8,
+                },
                 _ => {}
             },
             Mapper::Mmc2(mmc2) => match addr >> 12 {
@@ -808,8 +863,16 @@ impl Cartridge {
         }
     }
 
-    /// A CPU cycle: RAMBO-1's line held if it's due, and its count of them.
+    /// A CPU cycle: the IRQ counters of those that count them; RAMBO-1's
+    /// line held if it's due.
     pub fn cycle(&mut self) {
+        if let Mapper::Fme7(fme7) = &mut self.mapper {
+            if fme7.counting {
+                fme7.irq |= fme7.counter == 0 && fme7.irq_enabled;
+                fme7.counter = fme7.counter.wrapping_sub(1);
+            }
+            return;
+        }
         let Mapper::Rambo1(rambo) = &mut self.mapper else { return };
         if rambo.irq_delay > 0 {
             rambo.irq_delay -= 1;
@@ -828,6 +891,7 @@ impl Cartridge {
         match &self.mapper {
             Mapper::Mmc3(mmc3) => mmc3.irq,
             Mapper::Rambo1(rambo) => rambo.irq,
+            Mapper::Fme7(fme7) => fme7.irq,
             _ => false,
         }
     }

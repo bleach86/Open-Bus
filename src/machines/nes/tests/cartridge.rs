@@ -476,6 +476,119 @@ mod tests {
         assert!(!cart.irq(), "counted A12's rise, counting cycles");
     }
 
+    /// FME-7's command `command` given `value`.
+    fn fme7(cart: &mut Cartridge, command: u8, value: u8) {
+        cart.cpu_write(0x8000, command, 0);
+        cart.cpu_write(0xA000, value, 0);
+    }
+
+    #[test]
+    fn fme7_banks_its_prg_8k_at_a_time_and_its_chr_1k() {
+        let mut cart = board(69, 8, 8);
+        // In 8K, doubled from the 16K banks' numbers.
+        fme7(&mut cart, 9, 2);
+        fme7(&mut cart, 0xA, 6);
+        fme7(&mut cart, 0xB, 10);
+        let prg = [0x8020, 0xA020, 0xC020, 0xE020].map(|addr| cart.cpu_read(addr).unwrap());
+        assert_eq!(prg, [1, 3, 5, 7], "commands 9 to B, the last fixed");
+
+        // Each 1K its own, in 8K's eighths.
+        for slot in 0..8 {
+            fme7(&mut cart, slot, slot * 8);
+        }
+        let chr = [0x0000, 0x0400, 0x0800, 0x0C00, 0x1000, 0x1400, 0x1800, 0x1C00].map(|addr| cart.chr_read(addr));
+        assert_eq!(chr, [0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7]);
+
+        // The command's taken from anywhere up to $9FFF, the parameter $BFFF.
+        cart.cpu_write(0x9FFF, 9, 0);
+        cart.cpu_write(0xBFFF, 4, 0);
+        assert_eq!(cart.cpu_read(0x8020), Some(2));
+
+        // The 5B's sound registers do nothing to the banks.
+        cart.cpu_write(0xC000, 9, 0);
+        cart.cpu_write(0xE000, 0, 0);
+        assert_eq!(cart.cpu_read(0x8020), Some(2));
+    }
+
+    #[test]
+    fn fme7_has_rom_or_ram_at_6000() {
+        let mut cart = board(69, 8, 1);
+        assert_eq!(cart.cpu_read(0x6020), Some(0), "ROM from the first");
+        fme7(&mut cart, 8, 6);
+        assert_eq!(cart.cpu_read(0x6020), Some(3), "a bank of ROM");
+        cart.cpu_write(0x6020, 0x55, 0);
+        assert_eq!(cart.cpu_read(0x6020), Some(3), "ROM written");
+
+        fme7(&mut cart, 8, 0xC0);
+        cart.cpu_write(0x6020, 0x55, 0);
+        assert_eq!(cart.cpu_read(0x6020), Some(0x55), "RAM, enabled");
+
+        fme7(&mut cart, 8, 0x40);
+        assert_eq!(cart.cpu_read(0x6020), None, "RAM selected, not enabled: open bus");
+        cart.cpu_write(0x6020, 0x66, 0);
+        fme7(&mut cart, 8, 0xC0);
+        assert_eq!(cart.cpu_read(0x6020), Some(0x55), "RAM written, disabled");
+
+        // Its enable bit set, bit 6 clear: ROM.
+        fme7(&mut cart, 8, 0x80 | 6);
+        assert_eq!(cart.cpu_read(0x6020), Some(3));
+    }
+
+    #[test]
+    fn fme7s_nametables() {
+        let mut cart = board(69, 2, 1);
+        for (value, mirroring) in [(0, Mirroring::Vertical), (1, Mirroring::Horizontal), (2, Mirroring::SingleLower), (3, Mirroring::SingleUpper)] {
+            fme7(&mut cart, 0xC, value);
+            assert_eq!(cart.mirroring, mirroring, "{value}");
+        }
+    }
+
+    #[test]
+    fn fme7s_irq_counts_every_cycle_and_fires_going_past_0() {
+        let mut cart = board(69, 2, 1);
+        fme7(&mut cart, 0xE, 2);
+        fme7(&mut cart, 0xF, 0);
+        for _ in 0..10 {
+            cart.cycle();
+        }
+        assert!(!cart.irq(), "counted, not enabled to");
+
+        // 2, 1, 0, then past it.
+        fme7(&mut cart, 0xD, 0x81);
+        for cycle in 1..=2 {
+            cart.cycle();
+            assert!(!cart.irq(), "held at {cycle}");
+        }
+        cart.cycle();
+        assert!(cart.irq(), "not held going past 0");
+
+        // Held, the counter going on, till acknowledged; then $FFFF.
+        cart.cycle();
+        assert!(cart.irq(), "let go by itself");
+        fme7(&mut cart, 0xD, 0x81);
+        assert!(!cart.irq(), "not acknowledged");
+        for _ in 0..0xFFFD {
+            cart.cycle();
+        }
+        assert!(!cart.irq(), "held early");
+        for _ in 0..3 {
+            cart.cycle();
+        }
+        assert!(cart.irq(), "not held wrapping round");
+
+        // Counting without the line, and the line without counting.
+        fme7(&mut cart, 0xE, 0);
+        fme7(&mut cart, 0xF, 0);
+        fme7(&mut cart, 0xD, 0x80);
+        cart.cycle();
+        assert!(!cart.irq(), "the line not enabled");
+        fme7(&mut cart, 0xE, 0);
+        fme7(&mut cart, 0xF, 0);
+        fme7(&mut cart, 0xD, 0x01);
+        cart.cycle();
+        assert!(!cart.irq(), "the count not enabled");
+    }
+
     #[test]
     fn nina_03s_register_is_at_4100_and_every_other_page_to_5fff() {
         let mut cart = board(79, 4, 4);
