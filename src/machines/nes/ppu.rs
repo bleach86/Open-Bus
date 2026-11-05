@@ -14,8 +14,10 @@
 //! $3F00, its sprites' backdrop entries the background's.
 //!
 //! The background: each line its tiles fetched, 8 dots a tile, a tile
-//! ahead (the next line's first two at the line's end): the nametable's
-//! byte, the attribute's, then the pattern's two planes. Into shift
+//! ahead (the next line's first two at the line's end, then two reads of
+//! the nametable at 337 and 339, the third of them at the next's dot 1
+//! its first tile): the nametable's byte, the attribute's, then the
+//! pattern's two planes. Into shift
 //! registers, which shift a dot at a time, the fine X scroll picking the
 //! bit that's the dot's. Its address is the scroll's, "loopy's" v: coarse
 //! X and Y, the nametable, fine Y; moved on a tile across as each is
@@ -217,10 +219,14 @@ impl Ppu {
         let addr = addr & 0x3FFF;
         if addr < 0x3F00 {
             cart.ppu_bus(addr, self.dots);
+            cart.ppu_read(addr);
         }
         match addr {
             0x0000..=0x1FFF => cart.chr_read(addr),
-            0x2000..=0x3EFF => self.nametables[cart.nametable_page(addr) * 0x400 + (addr as usize & 0x3FF)],
+            0x2000..=0x3EFF => match cart.nametable_read(addr) {
+                Some(byte) => byte,
+                None => self.nametables[cart.nametable_page(addr) * 0x400 + (addr as usize & 0x3FF)],
+            },
             _ => self.palette[palette_index(addr)],
         }
     }
@@ -232,7 +238,11 @@ impl Ppu {
         }
         match addr {
             0x0000..=0x1FFF => cart.chr_write(addr, value),
-            0x2000..=0x3EFF => self.nametables[cart.nametable_page(addr) * 0x400 + (addr as usize & 0x3FF)] = value,
+            0x2000..=0x3EFF => {
+                if !cart.nametable_write(addr, value) {
+                    self.nametables[cart.nametable_page(addr) * 0x400 + (addr as usize & 0x3FF)] = value;
+                }
+            }
             _ => self.palette[palette_index(addr)] = value & 0x3F,
         }
     }
@@ -478,10 +488,14 @@ impl Ppu {
             256 => self.next_line(),
             257 => self.v = (self.v & !0x041F) | (self.t & 0x041F),
             280..=304 if self.line == self.pre_render() => self.v = (self.v & !0x7BE0) | (self.t & 0x7BE0),
-            // Two nametable fetches more, their bytes not used.
-            338 | 340 => {
+            // One more of the nametable at the end of a line, and the
+            // next line's own at its start, of the same address, its tile
+            // the one fetched ahead. On a frame a dot short there's still
+            // this one, the dot gone being 340: a mapper counts these.
+            339 => {
                 self.read(0x2000 | (self.v & 0x0FFF), cart);
             }
+            1 => self.tile = self.read(0x2000 | (self.v & 0x0FFF), cart),
             _ => {}
         }
     }
@@ -581,7 +595,9 @@ impl Ppu {
             let table = if self.ctrl & 0x08 != 0 { 0x1000 } else { 0 };
             table | (tile as u16) << 4 | row
         };
+        cart.sprite_fetch = true;
         let mut plane = self.read(addr + if step == 6 { 8 } else { 0 }, cart);
+        cart.sprite_fetch = false;
         if slot >= self.sprite_count {
             return;
         }

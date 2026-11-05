@@ -49,6 +49,8 @@
 //! reads and writes enabled by $A001's top bits, a half written only if
 //! it's read too, a half not read reading 0 while the other is.
 //!
+//! 5, the MMC5: in mmc5.rs, there being so much of it.
+//!
 //! 7, AxROM: a 32K bank, and which 1K all four nametables are.
 //!
 //! 9, MMC2: an 8K bank at $8000 ($A000), the last three fixed after it; 4K
@@ -129,6 +131,7 @@
 //! driving the bus, the bits it holds low win; the register's given what
 //! was written ANDed with the ROM's byte there.
 
+use super::mmc5::{self, Mmc5};
 use super::region::Region;
 use serde::{Deserialize, Serialize};
 
@@ -385,6 +388,7 @@ pub enum Mapper {
     Rambo1(Rambo1),
     Fme7(Fme7),
     Quattro(Quattro),
+    Mmc5(Box<Mmc5>),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -413,6 +417,9 @@ pub struct Cartridge {
     /// The board its MMC3 is on: as the ROMs are, not in a save state.
     #[serde(skip)]
     pub board: Board,
+    /// The PPU's fetching a sprite: for the MMC5, which keeps count.
+    #[serde(skip)]
+    pub sprite_fetch: bool,
 }
 
 const HEADER: usize = 16;
@@ -463,6 +470,9 @@ impl Cartridge {
         if number == 64 && !nes2 {
             prg_ram_size = 0;
         }
+        if number == 5 {
+            prg_ram_size = mmc5::PRG_RAM;
+        }
         let mirroring = match header[6] & 0x09 {
             0x00 => Mirroring::Horizontal,
             0x01 => Mirroring::Vertical,
@@ -487,6 +497,7 @@ impl Cartridge {
                 irq: false,
                 a12_low_since: None,
             }),
+            5 => Mapper::Mmc5(Box::new(Mmc5::new())),
             7 => Mapper::Axrom(0),
             9 => Mapper::Mmc2(Mmc2 { prg: 0, chr: [[0; 2]; 2], latch: [1; 2] }),
             11 if MAPPER_144_GAMES.contains(&rom_crc) => Mapper::ColorDreams(Banks::new(Conflicts::RomD0)),
@@ -524,6 +535,7 @@ impl Cartridge {
             mapper,
             region,
             board,
+            sprite_fetch: false,
         })
     }
 
@@ -555,6 +567,9 @@ impl Cartridge {
         if self.board.is_multicart() {
             self.prg_ram[0] = 0;
         }
+        if let Mapper::Mmc5(mmc5) = &mut self.mapper {
+            mmc5.reset();
+        }
     }
 
     /// Where `addr`, $8000 up, is in the PRG ROM, as the mapper has its
@@ -581,6 +596,7 @@ impl Cartridge {
                 };
                 bank * 0x2000 + (addr & 0x1FFF)
             }
+            Mapper::Mmc5(_) => addr,
             Mapper::Quattro(quattro) => {
                 let block = quattro.block as usize * 4;
                 in_16k(block + if addr < 0xC000 { quattro.bank as usize } else { 3 })
@@ -619,10 +635,14 @@ impl Cartridge {
 
     /// Where `addr`, $0000 to $1FFF, is in its CHR, as the mapper has its
     /// banks.
-    fn chr_offset(&self, addr: u16) -> usize {
+    fn chr_offset(&mut self, addr: u16) -> usize {
         let addr = addr as usize;
+        if let Mapper::Mmc5(mmc5) = &mut self.mapper {
+            let chr = if self.chr_rom.is_empty() { self.chr_ram.len() } else { self.chr_rom.len() };
+            return mmc5.chr_offset(addr, self.sprite_fetch) % chr;
+        }
         let offset = match &self.mapper {
-            Mapper::Nrom | Mapper::Uxrom(_) | Mapper::Axrom(_) | Mapper::Camerica(_) | Mapper::Bnrom(_) | Mapper::Quattro(_) => addr,
+            Mapper::Nrom | Mapper::Uxrom(_) | Mapper::Axrom(_) | Mapper::Camerica(_) | Mapper::Bnrom(_) | Mapper::Quattro(_) | Mapper::Mmc5(_) => addr,
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
             Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.chr as usize * CHR_BANK + addr,
             Mapper::Nina001(nina) => nina.chr[addr >> 12] as usize * 0x1000 + (addr & 0x0FFF),
@@ -691,6 +711,9 @@ impl Cartridge {
     /// A read of $4020 to $FFFF: what the cartridge drives on the bus, if it
     /// drives anything.
     pub fn cpu_read(&mut self, addr: u16) -> Option<u8> {
+        if let Mapper::Mmc5(mmc5) = &mut self.mapper {
+            return mmc5.cpu_read(addr, &self.prg_rom, &self.prg_ram);
+        }
         match addr {
             0x6000..=0x7FFF => match &self.mapper {
                 _ if self.board.is_multicart() => None,
@@ -709,6 +732,10 @@ impl Cartridge {
     /// A write to $4020 to $FFFF, on CPU cycle `cycle`: its PRG RAM, or its
     /// mapper's registers.
     pub fn cpu_write(&mut self, addr: u16, value: u8, cycle: u64) {
+        if let Mapper::Mmc5(mmc5) = &mut self.mapper {
+            self.written |= mmc5.cpu_write(addr, value, &mut self.prg_ram) && self.battery;
+            return;
+        }
         if let (0x4020..=0x5FFF, Mapper::Nina03(banks)) = (addr, &mut self.mapper) {
             if addr & 0xE100 == 0x4100 {
                 (banks.prg, banks.chr) = ((value >> 3) & 1, value & 7);
@@ -739,7 +766,7 @@ impl Cartridge {
         let four_screen = self.mirroring == Mirroring::FourScreen;
         let rom = self.prg_rom[self.prg_offset(addr)];
         match &mut self.mapper {
-            Mapper::Nrom | Mapper::Nina03(_) | Mapper::Nina001(_) => {}
+            Mapper::Nrom | Mapper::Nina03(_) | Mapper::Nina001(_) | Mapper::Mmc5(_) => {}
             Mapper::Uxrom(bank) | Mapper::Cnrom(bank) => *bank = value,
             Mapper::Axrom(bank) => {
                 *bank = value & 7;
@@ -878,7 +905,39 @@ impl Cartridge {
     pub fn nametable_page(&self, addr: u16) -> usize {
         match &self.mapper {
             Mapper::Mmc3(mmc3) if self.board == Board::Txsrom => mmc3.chr_bank(addr as usize & 0x0FFF) >> 7,
+            Mapper::Mmc5(mmc5) => mmc5.nametable_page(addr),
             _ => self.mirroring.page(addr),
+        }
+    }
+
+    /// A PPU read of a nametable, if its mapper answers it, not the PPU's
+    /// RAM.
+    pub fn nametable_read(&mut self, addr: u16) -> Option<u8> {
+        match &mut self.mapper {
+            Mapper::Mmc5(mmc5) => mmc5.nametable_read(addr),
+            _ => None,
+        }
+    }
+
+    /// A PPU write of a nametable: true if it's its mapper's.
+    pub fn nametable_write(&mut self, addr: u16, value: u8) -> bool {
+        match &mut self.mapper {
+            Mapper::Mmc5(mmc5) => mmc5.nametable_write(addr, value),
+            _ => false,
+        }
+    }
+
+    /// A PPU read of `addr`, for a mapper that watches them.
+    pub fn ppu_read(&mut self, addr: u16) {
+        if let Mapper::Mmc5(mmc5) = &mut self.mapper {
+            mmc5.ppu_read(addr);
+        }
+    }
+
+    /// A CPU write of a PPU register, or $4014, for a mapper that watches.
+    pub fn ppu_register_written(&mut self, addr: u16, value: u8) {
+        if let Mapper::Mmc5(mmc5) = &mut self.mapper {
+            mmc5.ppu_register_written(addr, value);
         }
     }
 
@@ -939,6 +998,10 @@ impl Cartridge {
     /// A CPU cycle: the IRQ counters of those that count them; RAMBO-1's
     /// line held if it's due.
     pub fn cycle(&mut self) {
+        if let Mapper::Mmc5(mmc5) = &mut self.mapper {
+            mmc5.cycle();
+            return;
+        }
         if let Mapper::Fme7(fme7) = &mut self.mapper {
             if fme7.counting {
                 fme7.irq |= fme7.counter == 0 && fme7.irq_enabled;
@@ -965,6 +1028,7 @@ impl Cartridge {
             Mapper::Mmc3(mmc3) => mmc3.irq,
             Mapper::Rambo1(rambo) => rambo.irq,
             Mapper::Fme7(fme7) => fme7.irq,
+            Mapper::Mmc5(mmc5) => mmc5.irq(),
             _ => false,
         }
     }

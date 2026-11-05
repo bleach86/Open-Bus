@@ -50,6 +50,7 @@
 
 pub mod apu;
 pub mod cartridge;
+pub mod mmc5;
 pub mod palette;
 pub mod ppu;
 pub mod region;
@@ -57,6 +58,7 @@ pub mod region;
 #[cfg(test)]
 mod tests {
     mod cartridge;
+    mod mmc5;
     mod sound;
     mod test_roms;
     mod timing;
@@ -343,8 +345,12 @@ impl Bus for Nes {
         self.open_bus = value;
         match addr {
             0x0000..=0x1FFF => self.ram[addr as usize & 0x7FF] = value,
-            0x2000..=0x3FFF => self.ppu.write_register(addr, value, &mut self.cartridge),
+            0x2000..=0x3FFF => {
+                self.ppu.write_register(addr, value, &mut self.cartridge);
+                self.cartridge.ppu_register_written(addr, value);
+            }
             0x4014 => {
+                self.cartridge.ppu_register_written(addr, value);
                 self.dma = Some(Dma {
                     page: value,
                     value: None,
