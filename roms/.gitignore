@@ -8,6 +8,7 @@
 *.lbl
 # ROM dumps of real machines: their makers', not part of the repository
 *.rom
+apple2/*.zip
 # Disk images of real software: their makers', likewise
 *.dsk
 *.do

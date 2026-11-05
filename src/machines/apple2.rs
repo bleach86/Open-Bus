@@ -20,6 +20,7 @@ pub mod clock_card;
 pub mod disk2;
 pub mod disk_image;
 pub mod hard_disk;
+pub mod rom_set;
 pub mod iie;
 pub mod language_card;
 pub mod mockingboard;
@@ -36,6 +37,7 @@ mod tests {
     mod language_card;
     mod machine;
     mod mockingboard;
+    mod rom_set;
     mod save_state;
 }
 
@@ -57,6 +59,7 @@ use crate::host::window::Window;
 use crate::host::zip::crc32;
 use disk_image::Disk;
 use serde::{Deserialize, Serialize};
+use std::cell::OnceCell;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
@@ -978,31 +981,49 @@ pub fn build(
 ) -> Result<Built, String> {
     let read = |path: &Path| files::read(path).map_err(|e| format!("{}: {e}", path.display()));
     let roms = Path::new(roms);
+    // The ROMs: by the name each has, else as they're known wherever they
+    // are, a folder of whatever they're called or a zip.
+    let found = OnceCell::new();
+    let rom_named = |folder: &Path, name: &str| {
+        let path = folder.join(name);
+        if files::exists(&path) {
+            return read(&path);
+        }
+        let found: &rom_set::Sorted = found.get_or_init(|| rom_set::scan(roms));
+        found.bytes(name).ok_or_else(|| format!("no {name} in {}", roms.display()))
+    };
     let state = save_state::path(disks.first().map_or(roms, |disk| Path::new(disk)));
     let (mut apple, folder, own_variant) = match model {
         Model::IIPlus => {
-            let rom = read(roms)?;
+            let zipped = roms.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("zip"));
+            let rom = if files::is_folder(roms) || zipped {
+                rom_named(roms, rom_set::PLUS_ROM)?
+            } else {
+                read(roms)?
+            };
             if rom.len() < 0x3000 {
                 return Err("the ROM is 12K, $D000 to $FFFF".to_string());
             }
             let mut apple = Apple2::new(rom[rom.len() - 0x3000..].to_vec());
             apple.language_card = Some(language_card::LanguageCard::new());
-            let folder = roms.parent().unwrap_or(Path::new(".")).to_path_buf();
-            (apple, folder, Variant::Nmos6502)
+            let folder = if files::is_folder(roms) { roms } else { roms.parent().unwrap_or(Path::new(".")) };
+            (apple, folder.to_path_buf(), Variant::Nmos6502)
         }
         Model::IIe | Model::IIeEnhanced => {
             let enhanced = model == Model::IIeEnhanced;
             let names = if enhanced { iie::ENHANCED_ROMS } else { iie::ROMS };
-            let cd = read(&roms.join(names[0]))?;
-            let ef = read(&roms.join(names[1]))?;
-            let characters = read(&roms.join(names[2]))?;
+            let cd = rom_named(roms, names[0])?;
+            let ef = rom_named(roms, names[1])?;
+            let characters = rom_named(roms, names[2])?;
             let apple = Apple2::new_iie(&cd, &ef, characters);
             let variant = if enhanced {
                 Variant::Synertek65C02
             } else {
                 Variant::Nmos6502
             };
-            (apple, roms.to_path_buf(), variant)
+            let zipped = roms.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("zip"));
+            let folder = if zipped { roms.parent().unwrap_or(Path::new(".")) } else { roms };
+            (apple, folder.to_path_buf(), variant)
         }
     };
     apple.monitor = monitor;
@@ -1032,8 +1053,8 @@ pub fn build(
     }
     if !floppies.is_empty() {
         let card = disk2::Disk2::new(
-            read(&folder.join("disk2-p5-341-0027.bin"))?,
-            &read(&folder.join("disk2-p6-341-0028.bin"))?,
+            rom_named(&folder, rom_set::DISK_II_P5)?,
+            &rom_named(&folder, rom_set::DISK_II_P6)?,
         )
         .map_err(|e| format!("the Disk II's ROMs: {e}"))?;
         apple.disk2 = Some(card);

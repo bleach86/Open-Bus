@@ -9,6 +9,7 @@ use crate::host::files;
 use crate::host::page::{Page, Shared};
 use crate::host::run::Host;
 use crate::host::save_state;
+use crate::machines::apple2::rom_set::Sorted;
 use crate::machines::apple2::video::Monitor;
 use crate::machines::apple2::{self, Apple2, Model};
 use crate::machines::nes::{self, Nes};
@@ -51,6 +52,36 @@ pub fn take_changed_parts(name: &str) -> Vec<u32> {
 #[wasm_bindgen]
 pub fn read_part(name: &str, offset: u32) -> Option<Vec<u8>> {
     files::read_part(Path::new(name), offset)
+}
+
+/// The Apple's ROMs found in what the page's given.
+#[wasm_bindgen]
+pub struct RomSorter(Sorted);
+
+#[wasm_bindgen]
+impl RomSorter {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> RomSorter {
+        RomSorter(Sorted::new())
+    }
+
+    /// The file `name` looked through: whether there were ROMs in it.
+    pub fn add(&mut self, name: &str, bytes: &[u8]) -> bool {
+        self.0.add(name, bytes)
+    }
+
+    pub fn names(&self) -> Vec<String> {
+        self.0.names()
+    }
+
+    pub fn bytes(&self, name: &str) -> Option<Vec<u8>> {
+        self.0.bytes(name)
+    }
+
+    /// How many of the II+'s 6 chips there are.
+    pub fn plus_chips(&self) -> usize {
+        self.0.plus_chips()
+    }
 }
 
 enum Running {
