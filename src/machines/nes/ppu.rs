@@ -100,6 +100,12 @@ pub struct Ppu {
     pub line: u16,
     pub dot: u16,
     dots: u64,
+    /// When the sprite flags, set, can first be read in $2002: a dot after
+    /// they're set here.
+    #[serde(skip)]
+    hit_at: u64,
+    #[serde(skip)]
+    overflowed_at: u64,
     odd: bool,
     short_line: bool,
     /// PPUSTATUS read the dot before the vertical blank's: its flag not set
@@ -164,6 +170,8 @@ impl Ppu {
             line: 0,
             dot: 0,
             dots: 0,
+            hit_at: 0,
+            overflowed_at: 0,
             odd: false,
             short_line: false,
             suppress_vblank: false,
@@ -251,7 +259,12 @@ impl Ppu {
     pub fn read_register(&mut self, register: u16, cart: &mut Cartridge) -> u8 {
         let value = match register & 7 {
             2 => {
-                let flags = (self.vblank as u8) << 7 | (self.sprite_zero_hit as u8) << 6 | (self.overflow as u8) << 5;
+                // Vblank's as the read begins, the sprites' as it ends, nearer
+                // 2 dots on: they've gone a dot before vblank's seen to.
+                let sprites_gone = self.line == self.pre_render() && self.dot == 1;
+                let set = |flag: bool, at: u64| flag && self.dots > at;
+                let sprites = (set(self.sprite_zero_hit, self.hit_at) as u8) << 6 | (set(self.overflow, self.overflowed_at) as u8) << 5;
+                let flags = (self.vblank as u8) << 7 | if sprites_gone { 0 } else { sprites };
                 self.vblank = false;
                 if self.line == VBLANK && self.dot == 1 {
                     self.suppress_vblank = true;
@@ -259,6 +272,8 @@ impl Ppu {
                 self.w = false;
                 self.drive(flags, 0xE0)
             }
+            // While it clears its secondary OAM, the PPU reads $FF.
+            4 if self.rendering() && self.line < 240 && (1..=64).contains(&self.dot) => self.drive(0xFF, 0xFF),
             4 => {
                 let byte = self.oam[self.oam_addr as usize];
                 // An attribute byte's bits 2 to 4 aren't there.
@@ -271,7 +286,8 @@ impl Ppu {
                     // under it; its top two bits the bus's.
                     self.buffer = self.read(addr - 0x1000, cart);
                     let colour = self.read(addr, cart);
-                    self.drive(colour, 0x3F)
+                    let grey = if self.mask & 0x01 != 0 { 0x30 } else { 0x3F };
+                    self.drive(colour & grey, 0x3F)
                 } else {
                     let value = self.buffer;
                     self.buffer = self.read(addr, cart);
@@ -308,8 +324,14 @@ impl Ppu {
             1 if !self.warming_up => self.mask = value,
             3 => self.oam_addr = value,
             4 => {
-                self.oam[self.oam_addr as usize] = value;
-                self.oam_addr = self.oam_addr.wrapping_add(1);
+                // While rendering it's OAM's address that moves, a sprite on,
+                // and nothing's written.
+                if self.rendering() && (self.line < 240 || self.line == self.pre_render()) {
+                    self.oam_addr = self.oam_addr.wrapping_add(4) & 0xFC;
+                } else {
+                    self.oam[self.oam_addr as usize] = value;
+                    self.oam_addr = self.oam_addr.wrapping_add(1);
+                }
             }
             5 if !self.warming_up => {
                 if !self.w {
@@ -430,8 +452,9 @@ impl Ppu {
             if seen && dot == 65 {
                 self.evaluate_sprites();
             }
-            if seen && self.overflow_at == Some(dot) {
+            if seen && self.overflow_at == Some(dot) && !self.overflow {
                 self.overflow = true;
+                self.overflowed_at = self.dots + 1;
             }
         }
         if seen && (1..=256).contains(&dot) {
@@ -624,8 +647,9 @@ impl Ppu {
             let (background, palette) = self.background_dot(x);
             let sprite = self.sprite_dot(x);
             if let Some((zero, _, _, _)) = sprite {
-                if zero && background != 0 && x != 255 {
+                if zero && background != 0 && x != 255 && !self.sprite_zero_hit {
                     self.sprite_zero_hit = true;
+                    self.hit_at = self.dots + 1;
                 }
             }
             let index = match sprite {
