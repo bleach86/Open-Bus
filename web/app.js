@@ -1,9 +1,10 @@
 // The page: its library of files, and a machine run on the canvas, a frame
 // at a time, its picture and sound taken after each and what's pressed told
 // to it. The emulator itself is the WebAssembly, src/web.rs its side.
-import init, { Emulator, put_file, read_file, read_part, written_files, changed_files, take_changed_parts } from './pkg/cpu_emu.js';
+import init, { Emulator, RomSorter, put_file, read_file, read_part, written_files, changed_files, take_changed_parts } from './pkg/cpu_emu.js';
 import { keep, keepParts, forget, names, bytes } from './files.js';
 import { touch, attach, letGo } from './touch.js';
+import { games, storedNames, shortName, natural } from './disks.js';
 
 const page = (id) => document.getElementById(id);
 const IIE_ROMS = {
@@ -19,11 +20,20 @@ const kind = (name) => name.split('.').pop().toLowerCase();
 const isGame = (name) => ['nes', 'zip'].includes(kind(name));
 const isDisk = (name) => ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'].includes(kind(name));
 const isOurs = (name) => ['srm', 'state'].includes(kind(name));
-const isUsable = (name) => isGame(name) || isDisk(name) || isOurs(name) || ['rom', 'bin'].includes(kind(name));
+const isRom = (name) => kind(name) === 'rom' || DISK_II_ROMS.includes(name) || Object.values(IIE_ROMS).flat().includes(name);
+const isUsable = (name) => isGame(name) || isDisk(name) || isOurs(name) || isRom(name);
+/// The most a file can be and hold a ROM, a zip's and any other's; and what
+/// isn't worth looking in.
+const MOST_ZIP = 0x400000;
+const MOST = 0x10000;
+const notRoms = /\.(png|jpe?g|gif|mp4|xml|txt|nfo|pdf|srm|state|nes)$/i;
+const mayHoldRoms = (file) => !notRoms.test(file.name) && file.size <= (kind(file.name) === 'zip' ? MOST_ZIP : MOST);
 
 let files = [];
 /// The disks ticked, in the order they were: the first is in drive 1.
 let chosen = [];
+/// The games of several disks open, by their titles.
+const opened = new Set();
 
 function say(text, problem = false) {
     page('message').textContent = text;
@@ -33,13 +43,81 @@ function say(text, problem = false) {
 /// The files, in order, those a filter hides left out; those the machines
 /// write hidden.
 async function refresh() {
-    files = (await names()).sort();
+    files = (await names()).sort(natural);
     chosen = chosen.filter((name) => files.includes(name));
     const wanted = page('filter').value.trim().toLowerCase();
     const shown = (name) => name.toLowerCase().includes(wanted);
     fill(page('games'), files.filter(isGame).filter(shown), gameButton, wanted, 'No games yet. Add .nes or .zip files.');
-    fill(page('disks'), files.filter(isDisk).filter(shown), diskBox, wanted, 'No disks yet. Add disk images.');
+    fillDisks(wanted);
     showRoms();
+}
+
+/// The disks, as games: one disk's a row, several a row that opens.
+function fillDisks(wanted) {
+    const matches = (game) => [game.title, ...game.disks].some((name) => name.toLowerCase().includes(wanted));
+    const shown = games(files.filter(isDisk)).filter(matches);
+    const list = page('disks');
+    list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : 'No disks yet. Add disk images.';
+    list.replaceChildren(...shown.flatMap((game) => {
+        if (game.disks.length === 1) {
+            return [diskRow(game.disks[0])];
+        }
+        return [gameRow(game, wanted), ...(opened.has(game.title) || wanted ? game.disks.map((disk) => diskRow(disk, true)) : [])];
+    }));
+}
+
+function diskRow(name, inGame = false) {
+    const item = document.createElement('li');
+    item.classList.toggle('in-game', inGame);
+    item.append(diskBox(name), removeButton(name));
+    return item;
+}
+
+/// A game of several disks: ticked, all of them go in, in order.
+function gameRow(game, wanted) {
+    const item = document.createElement('li');
+    item.className = 'game';
+    const open = opened.has(game.title) || wanted;
+    const toggle = document.createElement('button');
+    toggle.className = 'opener';
+    toggle.textContent = open ? '▾' : '▸';
+    toggle.setAttribute('aria-label', `${open ? 'Close' : 'Open'} ${game.title}`);
+    toggle.onclick = () => {
+        if (!opened.delete(game.title)) {
+            opened.add(game.title);
+        }
+        refresh();
+    };
+    const label = document.createElement('label');
+    label.className = 'name';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.dataset.game = JSON.stringify(game.disks);
+    box.onchange = () => {
+        const others = chosen.filter((name) => !game.disks.includes(name));
+        chosen = box.checked ? [...others, ...game.disks] : others;
+        showRoms();
+    };
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = `${game.disks.length} disks`;
+    const drive = document.createElement('span');
+    drive.className = 'drive';
+    drive.title = 'The order the disks go in';
+    label.append(box, game.title, count, drive);
+    const remove = removeButton(game.disks[0]);
+    remove.title = `Remove ${game.title}`;
+    remove.setAttribute('aria-label', remove.title);
+    remove.onclick = async () => {
+        if (confirm(`Remove ${game.title} and its ${game.disks.length} disks from this browser?`)) {
+            for (const disk of game.disks) {
+                await forget(disk);
+            }
+            refresh();
+        }
+    };
+    item.append(toggle, label, remove);
+    return item;
 }
 
 function fill(list, items, main, filtered, none) {
@@ -74,7 +152,7 @@ function diskBox(name) {
     const drive = document.createElement('span');
     drive.className = 'drive';
     drive.title = 'The order the disks go in';
-    label.append(box, name, drive);
+    label.append(box, shortName(name), drive);
     return label;
 }
 
@@ -82,10 +160,10 @@ function removeButton(name) {
     const remove = document.createElement('button');
     remove.className = 'remove';
     remove.textContent = '×';
-    remove.title = `Remove ${name}`;
+    remove.title = `Remove ${shortName(name)}`;
     remove.setAttribute('aria-label', remove.title);
     remove.onclick = async () => {
-        if (confirm(`Remove ${name} from this browser?`)) {
+        if (confirm(`Remove ${shortName(name)} from this browser?`)) {
             await forget(name);
             refresh();
         }
@@ -104,6 +182,8 @@ function appleRoms() {
 const plusRom = () => files.find((name) => kind(name) === 'rom');
 const isFloppy = (name) => ['dsk', 'do', 'nib', 'woz'].includes(kind(name));
 
+const plural = (count) => `${count} ROM${count === 1 ? '' : 's'} found`;
+
 function showRoms() {
     const roms = appleRoms();
     const own = roms.slice(0, -DISK_II_ROMS.length);
@@ -112,7 +192,7 @@ function showRoms() {
     page('apple').disabled = short > 0;
     page('roms').classList.toggle('short', short > 0);
     page('roms').open = short > 0;
-    page('roms').querySelector('summary').textContent = short ? `Still needs ${short} ROM${short > 1 ? 's' : ''}` : `${roms.filter((rom) => rom.here).length} ROMs found`;
+    page('roms').querySelector('summary').textContent = short ? `Still needs ${short} ROM${short > 1 ? 's' : ''}` : plural(roms.filter((rom) => rom.here).length);
     page('rom-list').replaceChildren(...roms.map(({ name, here }) => {
         const item = document.createElement('li');
         item.classList.toggle('missing', !here);
@@ -129,8 +209,19 @@ function showRoms() {
         return item;
     }));
     page('disks').querySelectorAll('label').forEach((label) => {
-        const at = chosen.indexOf(label.querySelector('input').value);
-        label.querySelector('.drive').textContent = at < 0 ? '' : at + 1;
+        const box = label.querySelector('input');
+        const drive = label.querySelector('.drive');
+        if (box.dataset.game) {
+            const disks = JSON.parse(box.dataset.game);
+            const places = disks.map((disk) => chosen.indexOf(disk)).filter((at) => at >= 0);
+            box.checked = places.length === disks.length;
+            box.indeterminate = places.length > 0 && !box.checked;
+            drive.textContent = places.length ? `${Math.min(...places) + 1}–${Math.max(...places) + 1}`.replace(/^(\d+)–\1$/, '$1') : '';
+            return;
+        }
+        box.checked = chosen.includes(box.value);
+        const at = chosen.indexOf(box.value);
+        drive.textContent = at < 0 ? '' : at + 1;
     });
 }
 
@@ -138,28 +229,58 @@ function showRoms() {
 /// those `inFolders` that are new, a folder never replacing what's here,
 /// whose saves and disks may be newer than the folder's.
 async function add(list, inFolders = []) {
-    const loose = [...list];
+    // The Apple's ROMs out of it first, whatever they're called.
+    const sorter = new RomSorter();
+    const isOneOfThem = async (file) => mayHoldRoms(file)
+        && sorter.add(file.name, new Uint8Array(await file.arrayBuffer()));
+    const notRoms = async (files) => {
+        const rest = [];
+        for (const file of files) {
+            if (!await isOneOfThem(file)) {
+                rest.push(file);
+            }
+        }
+        return rest;
+    };
+    say('Looking through them…');
+    const [loose, others] = [await notRoms([...list]), await notRoms(inFolders)];
     const usable = loose.filter((file) => isUsable(file.name));
     const unused = loose.filter((file) => !isUsable(file.name));
     const here = new Set([...files, ...usable.map((file) => file.name)]);
-    const fromFolders = inFolders.filter((file) => isUsable(file.name));
+    const fromFolders = others.filter((file) => isUsable(file.name));
+    // What each's stored as: in its game's folder, if it's in one; and
+    // copies in a folder under a game's left out.
+    const stored = storedNames(fromFolders.map((file) => file.path), (path) => isDisk(path));
+    const nameOf = (file) => (file.path === undefined ? file.name : stored.get(file.path));
     const added = [];
     const repeated = [];
-    for (const file of fromFolders.filter((file) => !here.has(file.name))) {
-        const repeat = added.some((other) => other.name === file.name);
+    for (const file of fromFolders.filter((file) => nameOf(file) !== null && !here.has(nameOf(file)))) {
+        const repeat = added.some((other) => nameOf(other) === nameOf(file));
         (repeat ? repeated : added).push(file);
     }
+    const copies = fromFolders.filter((file) => nameOf(file) === null);
     usable.push(...added);
     say('');
     try {
         for (const [at, file] of usable.entries()) {
             say(`Adding ${at + 1} of ${usable.length}…`);
-            await keep(file.name, new Uint8Array(await file.arrayBuffer()));
+            await keep(nameOf(file), new Uint8Array(await file.arrayBuffer()));
         }
         const notes = [];
-        if (inFolders.length) {
-            const already = fromFolders.length - added.length - repeated.length;
-            const other = inFolders.length - fromFolders.length;
+        const roms = sorter.names();
+        for (const name of roms) {
+            await keep(name, sorter.bytes(name));
+        }
+        if (roms.length) {
+            notes.push(`Found ${roms.length} Apple ROM${roms.length > 1 ? 's' : ''}.`);
+        }
+        const chips = sorter.plus_chips();
+        if (chips > 0 && chips < 6) {
+            notes.push(`Found ${chips} of the II+'s 6 chips; add them all at once.`);
+        }
+        if (others.length && fromFolders.length) {
+            const already = fromFolders.length - added.length - repeated.length - copies.length;
+            const other = others.length - fromFolders.length + copies.length;
             notes.push(`Added ${added.length} from the folder, ${already} already here, ${other} not ROMs or disks.`);
         }
         if (repeated.length) {
@@ -167,8 +288,9 @@ async function add(list, inFolders = []) {
             notes.push(`Kept only the copy nearest the top of: ${names}`);
         }
         if (unused.length) {
-            notes.push(`Not ROMs or disks, so not added: ${unused.map((file) => file.name).join(', ')}`);
+            notes.push(`Not recognised, so not added: ${unused.map((file) => file.name).join(', ')}`);
         }
+        sorter.free();
         say(notes.join(' '), unused.length + repeated.length > 0);
     } catch (error) {
         say(`Couldn't add it: ${error}`, true);
@@ -194,7 +316,9 @@ async function folderFiles(folder) {
             if (entry.isDirectory) {
                 folders.push(entry);
             } else {
-                found.push(await fileOf(entry));
+                const file = await fileOf(entry);
+                file.path = entry.fullPath;
+                found.push(file);
             }
         }
     }
