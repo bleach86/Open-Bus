@@ -191,6 +191,76 @@ mod tests {
     }
 
     #[test]
+    fn mmc2_has_an_8k_bank_and_the_last_three_fixed() {
+        let mut cart = board(9, 8, 8);
+        assert_eq!(cart.cpu_read(0x8020), Some(0), "from the first");
+        cart.cpu_write(0xA000, 0xF5, 0); // bank 5 of 8K: the third 16K's second half
+        assert_eq!(cart.cpu_read(0x8020), Some(2), "four bits");
+        assert_eq!(cart.cpu_read(0xA020), Some(6), "the third last 8K, the seventh 16K's second half");
+        assert_eq!((cart.cpu_read(0xC020), cart.cpu_read(0xE020)), (Some(7), Some(7)), "the last two");
+
+        // $AFFF is the same register, $9FFF isn't one.
+        cart.cpu_write(0xAFFF, 2, 0);
+        cart.cpu_write(0x9FFF, 7, 0);
+        assert_eq!(cart.cpu_read(0x8020), Some(1));
+
+        cart.cpu_write(0xF000, 0, 0);
+        assert_eq!(cart.mirroring, Mirroring::Vertical);
+        cart.cpu_write(0xFFFF, 1, 0);
+        assert_eq!(cart.mirroring, Mirroring::Horizontal);
+    }
+
+    /// An MMC2 with its 4K banks: at $0000 for tile $FD 8K bank 0 and for
+    /// $FE bank 1; at $1000, 2 and 3.
+    fn mmc2() -> Cartridge {
+        let mut cart = board(9, 8, 8);
+        for (register, bank) in [(0xB000, 0), (0xC000, 2), (0xD000, 4), (0xE000, 6)] {
+            cart.cpu_write(register, bank, 0);
+        }
+        cart
+    }
+
+    #[test]
+    fn mmc2s_tiles_fd_and_fe_switch_a_table_after_theyre_read() {
+        let mut cart = mmc2();
+        assert_eq!(banks(&mut cart).2..=banks(&mut cart).3, 0xC1..=0xC3, "tile $FE's, from the first");
+
+        // The tile's read from the old bank, what follows from the new.
+        assert_eq!(cart.chr_read(0x0FD8), 0xC1, "tile $FD's read switched itself");
+        assert_eq!(cart.chr_read(0x0000), 0xC0);
+        assert_eq!(cart.chr_read(0x1000), 0xC3, "the other table switched");
+        assert_eq!(cart.chr_read(0x0FE8), 0xC0, "tile $FE's read switched itself");
+        assert_eq!(cart.chr_read(0x0000), 0xC1);
+
+        assert_eq!(cart.chr_read(0x1FD8), 0xC3);
+        assert_eq!(cart.chr_read(0x1000), 0xC2);
+        assert_eq!(cart.chr_read(0x0000), 0xC1, "the other table switched");
+        assert_eq!(cart.chr_read(0x1FE8), 0xC2);
+        assert_eq!(cart.chr_read(0x1000), 0xC3);
+    }
+
+    #[test]
+    fn mmc2s_left_table_switches_on_one_row_and_its_right_on_all() {
+        let mut cart = mmc2();
+        for row in 1..8 {
+            cart.chr_read(0x0FD8 + row);
+            assert_eq!(cart.chr_read(0x0000), 0xC1, "the left table, on row {row}");
+        }
+        for row in 0..8 {
+            cart.chr_read(0x0FD0 + row);
+            assert_eq!(cart.chr_read(0x0000), 0xC1, "the left table, on the first plane");
+        }
+        for row in 0..8 {
+            cart.chr_read(0x1FD8 + row);
+            assert_eq!(cart.chr_read(0x1000), 0xC2, "the right table, on row {row}");
+            cart.chr_read(0x1FE8 + row);
+            assert_eq!(cart.chr_read(0x1000), 0xC3, "the right table, on row {row}");
+        }
+        cart.chr_read(0x1FD0);
+        assert_eq!(cart.chr_read(0x1000), 0xC3, "the right table, on the first plane");
+    }
+
+    #[test]
     fn nina_03s_register_is_at_4100_and_every_other_page_to_5fff() {
         let mut cart = board(79, 4, 4);
         assert_eq!(banks(&mut cart), (0, 1, 0xC0, 0xC0), "from the first");

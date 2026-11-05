@@ -51,6 +51,13 @@
 //!
 //! 7, AxROM: a 32K bank, and which 1K all four nametables are.
 //!
+//! 9, MMC2: an 8K bank at $8000 ($A000), the last three fixed after it; 4K
+//! of CHR at $0000 and at $1000, of two banks each ($B000 and $C000, $D000
+//! and $E000), which of the two by a latch: set by the PPU reading tile
+//! $FD or $FE, after the read, so the tile's the old bank's; at $0000 on
+//! that tile's top row's second plane only, at $1000 on any of its rows.
+//! Mirroring ($F000).
+//!
 //! 11, Color Dreams: a 32K bank (bits 0 and 1) and an 8K bank of CHR (bits
 //! 4 to 7). Its bus conflicts only as NES 2.0's submapper 2 says: a plain
 //! header doesn't say which board it is, and a game of a board without
@@ -183,6 +190,15 @@ pub struct Nina001 {
     chr: [u8; 2],
 }
 
+/// MMC2's registers: its 8K bank; of the pattern tables' two 4K banks each,
+/// those for tiles $FD and $FE; and each table's latch, which of them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mmc2 {
+    prg: u8,
+    chr: [[u8; 2]; 2],
+    latch: [usize; 2],
+}
+
 /// The MMC6's games, by their ROMs' CRC-32: StarTropics, and StarTropics
 /// II.
 const MMC6_GAMES: [u32; 2] = [0x8891_29CB, 0xD054_FFB0];
@@ -211,6 +227,7 @@ pub enum Mapper {
     Gxrom(Banks),
     Bnrom(u8),
     Nina001(Nina001),
+    Mmc2(Mmc2),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -297,6 +314,7 @@ impl Cartridge {
                 a12_low_since: None,
             }),
             7 => Mapper::Axrom(0),
+            9 => Mapper::Mmc2(Mmc2 { prg: 0, chr: [[0; 2]; 2], latch: [1; 2] }),
             11 if MAPPER_144_GAMES.contains(&rom_crc) => Mapper::ColorDreams(Banks::new(Conflicts::RomD0)),
             11 if nes2 && submapper == 2 => Mapper::ColorDreams(Banks::new(Conflicts::And)),
             11 => Mapper::ColorDreams(Banks::new(Conflicts::None)),
@@ -341,6 +359,8 @@ impl Cartridge {
             Mapper::Axrom(bank) | Mapper::Bnrom(bank) => (*bank as usize) * 0x8000 + (addr & 0x7FFF),
             Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.prg as usize * 0x8000 + (addr & 0x7FFF),
             Mapper::Nina001(nina) => nina.prg as usize * 0x8000 + (addr & 0x7FFF),
+            Mapper::Mmc2(mmc2) if addr < 0xA000 => mmc2.prg as usize * 0x2000 + (addr & 0x1FFF),
+            Mapper::Mmc2(_) => len - 0x6000 + (addr - 0xA000),
             Mapper::Mmc1(mmc1) => {
                 // On 512K boards, CHR bank 0's bit 4 picks which 256K.
                 let outer = if len > 0x40000 { mmc1.chr[0] as usize & 0x10 } else { 0 };
@@ -375,6 +395,10 @@ impl Cartridge {
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
             Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.chr as usize * CHR_BANK + addr,
             Mapper::Nina001(nina) => nina.chr[addr >> 12] as usize * 0x1000 + (addr & 0x0FFF),
+            Mapper::Mmc2(mmc2) => {
+                let table = addr >> 12;
+                mmc2.chr[table][mmc2.latch[table]] as usize * 0x1000 + (addr & 0x0FFF)
+            }
             Mapper::Mmc1(mmc1) => match mmc1.control & 0x10 {
                 0 => (mmc1.chr[0] as usize & 0x1E) * 0x1000 + addr,
                 _ => mmc1.chr[addr >> 12] as usize * 0x1000 + (addr & 0x0FFF),
@@ -480,6 +504,17 @@ impl Cartridge {
                 (banks.prg, banks.chr) = ((value >> 4) & 3, value & 3);
             }
             Mapper::Bnrom(bank) => *bank = Conflicts::And.on(value, rom),
+            Mapper::Mmc2(mmc2) => match addr >> 12 {
+                0xA => mmc2.prg = value & 0x0F,
+                0xB..=0xE => {
+                    let register = (addr >> 12) as usize - 0xB;
+                    mmc2.chr[register / 2][register % 2] = value & 0x1F;
+                }
+                0xF if !four_screen => {
+                    self.mirroring = if value & 1 == 0 { Mirroring::Vertical } else { Mirroring::Horizontal };
+                }
+                _ => {}
+            },
             Mapper::Camerica(bank) => match addr {
                 0x9000..=0x9FFF => {
                     self.mirroring = if value & 0x10 != 0 { Mirroring::SingleUpper } else { Mirroring::SingleLower };
@@ -549,7 +584,17 @@ impl Cartridge {
     /// A read of the pattern tables, $0000 to $1FFF.
     pub fn chr_read(&mut self, addr: u16) -> u8 {
         let at = self.chr_offset(addr);
-        if self.chr_rom.is_empty() { self.chr_ram[at] } else { self.chr_rom[at] }
+        let value = if self.chr_rom.is_empty() { self.chr_ram[at] } else { self.chr_rom[at] };
+        if let Mapper::Mmc2(mmc2) = &mut self.mapper {
+            match addr {
+                0x0FD8 => mmc2.latch[0] = 0,
+                0x0FE8 => mmc2.latch[0] = 1,
+                0x1FD8..=0x1FDF => mmc2.latch[1] = 0,
+                0x1FE8..=0x1FEF => mmc2.latch[1] = 1,
+                _ => {}
+            }
+        }
+        value
     }
 
     /// A write to them: to its CHR RAM, if it has that.
