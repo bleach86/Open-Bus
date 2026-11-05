@@ -7,7 +7,7 @@
 /// Names in the order a person would put them: disk 2 before disk 10.
 export const natural = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
 
-const isVolume = (name) => /\.(hdv|2mg)$/i.test(name);
+export const isVolume = (name) => /\.(hdv|2mg)$/i.test(name);
 const base = (path) => path.split('/').pop();
 const stem = (name) => base(name).replace(/\.[^.]*$/, '').toLowerCase();
 

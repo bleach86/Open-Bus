@@ -12,44 +12,46 @@
   <header>
     <div>
       <h1>Open Bus</h1>
-      <p class="quiet">Your ROMs and disks stay in this browser. Add them, or drop files or whole folders anywhere on the page.</p>
+      <p class="quiet">Your games stay in this browser. Add them, or drop files or whole folders anywhere on the page: covers and game lists beside them come too.</p>
     </div>
     <div class="actions">
       <input id="filter" type="search" placeholder="Filter" aria-label="Filter games and disks">
+      <button id="find" hidden title="Looks online for what's missing: boxes from libretro's set on GitHub, and Apple II title screens from the Internet Archive. Your games stay here.">Find covers</button>
       <label class="button primary">Add files<input id="add" class="unseen" type="file" multiple></label>
     </div>
   </header>
   <p id="message" role="status"></p>
 
-  <div class="cards">
-    <section class="card">
-      <h2>NES</h2>
-      <ul id="games"></ul>
-      <p class="empty"></p>
-    </section>
+  <nav class="tabs" aria-label="Machines">
+    <button id="tab-nes" data-tab="nes">NES</button>
+    <button id="tab-apple" data-tab="apple">Apple II</button>
+  </nav>
 
-    <section class="card">
-      <h2>Apple II</h2>
-      <div class="fields">
-        <label>Machine
-          <select id="model">
-            <option value="apple2ee">Apple IIe, enhanced</option>
-            <option value="apple2e">Apple IIe</option>
-            <option value="apple2">Apple II+</option>
-          </select></label>
-        <label>Mockingboards
-          <select id="mockingboards">
-            <option>0</option><option selected>1</option><option>2</option>
-          </select></label>
-      </div>
-      <h3>Disks</h3>
-      <ul id="disks"></ul>
-      <p class="empty"></p>
-      <details id="roms"><summary></summary><ul id="rom-list"></ul>
-        <p class="quiet hint">Any names will do: they're known by what's in them. Add files, folders or zips, like MAME's apple2e.zip, or AppleWin's .rom files.</p></details>
-      <p class="go"><button id="apple" class="primary">Start the Apple</button></p>
-    </section>
-  </div>
+  <section id="nes" class="shelf">
+    <ul id="games" class="grid"></ul>
+    <p class="empty"></p>
+  </section>
+
+  <section id="apple-shelf" class="shelf" hidden>
+    <div class="fields">
+      <label>Machine
+        <select id="model">
+          <option value="apple2ee">Apple IIe, enhanced</option>
+          <option value="apple2e">Apple IIe</option>
+          <option value="apple2">Apple II+</option>
+        </select></label>
+      <label>Mockingboards
+        <select id="mockingboards">
+          <option>0</option><option selected>1</option><option>2</option>
+        </select></label>
+      <button id="apple" class="primary">Start the Apple</button>
+      <span id="picked" class="quiet"></span>
+    </div>
+    <details id="roms"><summary></summary><ul id="rom-list"></ul>
+      <p class="quiet hint">Any names will do: they're known by what's in them. Add files, folders or zips, like MAME's apple2e.zip, or AppleWin's .rom files.</p></details>
+    <ul id="disks" class="grid"></ul>
+    <p class="empty"></p>
+  </section>
 </main>
 
 <main id="machine" hidden>

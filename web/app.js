@@ -2,9 +2,11 @@
 // at a time, its picture and sound taken after each and what's pressed told
 // to it. The emulator itself is the WebAssembly, src/web.rs its side.
 import init, { Emulator, RomSorter, put_file, read_file, read_part, written_files, changed_files, take_changed_parts } from './pkg/cpu_emu.js';
-import { keep, keepParts, forget, names, bytes } from './files.js';
+import { keep, keepParts, forget, names, bytes, allArt } from './files.js';
 import { touch, attach, letGo } from './touch.js';
-import { games, storedNames, shortName, natural } from './disks.js';
+import { games, isVolume, storedNames, shortName, natural } from './disks.js';
+import { findCovers } from './covers.js';
+import { artKey, isMedia, keyOf, plainTitle, tagsOf, takeArt } from './art.js';
 
 const page = (id) => document.getElementById(id);
 const IIE_ROMS = {
@@ -34,10 +36,39 @@ let files = [];
 let chosen = [];
 /// The games of several disks open, by their titles.
 const opened = new Set();
+/// How many covers come between showing them.
+const SHOWN_EVERY = 24;
+/// The art there is, by key, and its covers' addresses.
+let art = new Map();
+const covers = new Map();
 
 function say(text, problem = false) {
     page('message').textContent = text;
     page('message').classList.toggle('problem', problem);
+}
+
+/// The art kept, and where its covers can be shown from.
+async function loadArt() {
+    art = await allArt();
+    for (const [key, { cover }] of art) {
+        if (cover && !covers.has(key)) {
+            covers.set(key, URL.createObjectURL(cover));
+        }
+    }
+}
+
+/// Which shelf's showing.
+function showShelf(name) {
+    localStorage.setItem('shelf', name);
+    page('nes').hidden = name !== 'nes';
+    page('apple-shelf').hidden = name !== 'apple';
+    for (const tab of document.querySelectorAll('.tabs button')) {
+        tab.classList.toggle('on', tab.dataset.tab === name);
+    }
+}
+
+for (const tab of document.querySelectorAll('.tabs button')) {
+    tab.onclick = () => showShelf(tab.dataset.tab);
 }
 
 /// The files, in order, those a filter hides left out; those the machines
@@ -46,96 +77,222 @@ async function refresh() {
     files = (await names()).sort(natural);
     chosen = chosen.filter((name) => files.includes(name));
     const wanted = page('filter').value.trim().toLowerCase();
-    const shown = (name) => name.toLowerCase().includes(wanted);
-    fill(page('games'), files.filter(isGame).filter(shown), gameButton, wanted, 'No games yet. Add .nes or .zip files.');
+    fillGames(wanted);
     fillDisks(wanted);
     showRoms();
+    page('find').hidden = !coverless().length;
 }
 
-/// The disks, as games: one disk's a row, several a row that opens.
-function fillDisks(wanted) {
-    const matches = (game) => [game.title, ...game.disks].some((name) => name.toLowerCase().includes(wanted));
-    const shown = games(files.filter(isDisk)).filter(matches);
-    const list = page('disks');
-    list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : 'No disks yet. Add disk images.';
-    list.replaceChildren(...shown.flatMap((game) => {
-        if (game.disks.length === 1) {
-            return [diskRow(game.disks[0])];
-        }
-        return [gameRow(game, wanted), ...(opened.has(game.title) || wanted ? game.disks.map((disk) => diskRow(disk, true)) : [])];
+/// The games with no cover, as `findCovers` wants them.
+function coverless() {
+    const nes = files.filter(isGame).map((file) => ({
+        machine: 'nes', file, title: plainTitle(file), key: artFor(plainTitle(file), file),
     }));
+    const apple = games(files.filter(isDisk)).map((game) => {
+        const title = diskTitle(game);
+        return { machine: 'apple', file: game.disks[0], title, key: artFor(title, ...game.disks) };
+    });
+    return [...nes, ...apple].filter(({ key }) => !covers.has(key));
 }
 
-function diskRow(name, inGame = false) {
-    const item = document.createElement('li');
-    item.classList.toggle('in-game', inGame);
-    item.append(diskBox(name), removeButton(name));
-    return item;
-}
-
-/// A game of several disks: ticked, all of them go in, in order.
-function gameRow(game, wanted) {
-    const item = document.createElement('li');
-    item.className = 'game';
-    const open = opened.has(game.title) || wanted;
-    const toggle = document.createElement('button');
-    toggle.className = 'opener';
-    toggle.textContent = open ? '▾' : '▸';
-    toggle.setAttribute('aria-label', `${open ? 'Close' : 'Open'} ${game.title}`);
-    toggle.onclick = () => {
-        if (!opened.delete(game.title)) {
-            opened.add(game.title);
+/// Covers found online, those found showing as they come.
+async function findMissing() {
+    const button = page('find');
+    button.disabled = true;
+    say('Asking for the lists of covers…');
+    const { found, missed, problems } = await findCovers(coverless(), art, async (done, total, kept) => {
+        say(`Finding covers: ${done} of ${total}, ${kept} found…`);
+        if (done % SHOWN_EVERY === 0) {
+            await loadArt();
+            await refresh();
         }
-        refresh();
-    };
-    const label = document.createElement('label');
-    label.className = 'name';
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.dataset.game = JSON.stringify(game.disks);
-    box.onchange = () => {
-        const others = chosen.filter((name) => !game.disks.includes(name));
-        chosen = box.checked ? [...others, ...game.disks] : others;
-        showRoms();
-    };
-    const count = document.createElement('span');
-    count.className = 'count';
-    count.textContent = `${game.disks.length} disks`;
-    const drive = document.createElement('span');
-    drive.className = 'drive';
-    drive.title = 'The order the disks go in';
-    label.append(box, game.title, count, drive);
-    const remove = removeButton(game.disks[0]);
-    remove.title = `Remove ${game.title}`;
-    remove.setAttribute('aria-label', remove.title);
-    remove.onclick = async () => {
-        if (confirm(`Remove ${game.title} and its ${game.disks.length} disks from this browser?`)) {
-            for (const disk of game.disks) {
-                await forget(disk);
-            }
-            refresh();
-        }
-    };
-    item.append(toggle, label, remove);
-    return item;
+    });
+    await loadArt();
+    await refresh();
+    button.disabled = false;
+    const stopped = problems.map((problem) => `Stopped: ${problem}. What's found is kept.`);
+    say([`Found ${found} cover${found === 1 ? '' : 's'}${missed ? `, none for ${missed}` : ''}.`, ...stopped].join(' '), problems.length > 0);
 }
 
-function fill(list, items, main, filtered, none) {
-    list.nextElementSibling.textContent = filtered ? 'Nothing matches.' : none;
-    list.replaceChildren(...items.map((name) => {
+page('find').onclick = findMissing;
+
+/// Whose art a game has: that of its file, or of any of them, or of its
+/// title, for a picture named after it.
+const artFor = (title, ...names) => [...names.map(artKey), keyOf(title)].find((key) => art.has(key)) ?? artKey(names[0]);
+
+/// A tab's name, and how many it holds beside it.
+function showCount(tab, name, count) {
+    const tally = document.createElement('span');
+    tally.className = 'tally';
+    tally.textContent = count;
+    page(tab).replaceChildren(name, ...(count ? [tally] : []));
+}
+
+/// A game's title, by what's known of it, else its file.
+const titleOf = (name) => art.get(artFor(plainTitle(name), name))?.title ?? plainTitle(name);
+
+function fillGames(wanted) {
+    const all = files.filter(isGame);
+    const matches = (name) => `${titleOf(name)} ${name}`.toLowerCase().includes(wanted);
+    const shown = all.filter(matches).sort((a, b) => natural(titleOf(a), titleOf(b)));
+    const list = page('games');
+    list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : 'No games yet. Add .nes or .zip files, or a folder of them.';
+    showCount('tab-nes', 'NES', shown.length);
+    list.replaceChildren(...shown.map((name) => {
         const item = document.createElement('li');
-        item.append(main(name), removeButton(name));
+        item.className = 'tile';
+        const key = artFor(plainTitle(name), name);
+        const known = art.get(key);
+        const button = document.createElement('button');
+        button.className = 'play';
+        button.title = [titleOf(name), known?.developer, name].filter(Boolean).join('\n');
+        button.onclick = () => start(() => Emulator.nes(name, 8), 'nes', [name]);
+        button.append(cover(key, titleOf(name)), caption(titleOf(name), known, tagsOf(name)));
+        item.append(button, removeButton(name));
         return item;
     }));
 }
 
-function gameButton(name) {
-    const button = document.createElement('button');
-    button.className = 'name';
-    button.title = name;
-    button.textContent = name.replace(/\.[^.]*$/, '');
-    button.onclick = () => start(() => Emulator.nes(name, 8), 'nes', [name]);
-    return button;
+/// The picture of a game: its cover, or one made of its title, on a drawing
+/// of `media` if it's on any.
+function cover(key, title, media = '') {
+    const url = covers.get(key);
+    if (url) {
+        const image = document.createElement('img');
+        image.className = 'art';
+        image.src = url;
+        image.alt = '';
+        image.loading = 'lazy';
+        image.decoding = 'async';
+        return image;
+    }
+    const blank = document.createElement('span');
+    blank.className = `art blank ${media}`;
+    const label = document.createElement('span');
+    label.className = 'label';
+    label.textContent = title;
+    blank.append(label);
+    const hue = [...title].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 360, 7);
+    blank.style.setProperty('--hue', 180 + hue % 170);
+    return blank;
+}
+
+/// Its title under it, and what's known: the year, the genre, the players;
+/// if nothing is, `note`, what tells it from others of the title.
+function caption(title, known, note = '') {
+    const words = document.createElement('span');
+    words.className = 'caption';
+    const name = document.createElement('span');
+    name.className = 'tile-title';
+    name.textContent = title;
+    words.append(name);
+    const players = known?.players && `${known.players.replace('-', '–')}P`;
+    const facts = [known?.year, known?.genre, players].filter(Boolean).join(' · ') || note;
+    if (facts) {
+        const line = document.createElement('span');
+        line.className = 'facts';
+        line.textContent = facts;
+        words.append(line);
+    }
+    return words;
+}
+
+/// The disks, as games: one tile each, a game of several able to open.
+function fillDisks(wanted) {
+    const matches = (game) => [game.title, ...game.disks].some((name) => name.toLowerCase().includes(wanted));
+    const all = games(files.filter(isDisk));
+    const shown = all.filter(matches);
+    const list = page('disks');
+    list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : 'No disks yet. Add disk images, or a folder of them.';
+    showCount('tab-apple', 'Apple II', shown.length);
+    list.replaceChildren(...shown.flatMap((game) => {
+        const open = game.disks.length > 1 && (opened.has(game.title) || wanted);
+        return open ? [diskTile(game, wanted), diskList(game)] : [diskTile(game, wanted)];
+    }));
+}
+
+/// What tells a disk from others of the title: its brackets, or its kind.
+const diskNote = (name) => tagsOf(name) || name.split('.').pop().toLowerCase();
+
+/// What a game of disks is called.
+const diskTitle = (game) => (game.disks.length > 1 ? game.title : plainTitle(game.title));
+
+/// A game of disks: ticked, all of them go in, in order.
+function diskTile(game, wanted) {
+    const several = game.disks.length > 1;
+    const title = diskTitle(game);
+    const item = document.createElement('li');
+    item.className = 'tile';
+    const label = document.createElement('label');
+    label.className = 'play';
+    label.title = several ? title : game.disks[0];
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.className = 'unseen';
+    if (several) {
+        box.dataset.game = JSON.stringify(game.disks);
+        box.onchange = () => {
+            const others = chosen.filter((name) => !game.disks.includes(name));
+            chosen = box.checked ? [...others, ...game.disks] : others;
+            showRoms();
+        };
+    } else {
+        box.value = game.disks[0];
+        box.onchange = () => {
+            chosen = box.checked ? [...chosen, game.disks[0]] : chosen.filter((other) => other !== game.disks[0]);
+            showRoms();
+        };
+    }
+    const drive = document.createElement('span');
+    drive.className = 'drive';
+    drive.title = 'The order the disks go in';
+    const key = artFor(title, ...game.disks);
+    const media = game.disks.every(isVolume) ? 'hard' : 'floppy';
+    label.append(box, cover(key, title, media), caption(art.get(key)?.title ?? title, art.get(key), several ? '' : diskNote(game.disks[0])), drive);
+    item.append(label);
+    if (several) {
+        const toggle = document.createElement('button');
+        const open = opened.has(game.title) || wanted;
+        toggle.className = 'opener';
+        toggle.textContent = `${game.disks.length} disks ${open ? '▴' : '▾'}`;
+        toggle.setAttribute('aria-expanded', Boolean(open));
+        toggle.onclick = () => {
+            if (!opened.delete(game.title)) {
+                opened.add(game.title);
+            }
+            refresh();
+        };
+        item.append(toggle);
+        const remove = removeButton(game.disks[0]);
+        remove.title = `Remove ${game.title}`;
+        remove.setAttribute('aria-label', remove.title);
+        remove.onclick = async () => {
+            if (confirm(`Remove ${game.title} and its ${game.disks.length} disks from this browser?`)) {
+                for (const disk of game.disks) {
+                    await forget(disk);
+                }
+                refresh();
+            }
+        };
+        item.append(remove);
+    } else {
+        item.append(removeButton(game.disks[0]));
+    }
+    return item;
+}
+
+/// A game's disks, opened, across the shelf.
+function diskList(game) {
+    const item = document.createElement('li');
+    item.className = 'opened';
+    const list = document.createElement('ul');
+    list.replaceChildren(...game.disks.map((name) => {
+        const row = document.createElement('li');
+        row.append(diskBox(name), removeButton(name));
+        return row;
+    }));
+    item.append(list);
+    return item;
 }
 
 function diskBox(name) {
@@ -208,6 +365,8 @@ function showRoms() {
         }
         return item;
     }));
+    const disksChosen = chosen.length;
+    page('picked').textContent = disksChosen ? `${disksChosen} disk${disksChosen > 1 ? 's' : ''} chosen` : 'No disks chosen';
     page('disks').querySelectorAll('label').forEach((label) => {
         const box = label.querySelector('input');
         const drive = label.querySelector('.drive');
@@ -216,6 +375,7 @@ function showRoms() {
             const places = disks.map((disk) => chosen.indexOf(disk)).filter((at) => at >= 0);
             box.checked = places.length === disks.length;
             box.indeterminate = places.length > 0 && !box.checked;
+            label.classList.toggle('some', box.indeterminate);
             drive.textContent = places.length ? `${Math.min(...places) + 1}–${Math.max(...places) + 1}`.replace(/^(\d+)–\1$/, '$1') : '';
             return;
         }
@@ -228,7 +388,11 @@ function showRoms() {
 /// Files added: `list`, chosen one by one, replacing any of the name; and
 /// those `inFolders` that are new, a folder never replacing what's here,
 /// whose saves and disks may be newer than the folder's.
-async function add(list, inFolders = []) {
+async function add(given, dropped = []) {
+    // Covers and game lists apart, and what's no use, as videos are.
+    const artFiles = [...given, ...dropped].filter((file) => isMedia(file.name));
+    const list = [...given].filter((file) => !isMedia(file.name));
+    const inFolders = dropped.filter((file) => !isMedia(file.name));
     // The Apple's ROMs out of it first, whatever they're called.
     const sorter = new RomSorter();
     const isOneOfThem = async (file) => mayHoldRoms(file)
@@ -277,6 +441,11 @@ async function add(list, inFolders = []) {
         const chips = sorter.plus_chips();
         if (chips > 0 && chips < 6) {
             notes.push(`Found ${chips} of the II+'s 6 chips; add them all at once.`);
+        }
+        const made = await takeArt(artFiles, art, (at, total) => say(`Making covers: ${at} of ${total}…`));
+        await loadArt();
+        if (made) {
+            notes.push(`Added ${made} cover${made > 1 ? 's' : ''}.`);
         }
         if (others.length && fromFolders.length) {
             const already = fromFolders.length - added.length - repeated.length - copies.length;
@@ -688,5 +857,7 @@ page('frame').onpointermove = (event) => {
 };
 
 await init();
+await loadArt();
 await refresh();
+showShelf(localStorage.getItem('shelf') ?? (files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple'));
 requestAnimationFrame(tick);

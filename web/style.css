@@ -11,10 +11,6 @@ h1 { display: inline-block; margin: 0 0 -.1em; padding: .05em .12em .2em 0; font
   letter-spacing: .01em; color: transparent;
   background: linear-gradient(#22e6ff 0 22%, #e9fbff 46%, #2b0a5e 49%, #ff2a9d 54%, #ffd319 92%) text;
   filter: drop-shadow(0 0 10px #ff2a9d99); }
-h2 { margin: 0 0 .6rem; font: 700 .95rem/1.3 var(--display); letter-spacing: .16em; text-transform: uppercase;
-  color: var(--cyan); text-shadow: 0 0 10px #22e6ffaa; }
-h3 { margin: .9rem 0 .35rem; font: 600 .72rem/1.3 var(--display); letter-spacing: .12em; text-transform: uppercase;
-  color: var(--quiet); }
 p { margin: 0; }
 .quiet { color: var(--quiet); }
 .unseen { position: absolute; width: 1px; height: 1px; opacity: 0; }
@@ -54,36 +50,83 @@ canvas:focus-visible { outline: none; }
 @keyframes drive { to { background-position: 0 64px, 50% 0; } }
 @media (prefers-reduced-motion: reduce) { .floor::before { animation: none; } }
 
-#library { max-width: 68rem; margin: 0 auto; padding: 1.25rem; }
+#library { max-width: 92rem; margin: 0 auto; padding: 1.25rem; }
 header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: .75rem 1.5rem; }
-.actions { display: flex; gap: .5rem; flex: 0 1 22rem; }
-.actions input { flex: 1; min-width: 0; }
+header > div:first-child { flex: 1 1 22rem; }
+.actions { display: flex; flex-wrap: wrap; gap: .5rem; flex: 0 1 30rem; }
+.actions input { flex: 1 1 8rem; min-width: 0; }
 .actions .button { position: relative; white-space: nowrap; }
 #message { margin-top: .75rem; color: var(--cyan); }
 #message:empty { display: none; }
 #message.problem { color: var(--gold); }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: 1rem; margin-top: 1rem;
-  align-items: start; }
-.card { background: var(--card); backdrop-filter: blur(5px); border: 1px solid #ff2a9d80; border-radius: 4px; padding: 1rem;
-  min-width: 0; box-shadow: 0 0 22px #ff2a9d40; }
-.fields { display: flex; flex-wrap: wrap; gap: .5rem 1rem; }
+/* The tabs and the shelves of games: covers, side by side. */
+.tabs { position: sticky; top: 0; z-index: 3; display: flex; gap: .25rem; margin-top: .75rem; height: 2.5rem; padding-top: .35rem;
+  background: var(--night); }
+.tabs button { padding: .4rem 1rem; background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  color: var(--quiet); font-size: .85rem; }
+.tabs button:hover { background: none; box-shadow: none; color: var(--text); }
+.tabs button.on { color: var(--cyan); border-bottom-color: var(--cyan); text-shadow: 0 0 8px #22e6ffaa; }
+.tally { margin-left: .5em; padding: .05em .5em; border-radius: 1em; font: 600 .72rem/1.4 system-ui, sans-serif;
+  font-variant-numeric: tabular-nums; letter-spacing: 0; text-shadow: none; color: var(--quiet); background: var(--raised); }
+.tabs button.on .tally { color: var(--on-neon); background: var(--cyan); }
+.shelf { padding: .9rem; background: #14062feb; border: 1px solid #ff2a9d80; border-radius: 4px; }
+.fields { position: sticky; top: 2.5rem; z-index: 2; display: flex; flex-wrap: wrap; align-items: flex-end; gap: .5rem 1rem;
+  margin: -.9rem -.9rem .9rem; padding: .7rem .9rem; background: #14062f; border-bottom: 1px solid var(--line); }
 .fields label { display: flex; flex-direction: column; gap: .2rem; font: 500 .72rem/1.3 var(--display); letter-spacing: .04em;
   color: var(--quiet); }
 .fields select { color: var(--text); font: .95rem/1.45 system-ui, sans-serif; letter-spacing: 0; }
 
 ul { list-style: none; margin: 0; padding: 0; }
-#games, #disks { overflow: auto; overscroll-behavior: contain; scrollbar-color: var(--pink) transparent; }
-#games { max-height: min(62vh, 36rem); }
-#disks { max-height: 44vh; }
-.count { color: var(--quiet); font-size: .8rem; white-space: nowrap; }
-.opener { flex: none; width: 1.7rem; height: 1.8rem; padding: 0; background: none; border: 0; color: var(--cyan); }
-.opener:hover { background: none; box-shadow: none; color: var(--text); }
-#disks li:not(.game) { padding-left: 1.6rem; }
-#disks li.in-game { padding-left: 3.2rem; font-size: .9em; }
-li.game .name { padding-left: .1rem; }
-li.in-game .name { font-size: inherit; color: var(--quiet); }
-li { display: flex; align-items: center; gap: .25rem; border-radius: 3px; }
-li:hover { background: var(--raised); }
+/* Title screens and boxes on the same shelf, each its own shape. */
+#disks img.art { aspect-ratio: auto; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); gap: 1.1rem .9rem; }
+.tile { position: relative; display: block; min-width: 0; border-radius: 4px; }
+.tile:hover { background: none; }
+.play { position: relative; display: flex; flex-direction: column; width: 100%; padding: 0; background: none; border: 0;
+  color: var(--text); font: 15px/1.3 system-ui, sans-serif; letter-spacing: 0; text-align: left; cursor: pointer; }
+.play:hover { background: none; box-shadow: none; }
+.art { display: block; width: 100%; aspect-ratio: 497 / 680; object-fit: cover; border-radius: 3px; background: var(--card);
+  box-shadow: 0 4px 10px #05010d; transition: translate .1s, box-shadow .1s; }
+.blank { display: grid; place-items: center; padding: .7rem; overflow: hidden; overflow-wrap: anywhere; text-align: center;
+  font: italic 800 .92rem/1.25 var(--display); color: #fff; text-shadow: 0 1px 4px #0008;
+  background: linear-gradient(170deg, var(--ink), var(--paper)); --ink: hsl(calc(var(--hue, 300) * 1deg) 75% 22%);
+  --paper: hsl(calc((var(--hue, 300) + 45) * 1deg) 85% 48%); }
+/* A hard disk with its lid off: the platter, and the arm that reads it. */
+.hard { position: relative; display: block; aspect-ratio: 1; padding: 0; border: 1px solid #000; background:
+    radial-gradient(circle at 5% 96%, #2a2733 0 2.5%, transparent 3%), radial-gradient(circle at 95% 96%, #2a2733 0 2.5%, transparent 3%),
+    linear-gradient(145deg, #aaa7b6, #66636f 55%, #8d8a99); }
+.hard .label { height: 32%; }
+.hard::before { content: ""; position: absolute; left: 19%; top: 40%; width: 56%; aspect-ratio: 1; border-radius: 50%; box-shadow: 0 0 0 1px #2a2733;
+  background: radial-gradient(#8d8a99 0 9%, #2a2733 10% 14%, transparent 15%),
+    conic-gradient(from 20deg, #e9e7f4, #85829a, #f6f4fd, #6f6c84, #e9e7f4, #85829a, #f6f4fd, #6f6c84, #e9e7f4); }
+.hard::after { content: ""; position: absolute; left: 49%; top: 83%; width: 41%; height: 5%; border-radius: 1rem 45% 45% 1rem; background: #26232e;
+  box-shadow: 0 1px 2px #0008; transform-origin: 92% 50%; rotate: 40deg; }
+/* A 5¼-inch floppy: its label, hub, read window and write-protect notch. */
+.floppy { position: relative; display: block; aspect-ratio: 1; padding: 0; background:
+    linear-gradient(#14062f, #14062f) right 0 top 62% / 5% 9% no-repeat,
+    linear-gradient(145deg, #2c2738, #17131f 45%); border: 1px solid #000; }
+.floppy .label, .hard .label { position: absolute; inset: 5% 5% auto; height: 38%; padding: .15rem .35rem; display: grid; place-items: center;
+  overflow: hidden; font-size: .76rem; line-height: 1.2; border-radius: 2px; background: linear-gradient(170deg, var(--ink), var(--paper)); }
+.floppy::before { content: ""; position: absolute; left: 37%; top: 46%; width: 26%; aspect-ratio: 1; border-radius: 50%;
+  background: radial-gradient(#14062f 0 42%, #cfc2a0 44% 62%, #4c4257 64%); }
+.floppy::after { content: ""; position: absolute; left: 45%; top: 76%; width: 10%; height: 19%; border-radius: 1rem; background: #4c4257; }
+.play:hover .art, .play:focus-visible .art, .play:has(input:focus-visible) .art { translate: 0 -3px; box-shadow: 0 0 0 2px var(--cyan), 0 0 18px #22e6ff80; }
+.play:has(input:checked) .art { box-shadow: 0 0 0 3px var(--cyan), 0 0 20px #22e6ffb0; }
+.play.some .art { box-shadow: 0 0 0 3px var(--gold); }
+.caption { display: flex; flex-direction: column; gap: .05rem; padding: .35rem .1rem 0; min-width: 0; }
+.tile-title { overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; font-weight: 600; font-size: .86rem; }
+.facts { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--quiet); font-size: .72rem; }
+.tile .drive { position: absolute; top: .3rem; left: .3rem; margin: 0; padding: 0 .3em; font-size: .78rem; }
+.tile .remove { position: absolute; top: .2rem; right: .2rem; width: 1.6rem; height: 1.6rem; border-radius: 50%; background: #0d0221c0;
+  color: var(--text); opacity: 0; transition: opacity .1s; }
+.tile:hover .remove, .tile .remove:focus-visible { opacity: 1; }
+.tile .remove:hover { background: #0d0221e0; }
+@media (pointer: coarse) { .tile .remove { width: 1.35rem; height: 1.35rem; font-size: .95rem; opacity: .6; } }
+.opener { display: block; margin-top: .25rem; padding: .05rem .4rem; font: 500 .68rem var(--display); letter-spacing: .02em;
+  background: var(--raised); color: var(--cyan); }
+.opened { grid-column: 1 / -1; padding: .4rem .6rem; background: var(--card); border: 1px solid #22e6ff60; border-radius: 4px; }
+.opened li { display: flex; align-items: center; gap: .25rem; border-radius: 3px; }
+.opened li:hover { background: var(--raised); }
 .name { flex: 1; min-width: 0; display: flex; align-items: center; gap: .5rem; padding: .3rem .5rem; text-align: left;
   font: 15px/1.45 system-ui, sans-serif; letter-spacing: 0; background: none; border: 0; border-radius: 3px; overflow-wrap: anywhere; cursor: pointer; }
 .name:hover { background: none; box-shadow: none; color: var(--cyan); text-shadow: 0 0 8px #22e6ff99; }
@@ -96,7 +139,9 @@ li:hover { background: var(--raised); }
 .empty { display: none; padding: .3rem .5rem; color: var(--quiet); }
 ul:empty + .empty { display: block; }
 
-details { margin-top: .9rem; font-size: .85rem; }
+details { margin: 0 0 .8rem; font-size: .85rem; }
+/* On a phone the choices scroll away under the tabs, and Start stays. */
+@media (max-width: 40rem) { .fields { top: -1.9rem; } }
 summary { cursor: pointer; color: var(--quiet); font-family: var(--display); font-size: .75rem; letter-spacing: .03em; }
 details.short summary { color: var(--gold); }
 #rom-list li { padding-left: .25rem; }
@@ -105,7 +150,6 @@ details.short summary { color: var(--gold); }
 .mark { flex: none; width: 1.2em; color: var(--cyan); }
 li.missing .mark { color: var(--gold); }
 li.missing .rom { color: var(--text); }
-.go { margin-top: .9rem; }
 
 /* A machine running: the picture as big as the window lets it be, its shape
    the machine's own, --ratio, not its pixels', and nothing laid over it. */

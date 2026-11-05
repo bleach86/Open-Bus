@@ -1,8 +1,9 @@
 // The files kept in this browser, in IndexedDB: name to bytes, and the parts
 // of them written over since, by name and where they start. A file's parts
-// go on top of it when it's read, and go when it's replaced.
+// go on top of it when it's read, and go when it's replaced. And the games'
+// art, by key: what art.js keeps.
 const open = () => new Promise((resolve, reject) => {
-    const request = indexedDB.open('cpu_emu', 2);
+    const request = indexedDB.open('cpu_emu', 3);
     request.onupgradeneeded = () => {
         const stores = request.result.objectStoreNames;
         if (!stores.contains('files')) {
@@ -10,6 +11,9 @@ const open = () => new Promise((resolve, reject) => {
         }
         if (!stores.contains('parts')) {
             request.result.createObjectStore('parts');
+        }
+        if (!stores.contains('art')) {
+            request.result.createObjectStore('art');
         }
     };
     request.onsuccess = () => {
@@ -25,8 +29,8 @@ const database = open();
 async function store(mode, use) {
     const db = await database;
     return new Promise((resolve, reject) => {
-        const transaction = db.transaction(['files', 'parts'], mode);
-        const asked = use(transaction.objectStore('files'), transaction.objectStore('parts'));
+        const transaction = db.transaction(['files', 'parts', 'art'], mode);
+        const asked = use(transaction.objectStore('files'), transaction.objectStore('parts'), transaction.objectStore('art'));
         transaction.oncomplete = () => resolve(asked);
         transaction.onerror = () => reject(transaction.error);
         transaction.onabort = () => reject(transaction.error);
@@ -53,6 +57,17 @@ export const forget = (name) => store('readwrite', (files, parts) => {
     parts.delete(partsOf(name));
     files.delete(name);
 });
+
+export const keepArt = (art) => store('readwrite', (files, parts, kept) => {
+    for (const [key, value] of art) {
+        kept.put(value, key);
+    }
+});
+
+export async function allArt() {
+    const [keys, values] = await store('readonly', (files, parts, kept) => [kept.getAllKeys(), kept.getAll()]);
+    return new Map(keys.result.map((key, at) => [key, values.result[at]]));
+}
 
 export const names = async () => (await store('readonly', (files) => files.getAllKeys())).result;
 
