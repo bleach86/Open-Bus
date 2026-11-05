@@ -22,6 +22,7 @@ use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::{Canvas, Texture};
 use sdl2::video::FullscreenType;
 use std::collections::{HashSet, VecDeque};
+use std::time::{Duration, Instant};
 
 pub struct Window {
     canvas: Canvas<sdl2::video::Window>,
@@ -50,10 +51,14 @@ pub struct Window {
     closed: bool,
     /// A keypad key's own text, which it would type too: not typed.
     keypad_text: Option<char>,
+    /// When the pointer last moved.
+    pointer_moved: Instant,
 }
 
 /// A stick's travel taken as centred: a resting gamepad's isn't quite 0.
 const DEAD_ZONE: f32 = 0.15;
+/// How long the pointer stays once it stops moving.
+const POINTER_SHOWN: Duration = Duration::from_secs(2);
 
 /// The sound queued ahead, to start with, so that a frame late doesn't run
 /// it dry; and the most, beyond which a frame's is dropped, so that the
@@ -135,6 +140,7 @@ impl Window {
             keys_held: HashSet::new(),
             closed: false,
             keypad_text: None,
+            pointer_moved: Instant::now(),
         };
         if fullscreen {
             window.toggle_fullscreen();
@@ -142,8 +148,7 @@ impl Window {
         window
     }
 
-    /// Fullscreen, at the screen's own size, the pointer hidden; or back to
-    /// the window.
+    /// Fullscreen, at the screen's own size; or back to the window.
     fn toggle_fullscreen(&mut self) {
         let fullscreen = self.canvas.window().fullscreen_state() == FullscreenType::Off;
         let state = if fullscreen {
@@ -152,7 +157,6 @@ impl Window {
             FullscreenType::Off
         };
         let _ = self.canvas.window_mut().set_fullscreen(state);
-        self.mouse.show_cursor(!fullscreen);
     }
 
     /// The window's events since the last frame: its keys queued, the
@@ -254,6 +258,7 @@ impl Window {
                     clicks: 2,
                     ..
                 } => toggle = !toggle,
+                Event::MouseMotion { .. } => self.pointer_moved = Instant::now(),
                 Event::ControllerDeviceAdded { which, .. } if self.gamepad.is_none() => {
                     self.gamepad = self.controllers.open(which).ok();
                 }
@@ -287,6 +292,9 @@ impl Window {
         if toggle {
             self.toggle_fullscreen();
         }
+        // The pointer: gone in fullscreen, and in the window once it's still.
+        let windowed = self.canvas.window().fullscreen_state() == FullscreenType::Off;
+        self.mouse.show_cursor(windowed && self.pointer_moved.elapsed() < POINTER_SHOWN);
     }
 }
 

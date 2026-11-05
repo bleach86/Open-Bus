@@ -110,6 +110,7 @@ li.missing .rom { color: var(--text); }
 #frame { flex: 1; min-height: 0; container-type: size; display: flex; justify-content: center; align-items: center;
   background: #000; border: 1px solid var(--pink); box-shadow: 0 0 18px #ff2a9d80, 0 0 42px #22e6ff30; }
 #frame:fullscreen { border: 0; box-shadow: none; }
+#frame.still { cursor: none; }
 canvas { display: block; width: min(100cqw, calc(100cqh * var(--ratio))); aspect-ratio: var(--ratio);
   image-rendering: pixelated; outline: none; }
 .help { font-size: .8rem; color: var(--quiet); text-align: center; word-spacing: .05em; }

@@ -133,21 +133,93 @@ function showRoms() {
     });
 }
 
-async function add(list) {
-    const chosenFiles = [...list];
-    const usable = chosenFiles.filter((file) => isUsable(file.name));
-    const unused = chosenFiles.filter((file) => !isUsable(file.name));
+/// Files added: `list`, chosen one by one, replacing any of the name; and
+/// those `inFolders` that are new, a folder never replacing what's here,
+/// whose saves and disks may be newer than the folder's.
+async function add(list, inFolders = []) {
+    const loose = [...list];
+    const usable = loose.filter((file) => isUsable(file.name));
+    const unused = loose.filter((file) => !isUsable(file.name));
+    const here = new Set([...files, ...usable.map((file) => file.name)]);
+    const fromFolders = inFolders.filter((file) => isUsable(file.name));
+    const added = [];
+    const repeated = [];
+    for (const file of fromFolders.filter((file) => !here.has(file.name))) {
+        const repeat = added.some((other) => other.name === file.name);
+        (repeat ? repeated : added).push(file);
+    }
+    usable.push(...added);
     say('');
     try {
         for (const [at, file] of usable.entries()) {
             say(`Adding ${at + 1} of ${usable.length}…`);
             await keep(file.name, new Uint8Array(await file.arrayBuffer()));
         }
-        say(unused.length ? `Not ROMs or disks, so not added: ${unused.map((file) => file.name).join(', ')}` : '', unused.length > 0);
+        const notes = [];
+        if (inFolders.length) {
+            const already = fromFolders.length - added.length - repeated.length;
+            const other = inFolders.length - fromFolders.length;
+            notes.push(`Added ${added.length} from the folder, ${already} already here, ${other} not ROMs or disks.`);
+        }
+        if (repeated.length) {
+            const names = [...new Set(repeated.map((file) => file.name))].join(', ');
+            notes.push(`Kept only the copy nearest the top of: ${names}`);
+        }
+        if (unused.length) {
+            notes.push(`Not ROMs or disks, so not added: ${unused.map((file) => file.name).join(', ')}`);
+        }
+        say(notes.join(' '), unused.length + repeated.length > 0);
     } catch (error) {
         say(`Couldn't add it: ${error}`, true);
     }
     refresh();
+}
+
+const fileOf = (entry) => new Promise((resolve, reject) => entry.file(resolve, reject));
+
+/// The files in a dropped folder, then those in the folders under it, so
+/// that of two of a name the one nearer the top comes first. A folder's
+/// entries come a batch at a time, until a batch is empty.
+async function folderFiles(folder) {
+    const reader = folder.createReader();
+    const found = [];
+    const folders = [];
+    for (;;) {
+        const entries = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+        if (!entries.length) {
+            break;
+        }
+        for (const entry of entries) {
+            if (entry.isDirectory) {
+                folders.push(entry);
+            } else {
+                found.push(await fileOf(entry));
+            }
+        }
+    }
+    for (const under of folders) {
+        found.push(...await folderFiles(under));
+    }
+    return found;
+}
+
+async function addDropped(entries) {
+    const loose = [];
+    const inFolders = [];
+    say('Reading the folder…');
+    try {
+        for (const entry of entries) {
+            if (entry.isDirectory) {
+                inFolders.push(...await folderFiles(entry));
+            } else {
+                loose.push(await fileOf(entry));
+            }
+        }
+    } catch (error) {
+        say(`Couldn't read it: ${error}`, true);
+        return;
+    }
+    add(loose, inFolders);
 }
 
 page('add').onchange = async (event) => {
@@ -169,7 +241,8 @@ addEventListener('dragleave', (event) => {
 addEventListener('drop', (event) => {
     event.preventDefault();
     document.body.classList.remove('dropping');
-    add(event.dataTransfer.files);
+    // The entries go when the drop's over, so they're taken before anything's awaited.
+    addDropped([...event.dataTransfer.items].map((item) => item.webkitGetAsEntry()).filter(Boolean));
 });
 
 page('apple').onclick = () => {
@@ -238,6 +311,7 @@ async function start(make, machine, using) {
     const canvas = page('screen');
     canvas.style.setProperty('--ratio', emulator.shown_width() / emulator.shown_height());
     canvas.focus();
+    pointerMoved();
     last = performance.now();
 }
 
@@ -252,6 +326,7 @@ async function stop() {
     emulator.free();
     emulator = null;
     held.clear();
+    clearTimeout(pointerTimer);
     page('machine').hidden = true;
     page('library').hidden = false;
     document.title = 'cpu_emu';
@@ -293,13 +368,22 @@ function controls() {
         return Math.abs(travel) < 0.15 ? 0 : travel;
     };
     const [stickX, stickY] = [push(0), push(1)];
-    const up = button(12) || stickY < -0.5 || key('ArrowUp');
-    const down = button(13) || stickY > 0.5 || key('ArrowDown');
-    const left = button(14) || stickX < -0.5 || key('ArrowLeft');
-    const right = button(15) || stickX > 0.5 || key('ArrowRight');
+    // A pad the browser has no layout for comes as it is. An Xbox pad on
+    // Linux in Chrome is that: Back and Start 6 and 7, its D-pad two axes.
+    const raw = pad?.mapping === '' && pad.buttons.length === 11 && pad.axes.length === 8;
+    const [back, start] = raw ? [6, 7] : [8, 9];
+    const hat = (axis, way) => raw && pad.axes[axis] * way > 0.5;
+    const padUp = button(12) || hat(7, -1);
+    const padDown = button(13) || hat(7, 1);
+    const padLeft = button(14) || hat(6, -1);
+    const padRight = button(15) || hat(6, 1);
+    const up = padUp || stickY < -0.5 || key('ArrowUp');
+    const down = padDown || stickY > 0.5 || key('ArrowDown');
+    const left = padLeft || stickX < -0.5 || key('ArrowLeft');
+    const right = padRight || stickX > 0.5 || key('ArrowRight');
     const gamepad = [up, down, left, right,
         button(0) || key('KeyX'), button(west) || key('KeyZ'),
-        button(8) || key('ShiftRight', 'Tab'), button(9) || key('Enter')];
+        button(back) || key('ShiftRight', 'Tab'), button(start) || key('Enter')];
     // The joystick: the numeric keypad's too, and the Alt keys its buttons.
     const towards = (minus, plus, stick) => {
         if (minus !== plus) {
@@ -307,10 +391,10 @@ function controls() {
         }
         return stick;
     };
-    const x = towards(button(14) || key('Numpad4', 'Numpad7', 'Numpad1'),
-        button(15) || key('Numpad6', 'Numpad9', 'Numpad3'), stickX);
-    const y = towards(button(12) || key('Numpad8', 'Numpad7', 'Numpad9'),
-        button(13) || key('Numpad2', 'Numpad1', 'Numpad3'), stickY);
+    const x = towards(padLeft || key('Numpad4', 'Numpad7', 'Numpad1'),
+        padRight || key('Numpad6', 'Numpad9', 'Numpad3'), stickX);
+    const y = towards(padUp || key('Numpad8', 'Numpad7', 'Numpad9'),
+        padDown || key('Numpad2', 'Numpad1', 'Numpad3'), stickY);
     const buttons = (button(0) || key('Numpad0', 'AltLeft') ? 1 : 0)
         | (button(1) || key('NumpadDecimal', 'AltRight') ? 2 : 0);
     const down_ = [...held].some((code) => !/^(Shift|Control|Alt|Meta)/.test(code));
@@ -425,6 +509,23 @@ function fullscreen() {
 }
 
 page('screen').ondblclick = fullscreen;
+
+/// The pointer over the picture, gone once it's been still a while.
+const POINTER_SHOWN = 2000;
+let pointerTimer = 0;
+
+function pointerMoved() {
+    page('frame').classList.remove('still');
+    clearTimeout(pointerTimer);
+    pointerTimer = setTimeout(() => page('frame').classList.add('still'), POINTER_SHOWN);
+}
+
+// Hiding it can bring an event of no movement at all: that doesn't count.
+page('frame').onpointermove = (event) => {
+    if (event.movementX || event.movementY) {
+        pointerMoved();
+    }
+};
 
 await init();
 await refresh();
