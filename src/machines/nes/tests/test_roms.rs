@@ -308,7 +308,7 @@ mod tests {
     }
 
     /// What AccuracyCoin passes of its 147, all but what the PPU's left.
-    const ACCURACY_COIN: u8 = 134;
+    const ACCURACY_COIN: u8 = 140;
 
     #[test]
     fn accuracy_coin_keeps_its_score() {
