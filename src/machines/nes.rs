@@ -470,6 +470,7 @@ impl Machine for Nes {
         self.reset_held = held;
         if held {
             self.ppu.reset();
+            self.cartridge.reset();
             (self.dma, self.dmc_dma, self.halted) = (None, None, false);
         }
     }

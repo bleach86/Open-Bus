@@ -624,6 +624,93 @@ mod tests {
         }
     }
 
+    /// A multicart of mapper `number`: 256K of PRG and of CHR, each bank's
+    /// every byte its number, its PRG RAM's writes allowed.
+    fn multicart(number: u8) -> Cartridge {
+        let mut cart = board(number, 16, 32);
+        cart.cpu_write(0xA001, 0x80, 0);
+        cart
+    }
+
+    /// Where the MMC3's 8K bank `bank` at $8000 lands: in 16K banks.
+    fn multicart_prg(cart: &mut Cartridge, bank: u8) -> u8 {
+        cart.cpu_write(0x8000, 6, 0);
+        cart.cpu_write(0x8001, bank, 0);
+        cart.cpu_read(0x8020).unwrap()
+    }
+
+    #[test]
+    fn mapper_37s_register_picks_as_its_table_says() {
+        let mut cart = multicart(37);
+        // The MMC3's 8K banks 2 and 10, 16K banks 1 and 5 of the 16.
+        for (value, low, high) in [
+            (0, 1, 1), // the first 64K, whatever it asks for
+            (1, 1, 1),
+            (2, 1, 1),
+            (3, 5, 5), // the second 64K
+            (4, 9, 13), // the second 128K, the MMC3's A16 through
+            (5, 9, 13),
+            (6, 9, 13),
+            (7, 13, 13), // its last 64K
+        ] {
+            cart.cpu_write(0x6000, value, 0);
+            assert_eq!(multicart_prg(&mut cart, 2), low, "{value}: bank 2");
+            assert_eq!(multicart_prg(&mut cart, 10), high, "{value}: bank 10");
+        }
+
+        // Its CHR's 128K by bit 2, the first 8K bank of each.
+        cart.cpu_write(0x6000, 0, 0);
+        assert_eq!(cart.chr_read(0x0000), 0xC0);
+        cart.cpu_write(0x6000, 3, 0);
+        assert_eq!(cart.chr_read(0x0000), 0xC0, "value 3 is the first 128K's");
+        cart.cpu_write(0x6000, 4, 0);
+        assert_eq!(cart.chr_read(0x0000), 0xC0 | 16, "value 4 the second's");
+    }
+
+    #[test]
+    fn mapper_47s_register_picks_a_128k_block() {
+        let mut cart = multicart(47);
+        cart.cpu_write(0x7FFF, 1, 0);
+        assert_eq!(multicart_prg(&mut cart, 2), 9, "bank 2 of the second 128K");
+        assert_eq!(cart.chr_read(0x0000), 0xC0 | 16);
+        assert_eq!(cart.cpu_read(0xE020), Some(15), "the last fixed, of its block");
+
+        cart.cpu_write(0x6000, 0xFE, 0);
+        assert_eq!(multicart_prg(&mut cart, 2), 1, "bit 0 only");
+        assert_eq!(cart.cpu_read(0xE020), Some(7), "the first block's last fixed");
+    }
+
+    #[test]
+    fn a_multicarts_register_is_as_its_ram_would_be() {
+        for number in [37, 47] {
+            let mut cart = board(number, 16, 32);
+            cart.cpu_write(0xA001, 0x00, 0);
+            cart.cpu_write(0x6000, 1 | 4, 0);
+            assert!(multicart_prg(&mut cart, 2) < 8, "{number}: written, the MMC3's RAM disabled");
+
+            cart.cpu_write(0xA001, 0xC0, 0);
+            cart.cpu_write(0x6000, 1 | 4, 0);
+            assert!(multicart_prg(&mut cart, 2) < 8, "{number}: written, protected");
+
+            cart.cpu_write(0xA001, 0x80, 0);
+            cart.cpu_write(0x6000, 1 | 4, 0);
+            assert!(multicart_prg(&mut cart, 2) >= 8, "{number}: not written");
+            assert_eq!(cart.cpu_read(0x6000), None, "{number}: read");
+
+            cart.reset();
+            assert!(multicart_prg(&mut cart, 2) < 8, "{number}: not back to the menu's");
+        }
+    }
+
+    #[test]
+    fn a_plain_mmc3s_ram_is_kept_over_a_reset() {
+        let mut cart = board(4, 8, 8);
+        cart.cpu_write(0xA001, 0x80, 0);
+        cart.cpu_write(0x6000, 0x55, 0);
+        cart.reset();
+        assert_eq!(cart.cpu_read(0x6000), Some(0x55));
+    }
+
     #[test]
     fn nina_03s_register_is_at_4100_and_every_other_page_to_5fff() {
         let mut cart = board(79, 4, 4);

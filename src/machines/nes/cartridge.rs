@@ -98,6 +98,13 @@
 //! 119, TQROM: MMC3 with both CHR ROM and 8K of CHR RAM, bit 6 of each
 //! bank's number choosing, 6 bits left to say which bank of it.
 //!
+//! 37, Nintendo of Europe's SMB, Tetris and World Cup, and 47, NES-QJ's
+//! Super Spike V'Ball and World Cup: MMC3 multicarts, a register at $6000
+//! up in place of its PRG RAM, written only as that is, not read, and
+//! cleared by Reset. 47's bit 0 says which 128K of PRG and of CHR. 37's
+//! bit 2 is the 128K of CHR and PRG's A17; its low bits, both set, force
+//! PRG's A16 high, else it's the MMC3's if bit 2's set, else low.
+//!
 //! 64, RAMBO-1, Tengen's: MMC3's registers at the same addresses, and
 //! more. Bank select's bit 5 makes $0000 to $0FFF's banks four of 1K, R0,
 //! R8, R1 and R9, not R0 and R1's 2K each; it has a third 8K of PRG, RF, at
@@ -309,6 +316,14 @@ pub enum Board {
     Plain,
     Txsrom,
     Tqrom,
+    Multicart37,
+    Multicart47,
+}
+
+impl Board {
+    fn is_multicart(self) -> bool {
+        matches!(self, Board::Multicart37 | Board::Multicart47)
+    }
 }
 
 impl Mmc3 {
@@ -458,7 +473,7 @@ impl Cartridge {
             1 => Mapper::Mmc1(Mmc1 { shift: 0, bits: 0, control: 0x0C, chr: [0; 2], prg: 0, written: None }),
             2 => Mapper::Uxrom(0),
             3 => Mapper::Cnrom(0),
-            4 | 118 | 119 => Mapper::Mmc3(Mmc3 {
+            4 | 37 | 47 | 118 | 119 => Mapper::Mmc3(Mmc3 {
                 select: 0,
                 banks: [0, 2, 4, 5, 6, 7, 0, 1],
                 ram_enabled: true,
@@ -491,6 +506,8 @@ impl Cartridge {
         let board = match number {
             118 => Board::Txsrom,
             119 => Board::Tqrom,
+            37 => Board::Multicart37,
+            47 => Board::Multicart47,
             _ => Board::Plain,
         };
         let has_ram = chr_rom.is_empty() || board == Board::Tqrom;
@@ -499,7 +516,8 @@ impl Cartridge {
             prg_rom,
             chr_rom,
             chr_ram,
-            prg_ram: vec![0; prg_ram_size],
+            // A multicart's outer register, in place of its RAM.
+            prg_ram: vec![0; if board.is_multicart() { 1 } else { prg_ram_size }],
             battery: header[6] & 0x02 != 0,
             written: false,
             mirroring,
@@ -515,6 +533,28 @@ impl Cartridge {
         self.prg_rom = std::mem::take(&mut cartridge.prg_rom);
         self.chr_rom = std::mem::take(&mut cartridge.chr_rom);
         self.board = cartridge.board;
+    }
+
+    /// MMC3's 8K bank, as a multicart's register has it: bit 3 of it A16,
+    /// bit 4 A17.
+    fn prg_block(&self, bank: usize) -> usize {
+        match self.board {
+            Board::Multicart37 => {
+                let register = self.prg_ram[0] as usize;
+                let (block, low_bits) = ((register >> 2) & 1, register & 3);
+                let a16 = if low_bits == 3 { 1 } else { block & (bank >> 3) };
+                (bank & 7) | a16 << 3 | block << 4
+            }
+            Board::Multicart47 => (bank & 0x0F) | (self.prg_ram[0] as usize & 1) << 4,
+            _ => bank,
+        }
+    }
+
+    /// Reset: a multicart's outer register cleared, back to its menu.
+    pub fn reset(&mut self) {
+        if self.board.is_multicart() {
+            self.prg_ram[0] = 0;
+        }
     }
 
     /// Where `addr`, $8000 up, is in the PRG ROM, as the mapper has its
@@ -571,7 +611,7 @@ impl Cartridge {
                     (1, _) => mmc3.banks[7] as usize,
                     _ => last_8k,
                 };
-                bank * 0x2000 + (addr & 0x1FFF)
+                self.prg_block(bank) * 0x2000 + (addr & 0x1FFF)
             }
         };
         offset % len
@@ -598,7 +638,12 @@ impl Cartridge {
             },
             Mapper::Mmc3(mmc3) => {
                 let bank = mmc3.chr_bank(addr);
-                let bank = if self.board == Board::Tqrom { bank & 0x3F } else { bank };
+                let bank = match self.board {
+                    Board::Tqrom => bank & 0x3F,
+                    Board::Multicart37 => (bank & 0x7F) | (self.prg_ram[0] as usize & 4) << 5,
+                    Board::Multicart47 => (bank & 0x7F) | (self.prg_ram[0] as usize & 1) << 7,
+                    _ => bank,
+                };
                 bank * 0x400 + (addr & 0x3FF)
             }
         };
@@ -648,6 +693,7 @@ impl Cartridge {
     pub fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         match addr {
             0x6000..=0x7FFF => match &self.mapper {
+                _ if self.board.is_multicart() => None,
                 Mapper::Mmc3(mmc3) if mmc3.mmc6 => self.mmc6_ram(mmc3, addr, false).map(|at| at.map_or(0, |at| self.prg_ram[at])),
                 Mapper::Fme7(fme7) if fme7.window & 0x40 == 0 => {
                     let at = (fme7.window as usize & 0x3F) * 0x2000 + (addr as usize & 0x1FFF);
