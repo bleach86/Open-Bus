@@ -9,6 +9,10 @@
 //! The page's only way to the disk is these commands: a path it gives one
 //! is checked to be in `library` or in a folder that's been added.
 //!
+//! Looking through the folders takes a while, on a NAS, so what it found is
+//! kept, in `files.json`, for the page to show at once when it starts: it
+//! looks again behind that, and only says if anything's changed.
+//!
 //! A game's the native emulator, `cpu_emu`, as a process of its own, as
 //! EmulationStation has it: it opens where the window is, that going away
 //! until the game's over. Not in the same process, each wanting the main
@@ -104,9 +108,12 @@ fn file_bytes(app: AppHandle, path: String) -> Result<Response, String> {
     Ok(Response::new(bytes))
 }
 
+/// A file put in `library`: where it is.
 #[tauri::command]
-fn keep_file(app: AppHandle, request: Request<'_>) -> Result<(), String> {
-    write(&place(&app, &header(&request, "name")?)?, body(&request)?)
+fn keep_file(app: AppHandle, request: Request<'_>) -> Result<String, String> {
+    let path = place(&app, &header(&request, "name")?)?;
+    write(&path, body(&request)?)?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Files dropped on the window, that the page may read.
@@ -245,7 +252,19 @@ fn all_files(app: AppHandle) -> Result<Value, String> {
         walk(Path::new(&place), &mut added);
     }
     added.retain(|file| !hidden.iter().any(|path| file["path"] == *path));
-    Ok(json!({ "root": folder(&app, "library")?.to_string_lossy(), "library": library, "folders": added }))
+    let found = json!({ "root": folder(&app, "library")?.to_string_lossy(), "library": library, "folders": added });
+    write(&found_files(&app)?, found.to_string().as_bytes())?;
+    Ok(found)
+}
+
+fn found_files(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("files.json"))
+}
+
+/// What `all_files` last found, if it's looked yet.
+#[tauri::command(async)]
+fn known_files(app: AppHandle) -> Result<Value, String> {
+    Ok(fs::read(found_files(&app)?).ok().and_then(|text| serde_json::from_slice(&text).ok()).unwrap_or(Value::Null))
 }
 
 /// A file of `library` deleted; one of a folder's, only hidden: it's yours.
@@ -411,6 +430,14 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
+            // WebKitGTK alone doesn't animate a mouse wheel's steps.
+            #[cfg(target_os = "linux")]
+            app.get_webview_window("main").ok_or("no window")?.with_webview(|webview| {
+                use webkit2gtk::{SettingsExt, WebViewExt};
+                if let Some(settings) = WebViewExt::settings(&webview.inner()) {
+                    settings.set_enable_smooth_scrolling(true);
+                }
+            })?;
             app.set_menu(menu(app.handle())?)?;
             app.on_menu_event(|app, event| {
                 let _ = app.emit("menu", event.id().0.clone());
@@ -420,7 +447,7 @@ fn main() {
         .manage(Dropped::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            all_files, file_bytes, keep_file, forget_path, keep_art, all_art, pick_folder, take_dropped, folder_files, play,
+            all_files, known_files, file_bytes, keep_file, forget_path, keep_art, all_art, pick_folder, take_dropped, folder_files, play,
             library_settings, remove_folder, restore_hidden
         ])
         .run(tauri::generate_context!())

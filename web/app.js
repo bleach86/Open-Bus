@@ -41,6 +41,14 @@ let chosen = [];
 const opened = new Set();
 /// How many covers come between showing them.
 const SHOWN_EVERY = 24;
+/// The shelf's sizes, in rem, and a cover's height as a share of its width,
+/// as the CSS has them; and rows of tiles kept either side of those in view.
+const SMALLEST_TILE = 9;
+const GAP_ACROSS = 0.9;
+const GAP_DOWN = 1.1;
+const CAPTION = 3.7;
+const COVER_SHAPE = 680 / 497;
+const SHELF_EXTRA = 2;
 /// How long a message that isn't a problem stays, in milliseconds.
 const SHOWN_FOR = 6000;
 let saidTimer = 0;
@@ -95,6 +103,7 @@ function showShelf(name) {
     if (name === 'settings') {
         fillSettings();
     }
+    placeShelf();
     for (const tab of document.querySelectorAll('.tabs button')) {
         tab.classList.toggle('on', tab.dataset.tab === name);
     }
@@ -153,6 +162,11 @@ page('find').onclick = findMissing;
 /// title, for a picture named after it.
 const artFor = (title, ...names) => [...names.map(artKey), keyOf(title)].find((key) => art.has(key)) ?? artKey(names[0]);
 
+/// The emulator's WebAssembly, loaded once. The desktop app only wants it
+/// to sort ROMs, its games being native, so there it waits until then.
+let wasm = null;
+const wasmReady = () => (wasm ??= init());
+
 /// What's said of an empty shelf.
 const noGames = native ? 'No games yet. Add a folder of them in Settings.' : 'No games yet. Add .nes, .fds or .zip files, or a folder of them.';
 
@@ -209,22 +223,85 @@ function fillGames(wanted) {
     const list = page('games');
     list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : noGames;
     showCount('tab-nes', 'NES', shown.length);
-    list.replaceChildren(...shown.map((name) => {
-        const item = document.createElement('li');
-        item.className = 'tile';
-        const key = nesArt(name);
-        const known = art.get(key);
-        const button = document.createElement('button');
-        button.className = 'play';
-        button.title = [titleOf(name), known?.developer, name].filter(Boolean).join('\n');
-        button.onclick = () => (native
-            ? playNatively({ kind: 'nes', game: name })
-            : start(() => Emulator.nes(name, 8), 'nes', [name]));
-        button.append(cover(key, titleOf(name)), caption(titleOf(name), known, tagsOf(name)));
-        item.append(button, removeButton(name));
-        return item;
+    shelf = shown;
+    tiles.clear();
+    placeShelf();
+}
+
+/// A game's tile.
+function gameTile(name) {
+    const item = document.createElement('li');
+    item.className = 'tile';
+    const key = nesArt(name);
+    const known = art.get(key);
+    const button = document.createElement('button');
+    button.className = 'play';
+    button.title = [titleOf(name), known?.developer, name].filter(Boolean).join('\n');
+    button.onclick = () => (native
+        ? playNatively({ kind: 'nes', game: name })
+        : start(() => Emulator.nes(name, 8), 'nes', [name]));
+    button.append(cover(key, titleOf(name)), caption(titleOf(name), known, tagsOf(name)));
+    item.append(button, removeButton(name));
+    return item;
+}
+
+/// The shelf of games, however long, is only as many tiles as are in view
+/// and a few rows either side, the space for the rest being kept: hundreds
+/// of them take a browser seconds to draw, and make scrolling heavy.
+let shelf = [];
+const tiles = new Map();
+let shelfRow = 0;
+let shelfPlaced = -1;
+
+/// A row's height, and how many tiles are in one: as the CSS's grid has it.
+function shelfShape(list) {
+    const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const [smallest, across, down, words] = [SMALLEST_TILE, GAP_ACROSS, GAP_DOWN, CAPTION].map((size) => size * rem);
+    const width = list.clientWidth;
+    const columns = Math.max(1, Math.floor((width + across) / (smallest + across)));
+    const tile = (width - across * (columns - 1)) / columns;
+    return { columns, row: tile * COVER_SHAPE + words, down };
+}
+
+/// The tiles for where the page is scrolled to.
+function placeShelf(force = true) {
+    const list = page('games');
+    if (!list.clientWidth) {
+        return;
+    }
+    const { columns, row, down } = shelfShape(list);
+    const rows = Math.ceil(shelf.length / columns);
+    const scrolled = Math.max(0, -list.getBoundingClientRect().top);
+    const first = Math.max(0, Math.floor(scrolled / (row + down)) - SHELF_EXTRA);
+    const count = Math.ceil(innerHeight / (row + down)) + 2 * SHELF_EXTRA + 1;
+    if (!force && first === shelfRow && shelfPlaced === columns) {
+        return;
+    }
+    [shelfRow, shelfPlaced] = [first, columns];
+    list.style.setProperty('--row', `${row}px`);
+    list.style.paddingTop = `${first * (row + down)}px`;
+    list.style.minHeight = `${Math.max(0, rows * (row + down) - down)}px`;
+    const inView = shelf.slice(first * columns, (first + count) * columns);
+    list.replaceChildren(...inView.map((name) => {
+        if (!tiles.has(name)) {
+            tiles.set(name, gameTile(name));
+        }
+        return tiles.get(name);
     }));
 }
+
+let shelfDue = false;
+const placeShelfSoon = () => {
+    if (!shelfDue) {
+        shelfDue = true;
+        requestAnimationFrame(() => {
+            shelfDue = false;
+            placeShelf(false);
+        });
+    }
+};
+addEventListener('scroll', placeShelfSoon, { passive: true });
+addEventListener('resize', placeShelfSoon);
 
 /// The picture of a game: its cover, or one made of its title, on a drawing
 /// of `media` if it's on any.
@@ -468,6 +545,7 @@ async function add(given, dropped = []) {
     const list = [...given].filter((file) => !isMedia(file.name));
     const inFolders = dropped.filter((file) => !isMedia(file.name));
     // The Apple's ROMs out of it first, whatever they're called.
+    await wasmReady();
     const sorter = new RomSorter();
     const isOneOfThem = async (file) => mayHoldRoms(file)
         && sorter.add(file.name, new Uint8Array(await file.arrayBuffer()));
@@ -660,6 +738,7 @@ native?.whenGameEnds((problem) => {
 /// library, and the covers and game lists beside its games.
 async function addFolder(folder) {
     const found = await native.folderFiles(folder);
+    await wasmReady();
     const sorter = new RomSorter();
     const romFiles = found.map(({ path, size }) => ({ path, size, name: path.split(/[/\\]/).pop() })).filter(mayHoldRoms);
     for (const [at, { path, name }] of romFiles.entries()) {
@@ -673,12 +752,14 @@ async function addFolder(folder) {
         await keep(name, sorter.bytes(name));
     }
     sorter.free();
+    await native.scan();
     const media = found.map(({ path }) => native.laterFile(path)).filter(({ name }) => isMedia(name));
     const made = await takeArt(media, art, (at, total) => say(`Making covers: ${at} of ${total}…`));
     await loadArt();
     await refresh();
-    const count = (number, what) => (number ? ` ${number} ${what}${number > 1 ? 's' : ''}.` : '');
-    say(`Added ${native.gamesIn(folder)} games from ${folder}.${count(roms.length, 'system ROM')}${count(made, 'cover')}`);
+    const count = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
+    const also = (number, what) => (number ? ` ${count(number, what)}.` : '');
+    say(`Added ${count(native.gamesIn(folder), 'game')} from ${folder}.${also(roms.length, 'system ROM')}${also(made, 'cover')}`);
     if (!page('settings').hidden) {
         showShelf(files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple');
     }
@@ -696,6 +777,27 @@ async function addNatively(folders, dropped) {
     } catch (problem) {
         say(`Couldn't add it: ${problem}`, true);
     }
+}
+
+/// The folders looked through again, the library changed if they have,
+/// and said so, or if `askedTo`, said that they haven't.
+async function lookForChanges(askedTo = false) {
+    const { came, went } = await native.scan().catch((problem) => {
+        say(`Couldn't look through the folders: ${problem}`, true);
+        return {};
+    });
+    if (came === undefined) {
+        return;
+    }
+    const counted = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
+    if (came || went) {
+        await refresh();
+        const told = [came && `${counted(came, 'new game')}`, went && `${counted(went, 'game')} gone`].filter(Boolean);
+        say(told.join(', ') + '.');
+    } else if (askedTo) {
+        say('No new games.');
+    }
+    fillSettings();
 }
 
 /// A folder chosen in the system's own dialog, and added.
@@ -738,8 +840,7 @@ async function fillSettings() {
     page('folders').replaceChildren(...folders.map((folder) => row(folder, counted(native.gamesIn(folder), 'game'), 'Remove', async () => {
         if (confirm(`Remove ${folder} from the library? Its files stay where they are.`)) {
             await native.removeFolder(folder);
-            await refresh();
-            fillSettings();
+            await lookForChanges();
         }
     })));
     if (!folders.length) {
@@ -747,8 +848,7 @@ async function fillSettings() {
     }
     page('hidden-games').replaceChildren(...hidden.map((path) => row(shortName(path), path, 'Restore', async () => {
         await native.restore(path);
-        await refresh();
-        fillSettings();
+        await lookForChanges();
     })));
     const has = (name) => files.includes(name);
     const appleFound = [...DISK_II_ROMS, ...IIE_ROMS.apple2ee].filter(has).length;
@@ -778,11 +878,11 @@ if (native) {
             showShelf(page('nes').hidden && page('apple-shelf').hidden ? 'nes' : localStorage.getItem('shelf'));
             page('filter').focus();
         } else if (item === 'rescan') {
-            refresh().then(fillSettings);
+            lookForChanges(true);
         }
     });
     page('add-path').onclick = chooseFolder;
-    page('rescan').onclick = () => refresh().then(fillSettings);
+    page('rescan').onclick = () => lookForChanges(true);
 }
 
 // Running a machine.
@@ -1096,10 +1196,15 @@ page('frame').onpointermove = (event) => {
     }
 };
 
-await init();
+if (!native) {
+    await wasmReady();
+}
 await loadArt();
 await refresh();
 const firstShelf = native && !files.length ? 'settings' : (files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple');
 const lastShelf = localStorage.getItem('shelf');
 showShelf(native && !files.length ? firstShelf : lastShelf && lastShelf !== 'settings' ? lastShelf : firstShelf);
+if (native) {
+    lookForChanges();
+}
 requestAnimationFrame(tick);

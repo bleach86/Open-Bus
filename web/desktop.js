@@ -17,7 +17,9 @@ const GAMES = ['nes', 'fds', 'zip', ...DISKS];
 /// Where each name's file is: the page has names, the disk paths.
 const where = new Map();
 
-export const keep = (name, bytes) => invoke('keep_file', bytes, { headers: { name: encodeURIComponent(name) } });
+export async function keep(name, bytes) {
+    where.set(name, await invoke('keep_file', bytes, { headers: { name: encodeURIComponent(name) } }));
+}
 
 /// The running machines' parts of a hard disk: they aren't here, a game
 /// being the native emulator's, which writes its own.
@@ -25,13 +27,15 @@ export const keepParts = async () => {};
 
 /// Gone from the library: its own copy deleted, or one in a folder of yours
 /// only hidden.
-export const forget = (name) => invoke('forget_path', { path: where.get(name) });
+export async function forget(name) {
+    await invoke('forget_path', { path: where.get(name) });
+    where.delete(name);
+}
 
-/// The names of all there is: the library's, then the games in the folders
-/// added, named as if they'd been dropped on the page, a game's disks
-/// together. Of two of a name, the first.
-export async function names() {
-    const { root, library, folders } = await invoke('all_files');
+/// What the library has, from what was found: the library's, then the games
+/// in the folders added, named as if they'd been dropped on the page, a
+/// game's disks together. Of two of a name, the first.
+function take({ root, library, folders }) {
     where.clear();
     for (const { path } of library) {
         where.set(slashes(path).slice(slashes(root).length + 1), path);
@@ -44,7 +48,33 @@ export async function names() {
             where.set(name, path);
         }
     }
+}
+
+let started = false;
+
+/// The names of all there is: at first as they were last found, at once.
+/// After that it's `scan` that changes them.
+export async function names() {
+    if (!started) {
+        started = true;
+        const known = await invoke('known_files');
+        if (known) {
+            take(known);
+        }
+    }
     return [...where.keys()];
+}
+
+/// The folders looked through again: how many games came, and went.
+export async function scan() {
+    const games = () => [...where.keys()].filter((name) => GAMES.includes(extension(name)));
+    const before = games();
+    take(await invoke('all_files'));
+    const now = games();
+    return {
+        came: now.filter((name) => !before.includes(name)).length,
+        went: before.filter((name) => !now.includes(name)).length,
+    };
 }
 
 export const bytes = async (name) => asBytes(await invoke('file_bytes', { path: where.get(name) }));

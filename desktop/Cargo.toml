@@ -14,4 +14,8 @@ serde_json = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 
+# WebKitGTK's own settings, for the same crate Tauri has.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2"
+
 [workspace]

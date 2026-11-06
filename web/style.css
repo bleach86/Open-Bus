@@ -1348,3 +1348,23 @@ body.dropping::after {
   background: #ffffff30;
   border-radius: 5px;
 }
+
+/* A long shelf, in a window: nothing to repaint as it goes by. */
+.native .art {
+  box-shadow: none;
+  transition: none;
+}
+.native .play:hover .art {
+  translate: none;
+  box-shadow: 0 0 0 2px var(--cyan);
+}
+
+/* The shelf of games: rows of a fixed height, for app.js to place them. */
+#games {
+  grid-auto-rows: var(--row);
+  align-content: start;
+  box-sizing: border-box;
+}
+#games .tile {
+  overflow: hidden;
+}
