@@ -137,6 +137,10 @@ impl Window {
             .accelerated()
             .build()
             .expect("a canvas");
+        // Opened by another program, it's not to end up behind that.
+        if PLACE.get().is_some() {
+            canvas.window_mut().raise();
+        }
         canvas
             .set_logical_size(size.0, size.1)
             .expect("the picture's shape");
