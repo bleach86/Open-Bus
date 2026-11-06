@@ -31,7 +31,7 @@ use std::thread;
 use std::time::Duration;
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 /// How long the library stays up after a game starts, for its window to be
@@ -499,6 +499,34 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     Menu::with_items(app, &[&library, &edit])
 }
 
+/// Where a window of `outer` size goes, framed `outer - inner`, in the part of
+/// a screen at `at` and `area` that's free, a taskbar's left out: its `inner`
+/// size no more than leaves it all there, and the place that centres it.
+fn fitted(inner: (u32, u32), outer: (u32, u32), at: (i32, i32), area: (u32, u32)) -> ((u32, u32), (i32, i32)) {
+    let frame = (outer.0.saturating_sub(inner.0), outer.1.saturating_sub(inner.1));
+    let (width, height) = (outer.0.min(area.0), outer.1.min(area.1));
+    let size = (width.saturating_sub(frame.0), height.saturating_sub(frame.1));
+    (size, (at.0 + (area.0 - width) as i32 / 2, at.1 + (area.1 - height) as i32 / 2))
+}
+
+/// The window all on the screen it's opening on, however big that is, and
+/// whatever a system's scaling makes of the size it asks for.
+fn fit_to_screen(window: &WebviewWindow) -> tauri::Result<()> {
+    let Some(monitor) = window.current_monitor()? else { return Ok(()) };
+    let area = monitor.work_area();
+    let (inner, outer) = (window.inner_size()?, window.outer_size()?);
+    let (size, place) = fitted(
+        (inner.width, inner.height),
+        (outer.width, outer.height),
+        (area.position.x, area.position.y),
+        (area.size.width, area.size.height),
+    );
+    if size != (inner.width, inner.height) {
+        window.set_size(PhysicalSize::new(size.0, size.1))?;
+    }
+    window.set_position(PhysicalPosition::new(place.0, place.1))
+}
+
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
@@ -512,6 +540,7 @@ fn main() {
             })?;
             start_pads(app.handle());
             app.set_menu(menu(app.handle())?)?;
+            fit_to_screen(&app.get_webview_window("main").ok_or("no window")?)?;
             app.on_menu_event(|app, event| {
                 let _ = app.emit("menu", event.id().0.clone());
             });
@@ -526,4 +555,27 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("couldn't open the window");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fitted;
+
+    /// 1280 by 800 at 125%, on a 1080p screen with a taskbar: too tall by
+    /// its title bar and menu, as much taken off the page.
+    #[test]
+    fn a_window_too_big_for_the_screen_is_made_to_fit_it() {
+        assert_eq!(fitted((1600, 1000), (1616, 1079), (0, 0), (1920, 1032)), ((1600, 953), (152, 0)));
+    }
+
+    #[test]
+    fn a_window_that_fits_stays_its_size_and_is_centred_in_whats_free() {
+        assert_eq!(fitted((1280, 800), (1296, 860), (0, 0), (1920, 1040)), ((1280, 800), (312, 90)));
+    }
+
+    /// On a second screen, the place is that screen's.
+    #[test]
+    fn its_place_is_on_the_screen_its_opening_on() {
+        assert_eq!(fitted((800, 600), (800, 600), (1920, 100), (1600, 900)), ((800, 600), (2320, 250)));
+    }
 }
