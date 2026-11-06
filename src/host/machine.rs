@@ -67,6 +67,12 @@ pub trait Machine: Bus + Serialize + DeserializeOwned {
         None
     }
 
+    /// This coming frame's picture left out or not, for time, if it can be:
+    /// whether it is. It runs the same either way.
+    fn leave_out_picture(&mut self, _leave_out: bool) -> bool {
+        false
+    }
+
     /// The Reset button, as it is this frame: held, or not.
     fn reset_button(&mut self, held: bool);
 

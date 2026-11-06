@@ -446,6 +446,13 @@ pub struct Cartridge {
     /// The PPU's fetching a sprite: for the MMC5, which keeps count.
     #[serde(skip)]
     pub sprite_fetch: bool,
+    /// Where each 4K of $8000 up is in the PRG ROM, and each 1K of the
+    /// pattern tables in the CHR, if they're known: what a mapper has them
+    /// as is a lot to work out each read, and only a write changes it.
+    #[serde(skip)]
+    prg_pages: Option<[u32; 8]>,
+    #[serde(skip)]
+    chr_pages: Option<[u32; 8]>,
 }
 
 const HEADER: usize = 16;
@@ -563,6 +570,8 @@ impl Cartridge {
             region,
             board,
             sprite_fetch: false,
+            prg_pages: None,
+            chr_pages: None,
         })
     }
 
@@ -582,6 +591,8 @@ impl Cartridge {
             region: None,
             board: Board::Plain,
             sprite_fetch: false,
+            prg_pages: None,
+            chr_pages: None,
         }
     }
 
@@ -642,6 +653,8 @@ impl Cartridge {
 
     /// Reset: a multicart's outer register cleared, back to its menu.
     pub fn reset(&mut self) {
+        self.prg_pages = None;
+        self.chr_pages = None;
         if self.board.is_multicart() {
             self.prg_ram[0] = 0;
         }
@@ -799,8 +812,14 @@ impl Cartridge {
     /// A read of $4020 to $FFFF: what the cartridge drives on the bus, if it
     /// drives anything.
     pub fn cpu_read(&mut self, addr: u16) -> Option<u8> {
+        // Not the vectors: for the MMC5, reading those is an event.
+        if let (0x8000..0xFFFA, Some(pages)) = (addr, &self.prg_pages) {
+            return Some(self.prg_rom[pages[addr as usize >> 12 & 7] as usize + (addr as usize & 0xFFF)]);
+        }
         if let Mapper::Mmc5(mmc5) = &mut self.mapper {
-            return mmc5.cpu_read(addr, &self.prg_rom, &self.prg_ram);
+            let value = mmc5.cpu_read(addr, &self.prg_rom, &self.prg_ram);
+            self.prg_pages = mmc5.rom_pages(self.prg_rom.len());
+            return value;
         }
         if let Mapper::Fds(fds) = &self.mapper {
             return match addr {
@@ -821,7 +840,12 @@ impl Cartridge {
             },
             0x8000..=0xFFFF => match &self.mapper {
                 Mapper::Active(active) if active.chip == ACTIVE_NO_CHIP => None,
-                _ => Some(self.prg_rom[self.prg_offset(addr)]),
+                _ => {
+                    if self.prg_rom.len() % 0x1000 == 0 {
+                        self.prg_pages = Some(std::array::from_fn(|page| self.prg_offset(0x8000 + page as u16 * 0x1000) as u32));
+                    }
+                    Some(self.prg_rom[self.prg_offset(addr)])
+                }
             },
             _ => None,
         }
@@ -830,6 +854,8 @@ impl Cartridge {
     /// A write to $4020 to $FFFF, on CPU cycle `cycle`: its PRG RAM, or its
     /// mapper's registers.
     pub fn cpu_write(&mut self, addr: u16, value: u8, cycle: u64) {
+        self.prg_pages = None;
+        self.chr_pages = None;
         if let Mapper::Mmc5(mmc5) = &mut self.mapper {
             self.written |= mmc5.cpu_write(addr, value, &mut self.prg_ram) && self.battery;
             return;
@@ -1025,6 +1051,29 @@ impl Cartridge {
         }
     }
 
+    /// The PPU fetching this cycle, whatever's been seen of it.
+    #[inline]
+    pub fn fetching(&mut self) {
+        if let Mapper::Mmc5(mmc5) = &mut self.mapper {
+            mmc5.fetching();
+        }
+    }
+
+    /// Whether its mapper's to see each of the PPU's fetches, not just that
+    /// there were some.
+    pub fn watches_fetches(&self) -> bool {
+        match &self.mapper {
+            Mapper::Mmc2(_) => true,
+            Mapper::Mmc5(mmc5) => !mmc5.plain_fetches(),
+            _ => false,
+        }
+    }
+
+    /// Whether its mapper counts the lines by what's fetched.
+    pub fn counts_lines(&self) -> bool {
+        matches!(self.mapper, Mapper::Mmc5(_))
+    }
+
     /// A PPU read of a nametable, if its mapper answers it, not the PPU's
     /// RAM.
     pub fn nametable_read(&mut self, addr: u16) -> Option<u8> {
@@ -1058,6 +1107,11 @@ impl Cartridge {
 
     /// A read of the pattern tables, $0000 to $1FFF.
     pub fn chr_read(&mut self, addr: u16) -> u8 {
+        if let Some(pages) = &self.chr_pages {
+            let at = pages[addr as usize >> 10 & 7] as usize + (addr as usize & 0x3FF);
+            return if self.chr_rom.is_empty() { self.chr_ram[at] } else { self.chr_rom[at] };
+        }
+        self.chr_pages = self.chr_pages_now();
         let at = self.chr_offset(addr);
         let value = if self.chr_in_ram(addr) { self.chr_ram[at] } else { self.chr_rom[at] };
         if let Mapper::Mmc2(mmc2) = &mut self.mapper {
@@ -1070,6 +1124,14 @@ impl Cartridge {
             }
         }
         value
+    }
+
+    /// Where its pages are, if that's a thing they have: a read moves the
+    /// MMC2's and the MMC5's, and TQROM's are in two places.
+    fn chr_pages_now(&mut self) -> Option<[u32; 8]> {
+        let chr = if self.chr_rom.is_empty() { self.chr_ram.len() } else { self.chr_rom.len() };
+        let moves = matches!(self.mapper, Mapper::Mmc2(_) | Mapper::Mmc5(_) | Mapper::Fds(_)) || self.board == Board::Tqrom;
+        (!moves && chr > 0 && chr % 0x400 == 0).then(|| std::array::from_fn(|page| self.chr_offset(page as u16 * 0x400) as u32))
     }
 
     /// A write to them: to its CHR RAM, if it has that.

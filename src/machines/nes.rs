@@ -206,6 +206,12 @@ impl Nes {
         Nes::of(cartridge, Region::Ntsc)
     }
 
+    /// Performance mode, which has to be before its sound's on.
+    pub fn performance(&mut self) {
+        self.ppu.fast = true;
+        self.apu.fast = true;
+    }
+
     /// A NES of `region`.
     pub fn of(cartridge: Cartridge, region: Region) -> Self {
         Nes {
@@ -376,7 +382,16 @@ impl Nes {
     /// A cycle of sound: the output through the low-passes; a sample made
     /// when one is due, their average through the high-pass, in both
     /// channels.
+    /// How many cycles between looking at the sound's level: each, or, in
+    /// performance mode, each 4th, still far quicker than it can be heard.
+    fn sound_every(&self) -> u64 {
+        if self.ppu.fast { 4 } else { 1 }
+    }
+
     fn sound_cycle(&mut self) {
+        if self.cycles & (self.sound_every() - 1) != 0 {
+            return;
+        }
         let Some(sound) = &mut self.sound else { return };
         let output = sound
             .low_passes
@@ -428,16 +443,25 @@ impl Bus for Nes {
     /// then this one's, before its access.
     fn tick(&mut self) {
         self.cycles += 1;
-        self.ppu.tick(&mut self.cartridge);
+        let dots = self.region.dots(self.cycles);
+        let passed = self.ppu.passed(dots as u16);
+        if !passed {
+            self.ppu.tick(&mut self.cartridge);
+        }
         self.nmi_line = self.ppu.nmi();
+        if self.ppu.fetching_unseen() {
+            self.cartridge.fetching();
+        }
         self.cartridge.cycle();
         self.irq_line = self.cartridge.irq() || self.apu.irq();
         if self.reset_held {
             self.apu.reset();
         }
         self.apu.cycle();
-        for _ in 1..self.region.dots(self.cycles) {
-            self.ppu.tick(&mut self.cartridge);
+        if !passed {
+            for _ in 1..dots {
+                self.ppu.tick(&mut self.cartridge);
+            }
         }
         // A write of $4016 only reaches the controllers as a put begins.
         if self.cycles % 2 == 0 {
@@ -538,15 +562,21 @@ impl Machine for Nes {
     }
 
     fn sound_on(&mut self) {
+        let clock_hz = self.region.clock_hz() / self.sound_every() as u32;
         self.sound = Some(Sound {
-            low_passes: LOW_PASSES.map(|corner| LowPass::new(corner, self.region.clock_hz())),
-            sampler: Sampler::new(self.region.clock_hz()),
+            low_passes: LOW_PASSES.map(|corner| LowPass::new(corner, clock_hz)),
+            sampler: Sampler::new(clock_hz),
             high_pass: HighPass::new(HIGH_PASS, SAMPLE_RATE),
         });
     }
 
     fn sound(&mut self) -> &mut Vec<f32> {
         &mut self.samples
+    }
+
+    fn leave_out_picture(&mut self, leave_out: bool) -> bool {
+        self.ppu.leaving_out = leave_out && self.ppu.fast;
+        self.ppu.leaving_out
     }
 
     fn input(&mut self, input: Input) {
@@ -593,6 +623,8 @@ impl Machine for Nes {
         self.battery_file = running.battery_file.take();
         self.picture = take(&mut running.picture);
         self.ppu.frame = take(&mut running.ppu.frame);
+        self.ppu.fast = running.ppu.fast;
+        self.apu.fast = running.apu.fast;
         self.sound = running.sound.take();
         self.samples = take(&mut running.samples);
     }
@@ -690,10 +722,14 @@ pub fn size(overscan: usize, region: Region) -> (u32, u32) {
     )
 }
 
-/// The NES as `build` has it, run in a window, `fullscreen` or not.
+/// The NES as `build` has it, run in a window, `fullscreen` or not, in
+/// performance mode if it's `fast`.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run(rom: &str, fullscreen: bool, overscan: usize, region: Option<Region>) {
-    let cpu = build(rom, overscan, region).unwrap_or_else(|e| panic!("{e}"));
+pub fn run(rom: &str, fullscreen: bool, overscan: usize, region: Option<Region>, fast: bool) {
+    let mut cpu = build(rom, overscan, region).unwrap_or_else(|e| panic!("{e}"));
+    if fast {
+        cpu.memory.performance();
+    }
     let region = cpu.memory.region;
     let (width, height) = seen(overscan);
     let title = cpu.memory.title();

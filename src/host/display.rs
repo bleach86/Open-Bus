@@ -37,6 +37,9 @@ pub trait Display {
         Gamepad::default()
     }
 
+    /// A frame gone by with nothing to show: what's come in still taken in.
+    fn no_picture(&mut self) {}
+
     /// The second player's, as the first's.
     fn gamepad_2(&self) -> Gamepad {
         Gamepad::default()

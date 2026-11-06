@@ -170,6 +170,19 @@ impl Mmc5 {
         }
     }
 
+    /// Where each 4K of $8000 up is in `len` of ROM, if that's where they
+    /// all are.
+    pub fn rom_pages(&self, len: usize) -> Option<[u32; 8]> {
+        let mut pages = [0; 8];
+        for (page, offset) in pages.iter_mut().enumerate() {
+            match self.place(0x8000 + page as u16 * 0x1000) {
+                Place::Rom(at) if len % 0x1000 == 0 => *offset = (at % len) as u32,
+                _ => return None,
+            }
+        }
+        Some(pages)
+    }
+
     fn ram_writable(&self) -> bool {
         self.ram_protect == [2, 1]
     }
@@ -285,6 +298,11 @@ impl Mmc5 {
         self.last_read = Some(addr);
     }
 
+    /// The PPU's fetching, this cycle, without saying what.
+    pub fn fetching(&mut self) {
+        self.reading = true;
+    }
+
     fn new_line(&mut self) {
         if !self.in_frame {
             self.in_frame = true;
@@ -323,6 +341,13 @@ impl Mmc5 {
     /// Whether it's substituting what's fetched: drawing, and rendering.
     fn substituting(&self) -> bool {
         self.in_frame && self.rendering
+    }
+
+    /// Whether the PPU's fetches are only what they seem: no split, no
+    /// extended attributes, no nametable of its own, so that all it has to
+    /// do with them is count lines.
+    pub fn plain_fetches(&self) -> bool {
+        self.exram_mode != 1 && (self.split & 0x80 == 0 || self.exram_mode > 1) && self.nametables & 0xAA == 0
     }
 
     /// Whether the tile `tiles` of the line is in the split.

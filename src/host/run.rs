@@ -47,6 +47,10 @@ const DEFAULTS_KEY: u8 = 8;
 const CANCEL: &str = "key:Escape";
 const FRAMES_A_SECOND: u32 = 60;
 
+/// How far behind its clock a machine is before it leaves out a picture, if
+/// it can: half a frame.
+const LATE: Duration = Duration::from_millis(8);
+
 pub struct Host<M: Machine> {
     pub cpu: CPU<M>,
     display: Box<dyn Display>,
@@ -65,6 +69,9 @@ pub struct Host<M: Machine> {
     stats: Stats,
     /// The controls being changed, the machine paused, if they are.
     changing: Option<Changing>,
+    /// Behind its clock, and whether the last frame's picture was left out.
+    late: bool,
+    left_out: bool,
 }
 
 impl<M: Machine> Host<M> {
@@ -83,6 +90,8 @@ impl<M: Machine> Host<M> {
             debug: false,
             stats: Stats::new(),
             changing: None,
+            late: false,
+            left_out: false,
         }
         .hinted()
     }
@@ -203,11 +212,18 @@ impl<M: Machine> Host<M> {
         }
         let began = clock::seconds();
         let before = self.cpu.clock;
+        // Never two in a row, or there'd be no telling it's still going.
+        let leave_out = self.late && !self.left_out && self.notice.is_none() && !self.debug;
+        self.left_out = self.cpu.memory.leave_out_picture(leave_out);
         self.cpu.run_frame();
         let cycles = self.cpu.clock.wrapping_sub(before) as u64;
         self.cycles += cycles;
 
-        self.show();
+        if self.left_out {
+            self.display.no_picture();
+        } else {
+            self.show();
+        }
         let machine = &mut self.cpu.memory;
         self.display.play(machine.sound());
         machine.sound().clear();
@@ -262,6 +278,7 @@ impl<M: Machine> Host<M> {
             if due > elapsed {
                 sleep(due - elapsed);
             }
+            self.late = elapsed > due + LATE;
         }
     }
 

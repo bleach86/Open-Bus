@@ -442,6 +442,10 @@ impl Display for Window {
         self.take_events();
     }
 
+    fn no_picture(&mut self) {
+        self.take_events();
+    }
+
     fn key(&mut self) -> Option<Key> {
         self.keys.pop_front()
     }

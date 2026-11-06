@@ -21,7 +21,8 @@
 /// iNES image or a zip of one, its picture's edges hidden as a TV hides
 /// them, N dots or lines each (8, or 0 to see it all); or a Famicom Disk
 /// System's .fds image, or a zip of one, disksys.rom, its BIOS, beside it
-/// or in roms/nes/, and F9 changing the disk.
+/// or in roms/nes/, and F9 changing the disk. `--fast` for performance mode,
+/// for what's too slow otherwise: a line at a time, and less exact for it.
 /// With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
 /// to be resized: as the desktop app has it, in place of its library.
 /// `--launched` says that a launcher started it, as EmulationStation might,
@@ -63,7 +64,8 @@ fn main() {
                 None => 8,
             };
             let region = args.iter().find_map(|arg| arg.strip_prefix("--region=")).map(|name| machines::nes::region::Region::parse(name).expect(usage));
-            machines::nes::run(rom, args.iter().any(|arg| arg == "--fullscreen"), overscan, region);
+            let fast = args.iter().any(|arg| arg == "--fast");
+            machines::nes::run(rom, args.iter().any(|arg| arg == "--fullscreen"), overscan, region, fast);
         }
         Some(machine @ ("apple2" | "apple2e")) => {
             let files: Vec<&String> = args[2..]

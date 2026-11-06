@@ -378,7 +378,8 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
         return Ok(vec!["controls".to_string()]);
     }
     if text("kind")? == "nes" {
-        return Ok(vec!["nes".to_string(), file(text("game")?)?]);
+        let fast = machine["fast"].as_bool().unwrap_or(false).then(|| "--fast".to_string());
+        return Ok(["nes".to_string(), file(text("game")?)?].into_iter().chain(fast).collect());
     }
     let library = folder(app, "library")?.to_string_lossy().into_owned();
     let mut line = match text("model")? {

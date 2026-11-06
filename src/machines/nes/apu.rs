@@ -35,6 +35,9 @@
 use super::region::Region;
 use serde::{Deserialize, Serialize};
 
+/// The cycles a channel's run for at a time, in performance mode.
+const FAST_CYCLES: u16 = 4;
+
 const LENGTHS: [u8; 32] = [
     10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
     192, 24, 72, 26, 16, 28, 32, 30,
@@ -245,6 +248,16 @@ impl Pulse {
         self.length.clock();
     }
 
+    /// `cycles` of them at once: the timer run down, a cycle where it's out.
+    fn cycles(&mut self, mut cycles: u16) {
+        while cycles > self.timer {
+            cycles -= self.timer + 1;
+            self.timer = 0;
+            self.cycle();
+        }
+        self.timer -= cycles;
+    }
+
     fn cycle(&mut self) {
         if self.timer == 0 {
             self.timer = (self.period + 1) * 2 - 1;
@@ -307,6 +320,16 @@ impl Triangle {
         }
     }
 
+    /// `cycles` of them at once: the timer run down, a cycle where it's out.
+    fn cycles(&mut self, mut cycles: u16) {
+        while cycles > self.timer {
+            cycles -= self.timer + 1;
+            self.timer = 0;
+            self.cycle();
+        }
+        self.timer -= cycles;
+    }
+
     fn cycle(&mut self) {
         if self.timer == 0 {
             self.timer = self.period;
@@ -350,6 +373,16 @@ impl Noise {
                 self.envelope.start = true;
             }
         }
+    }
+
+    /// `cycles` of them at once: the timer run down, a cycle where it's out.
+    fn cycles(&mut self, mut cycles: u16) {
+        while cycles > self.timer {
+            cycles -= self.timer + 1;
+            self.timer = 0;
+            self.cycle();
+        }
+        self.timer -= cycles;
     }
 
     fn cycle(&mut self) {
@@ -521,6 +554,19 @@ pub struct Apu {
     /// Whose tables it has: in the machine it's loaded into, not a state.
     #[serde(skip)]
     pub region: Region,
+    /// Performance mode, and the cycles counted towards FAST_CYCLES.
+    #[serde(skip)]
+    pub fast: bool,
+    #[serde(skip)]
+    fast_cycles: u16,
+    /// Whether the length counters have nothing written to them to take in.
+    #[serde(skip)]
+    lengths_settled: bool,
+    /// The channels' levels last mixed, and what that came to.
+    #[serde(skip)]
+    mixed_levels: u32,
+    #[serde(skip)]
+    mixed: f32,
     pulses: [Pulse; 2],
     triangle: Triangle,
     noise: Noise,
@@ -552,6 +598,11 @@ impl Apu {
     pub fn new(region: Region) -> Self {
         let mut apu = Apu {
             region,
+            fast: false,
+            fast_cycles: 0,
+            lengths_settled: false,
+            mixed_levels: 0,
+            mixed: 0.0,
             pulses: [
                 Pulse::default(),
                 Pulse {
@@ -660,6 +711,7 @@ impl Apu {
     /// A register written, $4000 to $4017 but $4014 and $4016; `odd`, the
     /// write's cycle.
     pub fn write(&mut self, addr: u16, value: u8, odd: bool) {
+        self.lengths_settled = false;
         match addr {
             0x4000..=0x4003 => self.pulses[0].write(addr, value),
             0x4004..=0x4007 => self.pulses[1].write(addr, value),
@@ -727,21 +779,42 @@ impl Apu {
             self.frame_irq &= self.frame_irq_clear > 0;
         }
         self.frame_counter();
-        for pulse in &mut self.pulses {
-            pulse.cycle();
+        if !self.fast {
+            for pulse in &mut self.pulses {
+                pulse.cycle();
+            }
+            self.triangle.cycle();
+            self.noise.cycle();
+        } else {
+            self.fast_cycles = (self.fast_cycles + 1) % FAST_CYCLES;
+            if self.fast_cycles == 0 {
+                self.cycle_channels();
+            }
         }
-        self.triangle.cycle();
-        self.noise.cycle();
         self.dmc.cycle();
-        let [first, second] = &mut self.pulses;
-        for length in [
-            &mut first.length,
-            &mut second.length,
-            &mut self.triangle.length,
-            &mut self.noise.length,
-        ] {
-            length.settle();
+        if !self.lengths_settled {
+            let [first, second] = &mut self.pulses;
+            for length in [
+                &mut first.length,
+                &mut second.length,
+                &mut self.triangle.length,
+                &mut self.noise.length,
+            ] {
+                length.settle();
+            }
+            self.lengths_settled = true;
         }
+    }
+
+    /// FAST_CYCLES cycles of what makes a tone, in performance mode: its
+    /// sound's only looked at that often, and nothing but the DMC's timing
+    /// matters to the rest of the machine.
+    fn cycle_channels(&mut self) {
+        for pulse in &mut self.pulses {
+            pulse.cycles(FAST_CYCLES);
+        }
+        self.triangle.cycles(FAST_CYCLES);
+        self.noise.cycles(FAST_CYCLES);
     }
 
     fn frame_counter(&mut self) {
@@ -805,18 +878,25 @@ impl Apu {
     }
 
     /// The channels mixed, as the 2A03's two DACs do: 0 to 1.
-    pub fn output(&self) -> f32 {
-        let pulses = (self.pulses[0].output() + self.pulses[1].output()) as f32;
+    pub fn output(&mut self) -> f32 {
+        let pulses = self.pulses[0].output() + self.pulses[1].output();
+        let (triangle, noise, dmc) = (self.triangle.output(), self.noise.output(), self.dmc.output);
+        let levels = u32::from_le_bytes([pulses, triangle, noise, dmc]);
+        if levels != self.mixed_levels {
+            self.mixed_levels = levels;
+            self.mixed = Self::mix(pulses as f32, triangle as f32, noise as f32, dmc as f32);
+        }
+        self.mixed
+    }
+
+    /// The levels mixed as the NES's resistors do, which takes dividing:
+    /// what it comes to's kept until they change. All at 0, it's 0.
+    fn mix(pulses: f32, triangle: f32, noise: f32, dmc: f32) -> f32 {
         let pulse = if pulses == 0.0 {
             0.0
         } else {
             95.88 / (8128.0 / pulses + 100.0)
         };
-        let (triangle, noise, dmc) = (
-            self.triangle.output() as f32,
-            self.noise.output() as f32,
-            self.dmc.output as f32,
-        );
         let sum = triangle / 8227.0 + noise / 12241.0 + dmc / 22638.0;
         let tnd = if sum == 0.0 {
             0.0

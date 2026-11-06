@@ -1009,7 +1009,8 @@ function playNatively(machine) {
         return;
     }
     const fullscreen = machine.kind !== 'controls' && page('start-fullscreen').checked;
-    native.play({ ...machine, fullscreen }).catch((problem) => say(String(problem), true));
+    const fast = page('performance-mode').checked;
+    native.play({ ...machine, fullscreen, fast }).catch((problem) => say(String(problem), true));
 }
 native?.whenPads((pressed) => {
     padsSaid = pressed;
@@ -1171,6 +1172,8 @@ if (native) {
     page('rescan').onclick = () => lookForChanges(true);
     page('start-fullscreen').checked = localStorage.getItem('fullscreen') === 'yes';
     page('start-fullscreen').onchange = ({ target }) => localStorage.setItem('fullscreen', target.checked ? 'yes' : 'no');
+    page('performance-mode').checked = localStorage.getItem('performance') === 'yes';
+    page('performance-mode').onchange = ({ target }) => localStorage.setItem('performance', target.checked ? 'yes' : 'no');
 }
 
 // Running a machine.

@@ -45,6 +45,8 @@ use super::region::Region;
 use crate::host::save_state;
 use serde::{Deserialize, Serialize};
 
+mod fast;
+
 pub const WIDTH: usize = 256;
 pub const HEIGHT: usize = 240;
 pub const DOTS: u16 = 341;
@@ -74,6 +76,15 @@ pub struct Ppu {
     /// Whose timing it has: in the machine it's loaded into, not a state.
     #[serde(skip)]
     pub region: Region,
+    /// Performance mode: a line at a time, as `fast` has it, not a dot; and
+    /// in it, the dot with something to do next.
+    #[serde(skip)]
+    pub fast: bool,
+    #[serde(skip)]
+    nothing_until: u16,
+    /// This frame's picture isn't wanted: only what the game can see of it.
+    #[serde(skip)]
+    pub leaving_out: bool,
     ctrl: u8,
     mask: u8,
     vblank: bool,
@@ -135,6 +146,13 @@ pub struct Ppu {
     sprites: [Sprite; 8],
     sprite_count: usize,
     zero_on_line: bool,
+    /// What those come to at each X of the line, as `lay_out_sprites` has
+    /// it: looking through 8 of them for every dot is much of a frame's
+    /// time, and they don't change while it's drawn.
+    #[serde(skip)]
+    sprite_dots: Vec<u8>,
+    #[serde(skip)]
+    sprites_laid_out: bool,
     /// The byte last read for the sprites; secondary OAM's address, and
     /// whether it's gone past the end; which byte of a sprite's being
     /// looked at, and whether the looking's done; and a sprite as read back
@@ -175,6 +193,9 @@ impl Ppu {
     pub fn new(region: Region) -> Self {
         Ppu {
             region,
+            fast: false,
+            nothing_until: 0,
+            leaving_out: false,
             ctrl: 0,
             mask: 0,
             vblank: false,
@@ -224,6 +245,8 @@ impl Ppu {
             sprites: [Sprite::default(); 8],
             sprite_count: 0,
             zero_on_line: false,
+            sprite_dots: Vec::new(),
+            sprites_laid_out: false,
             frame: vec![0; WIDTH * HEIGHT],
             frame_ready: false,
             v_due: 0,
@@ -446,8 +469,9 @@ impl Ppu {
         self.region.lines() - 1
     }
 
-    /// A dot.
-    pub fn tick(&mut self, cart: &mut Cartridge) {
+    /// A write of PPUADDR's second byte, reaching v once it's due.
+    #[inline(always)]
+    fn settle_v(&mut self, cart: &mut Cartridge) {
         if self.v_due > 0 {
             self.v_due -= 1;
             if self.v_due == 0 {
@@ -455,51 +479,43 @@ impl Ppu {
                 cart.ppu_bus(self.v & 0x3FFF, self.dots);
             }
         }
-        let (line, dot) = (self.line, self.dot);
-        let seen = line < 240;
-        let pre_render = line == self.pre_render();
+    }
 
-        if line == VBLANK && dot == 1 {
-            self.vblank = !self.suppress_vblank;
-            self.suppress_vblank = false;
-            self.frame_ready = true;
-            // The bus's bits not driven 1 lately, decayed.
-            self.frames += 1;
-            for bit in 0..8 {
-                if self.frames - self.driven[bit] > DECAY_FRAMES[self.region as usize] {
-                    self.latch &= !(1 << bit);
-                }
+    fn vblank_starts(&mut self) {
+        self.vblank = !self.suppress_vblank;
+        self.suppress_vblank = false;
+        self.frame_ready = true;
+        // The bus's bits not driven 1 lately, decayed.
+        self.frames += 1;
+        for bit in 0..8 {
+            if self.frames - self.driven[bit] > DECAY_FRAMES[self.region as usize] {
+                self.latch &= !(1 << bit);
             }
         }
-        if pre_render && dot == 1 {
-            self.vblank = false;
-            self.sprite_zero_hit = false;
-            self.overflow = false;
-            self.warming_up = false;
-        }
+    }
 
-        if self.rendering_was && (seen || pre_render) {
-            self.background(cart);
-            self.sprite_fetches(cart);
-            self.oam_dot();
-        }
-        if self.rendering_before && (seen || pre_render) {
-            self.scroll_dot();
-        }
-        self.rendering_before = self.rendering_was;
-        self.rendering_was = self.rendering();
-        if seen && (1..=256).contains(&dot) {
-            self.pixel();
-        }
+    fn vblank_ends(&mut self) {
+        self.vblank = false;
+        self.sprite_zero_hit = false;
+        self.overflow = false;
+        self.warming_up = false;
+    }
 
-        // On, a dot; the pre-render line a dot short on odd frames, if
-        // it's rendering as of dot 338.
-        if pre_render && dot == 338 {
+    /// The pre-render line's end: a dot short on odd frames, if it's
+    /// rendering as of dot 338.
+    #[inline(always)]
+    fn pre_render_end(&mut self) {
+        if self.dot == 338 {
             self.short_line = self.odd && self.rendering() && self.region == Region::Ntsc;
         }
-        if pre_render && dot == 339 && self.short_line {
+        if self.dot == 339 && self.short_line {
             self.dot = 340;
         }
+    }
+
+    /// On, a dot.
+    #[inline(always)]
+    fn next_dot(&mut self) {
         self.dot += 1;
         self.dots += 1;
         if self.dot == DOTS {
@@ -510,6 +526,76 @@ impl Ppu {
                 self.odd = !self.odd;
             }
         }
+    }
+
+    /// Whether fetches are being made that performance mode doesn't make
+    /// when they would be, for a mapper that goes by there being some.
+    #[inline]
+    pub fn fetching_unseen(&self) -> bool {
+        self.fast && self.line < 240 && self.rendering()
+    }
+
+    /// `dots` dots gone by at once, if that's all they'd be, as they can be
+    /// in performance mode: whether they have.
+    #[inline]
+    pub fn passed(&mut self, dots: u16) -> bool {
+        let quiet = self.fast && self.dot + dots <= self.nothing_until && self.v_due == 0;
+        if quiet {
+            self.dot += dots;
+            self.dots += dots as u64;
+        }
+        quiet
+    }
+
+    /// A dot.
+    #[inline]
+    pub fn tick(&mut self, cart: &mut Cartridge) {
+        if !self.fast {
+            self.exact_tick(cart);
+        } else if self.dot < self.nothing_until && self.v_due == 0 {
+            self.dot += 1;
+            self.dots += 1;
+        } else {
+            self.quick_tick(cart);
+        }
+    }
+
+    /// A dot of everything it does.
+    fn exact_tick(&mut self, cart: &mut Cartridge) {
+        self.settle_v(cart);
+        let (line, dot) = (self.line, self.dot);
+        let seen = line < 240;
+        let pre_render = !seen && line == self.pre_render();
+
+        if dot == 1 && !seen {
+            if line == VBLANK {
+                self.vblank_starts();
+            }
+            if pre_render {
+                self.vblank_ends();
+            }
+        }
+
+        if seen || pre_render {
+            if self.rendering_was {
+                self.background(cart);
+                self.sprite_fetches(cart);
+                self.oam_dot();
+            }
+            if self.rendering_before {
+                self.scroll_dot();
+            }
+        }
+        self.rendering_before = self.rendering_was;
+        self.rendering_was = self.rendering();
+        if seen && dot.wrapping_sub(1) < 256 {
+            self.pixel();
+        }
+
+        if pre_render && dot >= 338 {
+            self.pre_render_end();
+        }
+        self.next_dot();
     }
 
     /// The background's fetches and shifts, for a dot of a line rendered;
@@ -537,6 +623,9 @@ impl Ppu {
                 _ => {}
             }
         }
+        if dot > 1 && dot < 280 {
+            return;
+        }
         match dot {
             280..=304 if self.line == self.pre_render() => self.v = (self.v & !0x7BE0) | (self.t & 0x7BE0),
             // One more of the nametable at the end of a line, and the
@@ -555,13 +644,15 @@ impl Ppu {
     /// tile on each 8, a line down at 256, back to the left at 257.
     fn scroll_dot(&mut self) {
         let dot = self.dot;
-        if matches!(dot, 1..=256 | 321..=336) && dot % 8 == 0 {
+        if dot % 8 == 0 && matches!(dot, 1..=256 | 321..=336) {
             self.next_tile();
         }
-        match dot {
-            256 => self.next_line(),
-            257 => self.v = (self.v & !0x041F) | (self.t & 0x041F),
-            _ => {}
+        if dot & !1 == 256 {
+            if dot == 256 {
+                self.next_line();
+            } else {
+                self.v = (self.v & !0x041F) | (self.t & 0x041F);
+            }
         }
     }
 
@@ -627,7 +718,7 @@ impl Ppu {
             321..=340 => self.oam_buffer = self.secondary[self.secondary_addr as usize],
             _ => {}
         }
-        if matches!(dot, 64 | 256 | 340) {
+        if (dot % 64 == 0 || dot == 340) && matches!(dot, 64 | 256 | 340) {
             self.secondary_addr = 0;
             self.secondary_full = false;
         }
@@ -708,12 +799,35 @@ impl Ppu {
         if dot == 257 {
             self.sprite_count = 8;
             self.zero_on_line = self.zero_found;
+            self.sprites_laid_out = false;
         }
         let (slot, step) = ((dot - 257) as usize / 8, (dot - 257) % 8);
         if step != 4 && step != 6 {
             return;
         }
         let [y, tile, attributes, x] = self.fetched;
+        let (addr, on_line) = self.sprite_address(y, tile, attributes);
+        cart.sprite_fetch = true;
+        let mut plane = self.read(addr + if step == 6 { 8 } else { 0 }, cart);
+        cart.sprite_fetch = false;
+        if !on_line {
+            plane = 0;
+        }
+        if attributes & 0x40 != 0 {
+            plane = plane.reverse_bits();
+        }
+        self.sprites_laid_out = false;
+        let sprite = &mut self.sprites[slot];
+        if step == 4 {
+            *sprite = Sprite { x, low: plane, high: 0, attributes };
+        } else {
+            sprite.high = plane;
+        }
+    }
+
+    /// A sprite's pattern's first plane's address, for the line it's fetched
+    /// on, and whether the line's one of its own.
+    fn sprite_address(&self, y: u8, tile: u8, attributes: u8) -> (u16, bool) {
         let height = self.sprite_height() as u16;
         let distance = (self.line & 0xFF) as i16 - y as i16;
         let on_line = (0..height as i16).contains(&distance);
@@ -728,21 +842,7 @@ impl Ppu {
             let table = if self.ctrl & 0x08 != 0 { 0x1000 } else { 0 };
             table | (tile as u16) << 4 | row
         };
-        cart.sprite_fetch = true;
-        let mut plane = self.read(addr + if step == 6 { 8 } else { 0 }, cart);
-        cart.sprite_fetch = false;
-        if !on_line {
-            plane = 0;
-        }
-        if attributes & 0x40 != 0 {
-            plane = plane.reverse_bits();
-        }
-        let sprite = &mut self.sprites[slot];
-        if step == 4 {
-            *sprite = Sprite { x, low: plane, high: 0, attributes };
-        } else {
-            sprite.high = plane;
-        }
+        (addr, on_line)
     }
 
     /// A dot of a line seen: the background's and the first sprite's there
@@ -789,16 +889,35 @@ impl Ppu {
     /// The first sprite's dot at `x` that isn't clear: whether it's sprite
     /// 0, its colour, its palette, and whether it's behind the background;
     /// none where they're off, or in the leftmost 8 hidden.
-    fn sprite_dot(&self, x: usize) -> Option<(bool, u8, u8, bool)> {
+    fn sprite_dot(&mut self, x: usize) -> Option<(bool, u8, u8, bool)> {
         if self.mask & 0x10 == 0 || (x < 8 && self.mask & 0x04 == 0) {
             return None;
         }
-        self.sprites[..self.sprite_count].iter().enumerate().find_map(|(slot, sprite)| {
-            let along = x.checked_sub(sprite.x as usize).filter(|&along| along < 8)?;
-            let bit = 7 - along;
-            let colour = ((sprite.high >> bit) & 1) << 1 | ((sprite.low >> bit) & 1);
-            (colour != 0).then(|| (slot == 0 && self.zero_on_line, colour, sprite.attributes & 3, sprite.attributes & 0x20 != 0))
-        })
+        if !self.sprites_laid_out {
+            self.lay_out_sprites();
+        }
+        let dot = self.sprite_dots[x];
+        (dot != 0).then_some((dot & 0x20 != 0, dot & 3, dot >> 2 & 3, dot & 0x10 != 0))
+    }
+
+    /// Each X's first sprite not clear, a byte: its colour, its palette
+    /// above that, whether it's behind the background, whether it's sprite 0.
+    fn lay_out_sprites(&mut self) {
+        self.sprite_dots.clear();
+        self.sprite_dots.resize(WIDTH, 0);
+        for (slot, sprite) in self.sprites[..self.sprite_count].iter().enumerate() {
+            let zero = slot == 0 && self.zero_on_line;
+            let flags = (sprite.attributes & 3) << 2 | (sprite.attributes & 0x20) >> 1 | (zero as u8) << 5;
+            for along in 0..8.min(WIDTH - sprite.x as usize) {
+                let bit = 7 - along;
+                let colour = ((sprite.high >> bit) & 1) << 1 | ((sprite.low >> bit) & 1);
+                let dot = &mut self.sprite_dots[sprite.x as usize + along];
+                if *dot == 0 && colour != 0 {
+                    *dot = colour | flags;
+                }
+            }
+        }
+        self.sprites_laid_out = true;
     }
 }
 
