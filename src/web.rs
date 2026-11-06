@@ -203,6 +203,11 @@ impl Emulator {
         self.page.borrow_mut().keys.push_back(key);
     }
 
+    /// Whether it's a Disk System, with a disk to change.
+    pub fn disk_system(&self) -> bool {
+        matches!(&self.running, Running::Nes(host) if host.cpu.memory.cartridge.disk_crc().is_some())
+    }
+
     pub fn function_key(&self, key: u8) {
         self.page.borrow_mut().function_keys.push_back(key);
     }

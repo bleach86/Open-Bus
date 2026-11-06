@@ -43,7 +43,10 @@ pub const fn rom(crc: u32, size: usize, is: Is) -> Rom {
     Rom { crc, size, is }
 }
 
-const KNOWN: [Rom; 15] = [
+const KNOWN: [Rom; 16] = [
+    // Not an Apple's, but it's a machine's ROM, found as they are: the NES's
+    // Disk System's BIOS.
+    rom(0x5E60_7DCF, 0x2000, Is::Named("disksys.rom")),
     rom(0x443A_A7C4, 0x2000, Is::Named(iie::ENHANCED_ROMS[0])),
     rom(0x95E1_0034, 0x2000, Is::Named(iie::ENHANCED_ROMS[1])),
     rom(0x2651_014D, 0x1000, Is::Named(iie::ENHANCED_ROMS[2])),

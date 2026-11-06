@@ -19,7 +19,9 @@
 /// loads it back: beside the first DISK, or the ROM, its name and .state.
 /// `cpu_emu nes ROM [--fullscreen] [--overscan=N]` for the NES, ROM an
 /// iNES image or a zip of one, its picture's edges hidden as a TV hides
-/// them, N dots or lines each (8, or 0 to see it all).
+/// them, N dots or lines each (8, or 0 to see it all); or a Famicom Disk
+/// System's .fds image, or a zip of one, disksys.rom, its BIOS, beside it
+/// or in roms/nes/, and F9 changing the disk.
 use cpu_emu::{cpu, machines};
 use machines::apple2::video::Monitor;
 

@@ -8,9 +8,10 @@
 import { keepArt } from './files.js';
 import { shrink, tagsOf, titleWords } from './art.js';
 
-const BOXES = 'libretro-thumbnails/Nintendo_-_Nintendo_Entertainment_System';
-const BOX_TREES = `https://api.github.com/repos/${BOXES}/git/trees/`;
-const BOX_FILES = `https://raw.githubusercontent.com/${BOXES}/master/Named_Boxarts/`;
+const NES_BOXES = 'Nintendo_-_Nintendo_Entertainment_System';
+const FDS_BOXES = 'Nintendo_-_Family_Computer_Disk_System';
+const boxTrees = (set) => `https://api.github.com/repos/libretro-thumbnails/${set}/git/trees/`;
+const boxFiles = (set) => `https://raw.githubusercontent.com/libretro-thumbnails/${set}/master/Named_Boxarts/`;
 /// Git's mode of a symbolic link: the file's just the name of another.
 const LINK = '120000';
 const SCREENS = 'https://archive.org/advancedsearch.php?q=collection:(wozaday OR softwarelibrary_apple_games)'
@@ -53,16 +54,16 @@ function regionRank(name) {
     return rank < 0 ? REGIONS.length : rank;
 }
 
-/// The boxes: what's looked up by a game's file.
-async function boxes() {
-    const { tree } = await json(`${BOX_TREES}master`);
+/// The boxes of `set`: what's looked up by a game's file.
+async function boxes(set) {
+    const { tree } = await json(`${boxTrees(set)}master`);
     const folder = tree.find((entry) => entry.path === 'Named_Boxarts');
-    const files = (await json(`${BOX_TREES}${folder.sha}`)).tree;
+    const files = (await json(`${boxTrees(set)}${folder.sha}`)).tree;
     const exact = new Map();
     const byTitle = new Map();
     for (const { path, mode } of files) {
         const stem = path.replace(/\.png$/, '');
-        const box = { url: BOX_FILES + encodeURIComponent(path), link: mode === LINK };
+        const box = { url: boxFiles(set) + encodeURIComponent(path), link: mode === LINK };
         exact.set(stem, box);
         const title = titleWords(stem);
         const rank = regionRank(stem);
@@ -100,7 +101,7 @@ async function screens() {
     };
 }
 
-const SOURCES = { nes: boxes, apple: screens };
+const SOURCES = { nes: () => boxes(NES_BOXES), fds: () => boxes(FDS_BOXES), apple: screens };
 
 /// A picture, if it's there: a link's followed.
 async function picture({ url, link }) {
@@ -110,7 +111,7 @@ async function picture({ url, link }) {
     }
     if (link) {
         const target = await response.text();
-        return picture({ url: BOX_FILES + encodeURIComponent(target.trim()) });
+        return picture({ url: new URL(encodeURIComponent(target.trim()), url).href });
     }
     return response.blob();
 }

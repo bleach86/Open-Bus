@@ -51,6 +51,9 @@
 //!
 //! 5, the MMC5: in mmc5.rs, there being so much of it.
 //!
+//! 20, the Famicom Disk System: not a cartridge, but it's in the slot, and
+//! all of it, in fds.rs.
+//!
 //! 7, AxROM: a 32K bank, and which 1K all four nametables are.
 //!
 //! 9, MMC2: an 8K bank at $8000 ($A000), the last three fixed after it; 4K
@@ -138,6 +141,7 @@
 //! driving the bus, the bits it holds low win; the register's given what
 //! was written ANDed with the ROM's byte there.
 
+use super::fds::Fds;
 use super::mmc5::{self, Mmc5};
 use super::region::Region;
 use serde::{Deserialize, Serialize};
@@ -410,6 +414,7 @@ pub enum Mapper {
     Quattro(Quattro),
     Mmc5(Box<Mmc5>),
     Active(Active),
+    Fds(Box<Fds>),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -561,6 +566,57 @@ impl Cartridge {
         })
     }
 
+    /// The Disk System, with the disk whose sides, as in the image `image`,
+    /// are `sides`, and `bios`.
+    pub fn disk(image: &[u8], sides: &[u8], bios: &[u8]) -> Cartridge {
+        let (fds, disk) = Fds::new(sides, crate::host::zip::crc32(image));
+        Cartridge {
+            prg_rom: bios.to_vec(),
+            chr_rom: Vec::new(),
+            chr_ram: vec![0; CHR_BANK],
+            prg_ram: disk,
+            battery: true,
+            written: false,
+            mirroring: Mirroring::Horizontal,
+            mapper: Mapper::Fds(Box::new(fds)),
+            region: None,
+            board: Board::Plain,
+            sprite_fetch: false,
+        }
+    }
+
+    /// What tells a game from another, if its ROMs don't.
+    pub fn disk_crc(&self) -> Option<u32> {
+        match &self.mapper {
+            Mapper::Fds(fds) => Some(fds.crc),
+            _ => None,
+        }
+    }
+
+    /// The disk changed, if it's a Disk System: what's going in, in words.
+    pub fn change_disk(&mut self) -> Option<String> {
+        match &mut self.mapper {
+            Mapper::Fds(fds) => Some(fds.change_side()),
+            _ => None,
+        }
+    }
+
+    /// Its own sound, added to the APU's.
+    pub fn output(&self) -> f32 {
+        match &self.mapper {
+            Mapper::Fds(fds) => fds.output(),
+            _ => 0.0,
+        }
+    }
+
+    /// A read of $4020 to $40FF, `open_bus` what's there if it's nothing.
+    pub fn register_read(&mut self, addr: u16, open_bus: u8) -> u8 {
+        match &mut self.mapper {
+            Mapper::Fds(fds) => fds.read(addr, open_bus),
+            _ => self.cpu_read(addr).unwrap_or(open_bus),
+        }
+    }
+
     /// The ROMs taken from `cartridge`, the one a save state's is loaded
     /// into.
     pub fn take_roms(&mut self, cartridge: &mut Cartridge) {
@@ -621,7 +677,7 @@ impl Cartridge {
                 };
                 bank * 0x2000 + (addr & 0x1FFF)
             }
-            Mapper::Mmc5(_) => addr,
+            Mapper::Mmc5(_) | Mapper::Fds(_) => addr,
             Mapper::Active(active) => {
                 let chip = [0, 1, 0, 2][active.chip as usize] * 0x80000;
                 let high = (addr >= 0xC000) as usize;
@@ -673,7 +729,7 @@ impl Cartridge {
             return mmc5.chr_offset(addr, self.sprite_fetch) % chr;
         }
         let offset = match &self.mapper {
-            Mapper::Nrom | Mapper::Uxrom(_) | Mapper::Axrom(_) | Mapper::Camerica(_) | Mapper::Bnrom(_) | Mapper::Quattro(_) | Mapper::Mmc5(_) => addr,
+            Mapper::Nrom | Mapper::Uxrom(_) | Mapper::Axrom(_) | Mapper::Camerica(_) | Mapper::Bnrom(_) | Mapper::Quattro(_) | Mapper::Mmc5(_) | Mapper::Fds(_) => addr,
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
             Mapper::Active(active) => active.chr as usize * CHR_BANK + addr,
             Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.chr as usize * CHR_BANK + addr,
@@ -746,6 +802,13 @@ impl Cartridge {
         if let Mapper::Mmc5(mmc5) = &mut self.mapper {
             return mmc5.cpu_read(addr, &self.prg_rom, &self.prg_ram);
         }
+        if let Mapper::Fds(fds) = &self.mapper {
+            return match addr {
+                0x6000..=0xDFFF => Some(fds.ram(addr)),
+                0xE000..=0xFFFF => Some(self.prg_rom[addr as usize - 0xE000]),
+                _ => None,
+            };
+        }
         match addr {
             0x6000..=0x7FFF => match &self.mapper {
                 _ if self.board.is_multicart() => None,
@@ -769,6 +832,17 @@ impl Cartridge {
     pub fn cpu_write(&mut self, addr: u16, value: u8, cycle: u64) {
         if let Mapper::Mmc5(mmc5) = &mut self.mapper {
             self.written |= mmc5.cpu_write(addr, value, &mut self.prg_ram) && self.battery;
+            return;
+        }
+        if let Mapper::Fds(fds) = &mut self.mapper {
+            match addr {
+                0x4020..=0x40FF => {
+                    fds.write(addr, value);
+                    self.mirroring = fds.mirroring();
+                }
+                0x6000..=0xDFFF => fds.write_ram(addr, value),
+                _ => {}
+            }
             return;
         }
         if let (0x4020..=0x5FFF, Mapper::Nina03(banks)) = (addr, &mut self.mapper) {
@@ -801,7 +875,7 @@ impl Cartridge {
         let four_screen = self.mirroring == Mirroring::FourScreen;
         let rom = self.prg_rom[self.prg_offset(addr)];
         match &mut self.mapper {
-            Mapper::Nrom | Mapper::Nina03(_) | Mapper::Nina001(_) | Mapper::Mmc5(_) => {}
+            Mapper::Nrom | Mapper::Nina03(_) | Mapper::Nina001(_) | Mapper::Mmc5(_) | Mapper::Fds(_) => {}
             Mapper::Uxrom(bank) | Mapper::Cnrom(bank) => *bank = value,
             Mapper::Axrom(bank) => {
                 *bank = value & 7;
@@ -1063,6 +1137,7 @@ impl Cartridge {
             Mapper::Camerica(_) => (71, "CAMERICA"),
             Mapper::Nina03(_) => (79, "NINA-03"),
             Mapper::Active(_) => (228, "ACTIVE"),
+            Mapper::Fds(_) => (20, "FDS"),
             Mapper::Quattro(_) => (232, "QUATTRO"),
         };
         format!("MAPPER {number} {name}")
@@ -1077,11 +1152,15 @@ impl Cartridge {
             (rom, ram) => format!("CHR {}K+{}K RAM", kilobytes(rom), kilobytes(ram)),
         };
         let battery = if self.battery { " BATTERY" } else { "" };
-        vec![
+        let mut lines = vec![
             self.mapper_name(),
             format!("PRG {}K {chr}", kilobytes(self.prg_rom.len())),
             format!("RAM {}K{battery}  {:?}", kilobytes(self.prg_ram.len()), self.mirroring),
-        ]
+        ];
+        if let Mapper::Fds(fds) = &self.mapper {
+            lines.push(fds.debug());
+        }
+        lines
     }
 
     /// A CPU cycle: the IRQ counters of those that count them; RAMBO-1's
@@ -1089,6 +1168,10 @@ impl Cartridge {
     pub fn cycle(&mut self) {
         if let Mapper::Mmc5(mmc5) = &mut self.mapper {
             mmc5.cycle();
+            return;
+        }
+        if let Mapper::Fds(fds) = &mut self.mapper {
+            self.written |= fds.cycle(&mut self.prg_ram);
             return;
         }
         if let Mapper::Fme7(fme7) = &mut self.mapper {
@@ -1118,6 +1201,7 @@ impl Cartridge {
             Mapper::Rambo1(rambo) => rambo.irq,
             Mapper::Fme7(fme7) => fme7.irq,
             Mapper::Mmc5(mmc5) => mmc5.irq(),
+            Mapper::Fds(fds) => fds.irq(),
             _ => false,
         }
     }

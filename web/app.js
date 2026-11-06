@@ -18,8 +18,10 @@ const IIE_ROMS = {
         'Apple IIe Video ROM - 342-0133-A - US 1982.bin'],
 };
 const DISK_II_ROMS = ['disk2-p5-341-0027.bin', 'disk2-p6-341-0028.bin'];
+/// The function key that changes a Disk System's disk.
+const CHANGE_DISK_KEY = 9;
 const kind = (name) => name.split('.').pop().toLowerCase();
-const isGame = (name) => ['nes', 'zip'].includes(kind(name));
+const isGame = (name) => ['nes', 'fds', 'zip'].includes(kind(name));
 const isDisk = (name) => ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'].includes(kind(name));
 const isOurs = (name) => ['srm', 'state'].includes(kind(name));
 const isRom = (name) => kind(name) === 'rom' || DISK_II_ROMS.includes(name) || Object.values(IIE_ROMS).flat().includes(name);
@@ -28,7 +30,7 @@ const isUsable = (name) => isGame(name) || isDisk(name) || isOurs(name) || isRom
 /// isn't worth looking in.
 const MOST_ZIP = 0x400000;
 const MOST = 0x10000;
-const notRoms = /\.(png|jpe?g|gif|mp4|xml|txt|nfo|pdf|srm|state|nes)$/i;
+const notRoms = /\.(png|jpe?g|gif|mp4|xml|txt|nfo|pdf|srm|state|nes|fds)$/i;
 const mayHoldRoms = (file) => !notRoms.test(file.name) && file.size <= (kind(file.name) === 'zip' ? MOST_ZIP : MOST);
 
 let files = [];
@@ -97,7 +99,7 @@ async function refresh() {
 /// The games with no cover, as `findCovers` wants them.
 function coverless() {
     const nes = files.filter(isGame).map((file) => ({
-        machine: 'nes', file, title: plainTitle(file), key: nesArt(file),
+        machine: kind(file) === 'fds' ? 'fds' : 'nes', file, title: plainTitle(file), key: nesArt(file),
     }));
     const apple = games(files.filter(isDisk)).map((game) => {
         const title = diskTitle(game);
@@ -457,7 +459,7 @@ async function add(given, dropped = []) {
             await keep(name, sorter.bytes(name));
         }
         if (roms.length) {
-            notes.push(`Found ${roms.length} Apple ROM${roms.length > 1 ? 's' : ''}.`);
+            notes.push(`Found ${roms.length} system ROM${roms.length > 1 ? 's' : ''}.`);
         }
         const chips = sorter.plus_chips();
         if (chips > 0 && chips < 6) {
@@ -635,6 +637,7 @@ async function start(make, machine, using) {
     page('library').hidden = true;
     page('machine').hidden = false;
     page('machine').dataset.machine = machine;
+    page('disk').hidden = page('disk-help').hidden = !emulator.disk_system();
     const canvas = page('screen');
     page('machine').style.setProperty('--ratio', emulator.shown_width() / emulator.shown_height());
     canvas.focus();
@@ -682,6 +685,7 @@ function press(id, action) {
 press('save', () => emulator.function_key(2));
 press('load', () => emulator.function_key(4));
 press('info', () => emulator.function_key(3));
+press('disk', () => emulator.function_key(CHANGE_DISK_KEY));
 press('full', () => fullscreen());
 page('reset').onpointerdown = () => {
     reset = true;
