@@ -21,6 +21,30 @@ mod tests {
         (0..size).map(|at| (at as u8).wrapping_mul(seed).wrapping_add(seed ^ (at >> 8) as u8)).collect()
     }
 
+    /// Files sorted as the desktop app has them: which held ROMs and what
+    /// was found told, the ROMs left where they were asked for, and a file
+    /// that's too big, or isn't there, passed over.
+    #[test]
+    fn it_sorts_files_named_to_it_into_a_folder() {
+        let out = std::env::temp_dir().join(format!("cpu_emu_sort_{}", std::process::id()));
+        std::fs::create_dir_all(&out).unwrap();
+        let (rom_bytes, other) = (made_up(7, 0x100), made_up(9, 0x100));
+        let held = out.join("some name.bin");
+        let not_rom = out.join("not one.bin");
+        let too_big = out.join("too big.bin");
+        std::fs::write(&held, &rom_bytes).unwrap();
+        std::fs::write(&not_rom, &other).unwrap();
+        std::fs::write(&too_big, made_up(7, 0x1_0001)).unwrap();
+        let known = [rom(crc32(&rom_bytes), 0x100, Is::Named("wanted.bin"))];
+        let paths = format!("{}\n{}\n{}\n{}/gone.bin\n", held.display(), not_rom.display(), too_big.display(), out.display());
+        let mut told = Vec::new();
+        rom_set::sort_of(&known, paths.as_bytes(), &out, &mut told).unwrap();
+        let told = String::from_utf8(told).unwrap();
+        assert_eq!(told, format!("held {}\nrom wanted.bin\nchips 0\n", held.display()));
+        assert_eq!(std::fs::read(out.join("wanted.bin")).unwrap(), rom_bytes);
+        std::fs::remove_dir_all(&out).unwrap();
+    }
+
     /// A zip of `files`, stored, not deflated.
     fn zip(files: &[(&str, &[u8])]) -> Vec<u8> {
         let (mut body, mut central) = (Vec::new(), Vec::new());

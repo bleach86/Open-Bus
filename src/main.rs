@@ -28,6 +28,8 @@
 /// has it in a game; they're for all of these.
 /// `cpu_emu pads` for no window, and what the gamepads hold told on standard
 /// output until standard input closes: the desktop app's library's.
+/// `cpu_emu roms FOLDER` for the Apple's ROMs in the files named on standard
+/// input written into FOLDER, under the names they're looked for by.
 use cpu_emu::{cpu, machines};
 use machines::apple2::video::Monitor;
 
@@ -42,6 +44,10 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("controls") => machines::nes::controls(),
         Some("pads") => cpu_emu::host::pads::report(),
+        Some("roms") => {
+            let out = args.get(2).expect("cpu_emu roms FOLDER");
+            machines::apple2::rom_set::sort(std::path::Path::new(out)).expect("couldn't sort the ROMs");
+        }
         Some("nes") => {
             let rom = args[2..]
                 .iter()

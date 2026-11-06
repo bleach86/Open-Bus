@@ -1,0 +1,5 @@
+{
+  "bundle": {
+    "externalBin": ["binaries/cpu_emu"]
+  }
+}

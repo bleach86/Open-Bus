@@ -1,13 +1,16 @@
 // The page: its library of files, and a machine run on the canvas, a frame
 // at a time, its picture and sound taken after each and what's pressed told
 // to it. The emulator itself is the WebAssembly, src/web.rs its side.
-import init, { Emulator, RomSorter, put_file, read_file, read_part, written_files, changed_files, take_changed_parts } from './pkg/cpu_emu.js';
 import { keep, keepParts, forget, names, bytes, allArt, native } from './files.js';
 import { touch, attach, letGo } from './touch.js';
 import { games, isVolume, storedNames, shortName, natural } from './disks.js';
 import { findCovers } from './covers.js';
 import * as bindings from './controls.js';
 import { artKey, isMedia, keyOf, plainTitle, tagsOf, takeArt, titleWords } from './art.js';
+
+/// The emulator's WebAssembly: the browser's only, the desktop app's games
+/// being the native emulator's, which sorts its ROMs too.
+const { default: init, Emulator, RomSorter, put_file, read_file, read_part, written_files, changed_files, take_changed_parts } = native ? {} : await import('./pkg/cpu_emu.js');
 
 const page = (id) => document.getElementById(id);
 const IIE_ROMS = {
@@ -33,6 +36,7 @@ const isUsable = (name) => isGame(name) || isDisk(name) || isOurs(name) || isRom
 const MOST_ZIP = 0x400000;
 const MOST = 0x10000;
 const notRoms = /\.(png|jpe?g|gif|mp4|xml|txt|nfo|pdf|srm|state|nes|fds)$/i;
+const baseName = (path) => path.split(/[/\\]/).pop();
 const mayHoldRoms = (file) => !notRoms.test(file.name) && file.size <= (kind(file.name) === 'zip' ? MOST_ZIP : MOST);
 
 let files = [];
@@ -282,11 +286,6 @@ page('find').onclick = findMissing;
 /// Whose art a game has: that of its file, or of any of them, or of its
 /// title, for a picture named after it.
 const artFor = (title, ...names) => [...names.map(artKey), keyOf(title)].find((key) => art.has(key)) ?? artKey(names[0]);
-
-/// The emulator's WebAssembly, loaded once. The desktop app only wants it
-/// to sort ROMs, its games being native, so there it waits until then.
-let wasm = null;
-const wasmReady = () => (wasm ??= init());
 
 /// What's said of an empty shelf.
 const noGames = native ? 'No games yet. Add a folder of them in Settings.' : 'No games yet. Add .nes, .fds or .zip files, or a folder of them.';
@@ -820,16 +819,17 @@ function showRoms() {
 
 /// Files added: `list`, chosen one by one, replacing any of the name; and
 /// those `inFolders` that are new, a folder never replacing what's here,
-/// whose saves and disks may be newer than the folder's.
-async function add(given, dropped = []) {
+/// whose saves and disks may be newer than the folder's. `sorted`, in the
+/// app, what's been taken out of them already: its `roms`, and the II+'s
+/// `chips`.
+async function add(given, dropped = [], sorted = null) {
     // Covers and game lists apart, and what's no use, as videos are.
     const artFiles = [...given, ...dropped].filter((file) => isMedia(file.name));
     const list = [...given].filter((file) => !isMedia(file.name));
     const inFolders = dropped.filter((file) => !isMedia(file.name));
     // The Apple's ROMs out of it first, whatever they're called.
-    await wasmReady();
-    const sorter = new RomSorter();
-    const isOneOfThem = async (file) => mayHoldRoms(file)
+    const sorter = sorted ? null : new RomSorter();
+    const isOneOfThem = async (file) => sorter && mayHoldRoms(file)
         && sorter.add(file.name, new Uint8Array(await file.arrayBuffer()));
     const notRoms = async (files) => {
         const rest = [];
@@ -869,14 +869,14 @@ async function add(given, dropped = []) {
         if (loose) {
             notes.push(`Added ${loose} file${loose > 1 ? 's' : ''}.`);
         }
-        const roms = sorter.names();
-        for (const name of roms) {
+        const roms = sorted?.roms ?? sorter.names();
+        for (const name of sorted ? [] : roms) {
             await keep(name, sorter.bytes(name));
         }
         if (roms.length) {
             notes.push(`Found ${roms.length} system ROM${roms.length > 1 ? 's' : ''}.`);
         }
-        const chips = sorter.plus_chips();
+        const chips = sorted?.chips ?? sorter.plus_chips();
         if (chips > 0 && chips < 6) {
             notes.push(`Found ${chips} of the II+'s 6 chips; add them all at once.`);
         }
@@ -897,7 +897,7 @@ async function add(given, dropped = []) {
         if (unused.length) {
             notes.push(`Not recognised, so not added: ${unused.map((file) => file.name).join(', ')}`);
         }
-        sorter.free();
+        sorter?.free();
         say(notes.join(' '), unused.length + repeated.length > 0);
     } catch (error) {
         say(`Couldn't add it: ${error}`, true);
@@ -1025,20 +1025,12 @@ native?.whenGameEnds((problem) => {
 /// library, and the covers and game lists beside its games.
 async function addFolder(folder) {
     const found = await native.folderFiles(folder);
-    await wasmReady();
-    const sorter = new RomSorter();
-    const romFiles = found.map(({ path, size }) => ({ path, size, name: path.split(/[/\\]/).pop() })).filter(mayHoldRoms);
-    for (const [at, { path, name }] of romFiles.entries()) {
-        say(`Looking through the folder: ${at + 1} of ${romFiles.length}…`);
-        if (sorter.add(name, await native.laterFile(path).read())) {
-            await native.hide(path); // a ROM, not a game
-        }
+    const romFiles = found.map(({ path, size }) => ({ path, size, name: baseName(path) })).filter(mayHoldRoms);
+    say('Looking through the folder…');
+    const { held, roms } = await native.sortRoms(romFiles.map(({ path }) => path));
+    for (const path of held) {
+        await native.hide(path); // a ROM, not a game
     }
-    const roms = sorter.names();
-    for (const name of roms) {
-        await keep(name, sorter.bytes(name));
-    }
-    sorter.free();
     await native.scan();
     const media = found.map(({ path }) => native.laterFile(path)).filter(({ name }) => isMedia(name));
     const made = await takeArt(media, art, (at, total) => say(`Making covers: ${at} of ${total}…`));
@@ -1059,7 +1051,11 @@ async function addNatively(folders, dropped) {
             await addFolder(folder);
         }
         if (dropped.length) {
-            await add(await Promise.all(dropped.map(native.fileAt)));
+            const named = dropped.filter((path) => !notRoms.test(baseName(path)));
+            const sorted = await native.sortRoms(named);
+            await native.scan();
+            const others = dropped.filter((path) => !sorted.held.includes(path));
+            await add(await Promise.all(others.map(native.fileAt)), [], sorted);
         }
     } catch (problem) {
         say(`Couldn't add it: ${problem}`, true);
@@ -1503,7 +1499,7 @@ page('frame').onpointermove = (event) => {
 };
 
 if (!native) {
-    await wasmReady();
+    await init();
 }
 await loadArt();
 await refresh();

@@ -11,6 +11,8 @@ use super::iie;
 use crate::host::files;
 use crate::host::zip::{self, crc32};
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::{self, BufRead, Write};
 
 /// The II+'s whole ROM, by the name it's given.
 pub const PLUS_ROM: &str = "Apple2_Plus.rom";
@@ -149,16 +151,20 @@ impl Sorted {
     }
 }
 
+/// The file at `path`, unless it's too big to be ROMs.
+fn small_file(path: &Path) -> Option<Vec<u8>> {
+    let most = if path.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("zip")) { MOST_ZIP } else { MOST };
+    files::size(path).filter(|&size| size as usize <= most)?;
+    files::read(path).ok()
+}
+
 /// The ROMs in `path`: a folder of them, or a file or zip of them and what's
 /// beside it.
 pub fn scan(path: &Path) -> Sorted {
     let mut sorted = Sorted::new();
     let mut look = |path: &Path| {
-        let most = if path.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("zip")) { MOST_ZIP } else { MOST };
-        if files::size(path).is_some_and(|size| size as usize <= most) {
-            if let Ok(bytes) = files::read(path) {
-                sorted.add(&path.to_string_lossy(), &bytes);
-            }
+        if let Some(bytes) = small_file(path) {
+            sorted.add(&path.to_string_lossy(), &bytes);
         }
     };
     let folder = if files::is_folder(path) {
@@ -171,4 +177,32 @@ pub fn scan(path: &Path) -> Sorted {
         look(&file);
     }
     sorted
+}
+
+/// What `paths`, a line each, hold of `known`: the ROMs written into `out`,
+/// and `told` a line for each file that had any, `held PATH`, for each ROM,
+/// `rom NAME`, and last, `chips COUNT`, of the II+'s.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn sort_of(known: &[Rom], paths: impl BufRead, out: &Path, told: &mut impl Write) -> io::Result<()> {
+    let mut sorted = Sorted::new();
+    for path in paths.lines() {
+        let path = path?;
+        if small_file(Path::new(&path)).is_some_and(|bytes| sorted.add_of(known, &path, &bytes)) {
+            writeln!(told, "held {path}")?;
+        }
+    }
+    for name in sorted.names() {
+        if let Some(bytes) = sorted.bytes(&name) {
+            std::fs::write(out.join(&name), bytes)?;
+            writeln!(told, "rom {name}")?;
+        }
+    }
+    writeln!(told, "chips {}", sorted.plus_chips())
+}
+
+/// `cpu_emu roms OUT`: `sort_of` the Apple's, the paths on standard input,
+/// and told on standard output, for the desktop app.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn sort(out: &Path) -> io::Result<()> {
+    sort_of(&KNOWN, io::stdin().lock(), out, &mut io::stdout().lock())
 }

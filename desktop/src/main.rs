@@ -23,7 +23,7 @@
 
 use serde_json::{Value, json};
 use std::fs;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -334,11 +334,8 @@ fn emulator() -> Result<PathBuf, String> {
 struct Pads(Mutex<Option<Child>>);
 
 fn start_pads(app: &AppHandle) {
-    let Ok(emulator) = emulator() else { return };
-    let mut command = Command::new(emulator);
+    let Ok(mut command) = emulator_command() else { return };
     command.arg("pads").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
     let Ok(mut pads) = command.spawn() else { return };
     let Some(said) = pads.stdout.take() else { return };
     *app.state::<Pads>().0.lock().unwrap() = Some(pads);
@@ -362,6 +359,15 @@ fn stop_pads(app: &AppHandle) {
     }
     let _ = pads.kill();
     let _ = pads.wait();
+}
+
+/// The emulator to run, without a console flashing up behind it, on Windows.
+fn emulator_command() -> Result<Command, String> {
+    #[cfg_attr(not(windows), allow(unused_mut))]
+    let mut command = Command::new(emulator()?);
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
+    Ok(command)
 }
 
 /// What `machine`, as the page says, is on the emulator's command line.
@@ -410,15 +416,12 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
     let library = folder(&app, "library")?;
     let line = command_line(&app, &machine)?;
     let first_file = line.get(1).cloned().unwrap_or_default();
-    let mut command = Command::new(emulator()?);
+    let mut command = emulator_command()?;
     command
         .args(line)
         .arg(window_place(&window)?)
         .current_dir(&library)
         .stderr(Stdio::piped());
-    // Without a console flashing up behind it, on Windows.
-    #[cfg(windows)]
-    std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
     stop_pads(&app);
     let mut game = command.spawn().map_err(|e| {
         start_pads(&app);
@@ -440,6 +443,28 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
         start_pads(&app);
     });
     Ok(())
+}
+
+/// The machines' ROMs among the files at `paths`, into `library`, by the
+/// emulator, which knows them: which held any, the ROMs, and how many of the
+/// II+'s chips.
+#[tauri::command(async)]
+fn sort_roms(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
+    let wanted = paths.iter().filter(|path| !path.contains('\n') && allowed(&app, path).is_ok());
+    let list: String = wanted.map(|path| format!("{path}\n")).collect();
+    let mut command = emulator_command()?;
+    let library = folder(&app, "library")?;
+    let mut sorter = command.arg("roms").arg(library).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+    let mut input = sorter.stdin.take().ok_or("no input")?;
+    thread::spawn(move || input.write_all(list.as_bytes()));
+    let finished = sorter.wait_with_output().map_err(|e| e.to_string())?;
+    if !finished.status.success() {
+        return Err(String::from_utf8_lossy(&finished.stderr).into_owned());
+    }
+    let said = String::from_utf8_lossy(&finished.stdout);
+    let of = |word: &str| said.lines().filter_map(|line| line.strip_prefix(word).map(str::to_string)).collect::<Vec<_>>();
+    let chips: usize = of("chips ").first().and_then(|count| count.parse().ok()).unwrap_or(0);
+    Ok(json!({ "held": of("held "), "roms": of("rom "), "chips": chips }))
 }
 
 /// The app's menu: its own items, told to the page, and the system's.
@@ -496,7 +521,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             all_files, known_files, file_bytes, keep_file, forget_path, keep_art, all_art, pick_folder, take_dropped, folder_files, play,
-            library_settings, remove_folder, restore_hidden
+            library_settings, remove_folder, restore_hidden, sort_roms
         ])
         .run(tauri::generate_context!())
         .expect("couldn't open the window");

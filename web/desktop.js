@@ -134,6 +134,10 @@ export const play = (machine) => invoke('play', {
     },
 });
 
+/// The machines' ROMs among the files at `paths`, put into the library by
+/// the emulator: `held`, those with any, `roms`, and the II+'s `chips`.
+export const sortRoms = (paths) => invoke('sort_roms', { paths });
+
 /// `told` of what the gamepads hold for moving around the library, by name,
 /// each time that changes.
 export const whenPads = (told) => listen('pads', ({ payload }) => {

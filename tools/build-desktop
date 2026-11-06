@@ -1,0 +1,23 @@
+#!/bin/sh
+# Build the desktop app's installers, for this computer, into
+# desktop/target/release/bundle/: the app with the native emulator beside it,
+# which is what runs its games. Anything said's for `cargo tauri build`, as
+# `--bundles deb`, which is otherwise every kind this computer can make.
+#
+# In tauri.bundle.json and not tauri.conf.json, the emulator: the app won't
+# build without that file there, and building it to run it here doesn't want it.
+set -e
+cd "$(dirname "$0")/.."
+cargo build --release
+host=$(rustc -vV | sed -n 's/^host: //p')
+case "$host" in
+    *windows*) exe=.exe ;;
+    *) exe= ;;
+esac
+mkdir -p desktop/binaries
+cp "target/release/cpu_emu$exe" "desktop/binaries/cpu_emu-$host$exe"
+cd desktop
+cargo tauri build --config tauri.bundle.json "$@"
+# Copied here to be bundled: a later build to run here would find this old one
+# first, beside itself, rather than target/release/'s.
+rm -f "target/release/cpu_emu$exe"

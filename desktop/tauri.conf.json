@@ -23,6 +23,12 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "category": "Game",
+    "shortDescription": "An emulator of the Apple II and the NES, from the 6502 up",
+    "linux": {
+      "deb": { "depends": ["libsdl2-2.0-0"] },
+      "rpm": { "depends": ["SDL2"] }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
