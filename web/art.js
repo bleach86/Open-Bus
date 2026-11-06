@@ -108,7 +108,7 @@ export async function takeArt(files, art, told) {
     for (const [key, { file }] of best) {
         told(++done, best.size);
         try {
-            const game = { ...art.get(key), cover: await shrink(file) };
+            const game = { ...art.get(key), cover: await shrink(file.load ? await file.load() : file) };
             art.set(key, game);
             unkept.set(key, game);
             made++;

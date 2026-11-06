@@ -1,10 +1,13 @@
 //! Open Bus as a desktop app: the web page's library, in a window of its
-//! own, its files on the disk rather than in a browser's storage. Those are
-//! in the app's data folder, the games, disks and ROMs in `library`, as the
-//! page names them, and the covers and what's known of the games in `art`.
+//! own, its files on the disk rather than in a browser's storage. A folder
+//! added is only remembered, in `settings.json` in the app's data folder,
+//! and looked through each time: its games stay where they are, and a game
+//! removed from the library is hidden, its file never touched. Files added
+//! one by one are copied to `library` there, and may be deleted; the ROMs a
+//! machine needs too. The covers and what's known of the games are in `art`.
 //!
-//! The page's only way to the disk is these commands, each name it gives
-//! one in `library`, checked to stay there.
+//! The page's only way to the disk is these commands: a path it gives one
+//! is checked to be in `library` or in a folder that's been added.
 //!
 //! A game's the native emulator, `cpu_emu`, as a process of its own, as
 //! EmulationStation has it: it opens where the window is, that going away
@@ -14,19 +17,25 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use tauri::ipc::{InvokeBody, Request, Response};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use tauri_plugin_dialog::DialogExt;
 
 /// How long the library stays up after a game starts, for its window to be
 /// there to take over: there's no flash of the desktop between the two.
 const OVERLAP: Duration = Duration::from_millis(350);
+/// Windows's process flag for that.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// A folder of the app's, made if it isn't there yet.
 fn folder(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
@@ -89,30 +98,9 @@ fn body<'a>(request: &'a Request<'a>) -> Result<&'a [u8], String> {
     }
 }
 
-/// The names of all under `folder`, those in folders with `/`.
-fn names_under(folder: &Path, prefix: &str, names: &mut Vec<String>) -> Result<(), String> {
-    for entry in fs::read_dir(folder).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
-        if entry.path().is_dir() {
-            names_under(&entry.path(), &format!("{name}/"), names)?;
-        } else if !name.ends_with(".part") {
-            names.push(name);
-        }
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn file_names(app: AppHandle) -> Result<Vec<String>, String> {
-    let mut names = Vec::new();
-    names_under(&folder(&app, "library")?, "", &mut names)?;
-    Ok(names)
-}
-
-#[tauri::command]
-fn file_bytes(app: AppHandle, name: String) -> Result<Response, String> {
-    let bytes = fs::read(place(&app, &name)?).map_err(|e| e.to_string())?;
+#[tauri::command(async)]
+fn file_bytes(app: AppHandle, path: String) -> Result<Response, String> {
+    let bytes = fs::read(allowed(&app, &path)?).map_err(|e| e.to_string())?;
     Ok(Response::new(bytes))
 }
 
@@ -121,15 +109,159 @@ fn keep_file(app: AppHandle, request: Request<'_>) -> Result<(), String> {
     write(&place(&app, &header(&request, "name")?)?, body(&request)?)
 }
 
-/// A file gone, and the folder it was in if that's left empty.
-#[tauri::command]
-fn forget_file(app: AppHandle, name: String) -> Result<(), String> {
-    let path = place(&app, &name)?;
-    fs::remove_file(&path).map_err(|e| e.to_string())?;
-    if let Some(parent) = path.parent() {
-        let _ = fs::remove_dir(parent); // refused if there's anything in it
+/// Files dropped on the window, that the page may read.
+#[derive(Default)]
+struct Dropped(Mutex<Vec<PathBuf>>);
+
+/// The folders added, and the files hidden: from `settings.json`.
+fn settings(app: &AppHandle) -> Result<Value, String> {
+    let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("settings.json");
+    Ok(match fs::read(path) {
+        Ok(text) => serde_json::from_slice(&text).map_err(|e| e.to_string())?,
+        Err(_) => json!({ "folders": [], "hidden": [] }),
+    })
+}
+
+fn save_settings(app: &AppHandle, settings: &Value) -> Result<(), String> {
+    let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("settings.json");
+    write(&path, settings.to_string().as_bytes())
+}
+
+fn listed(settings: &Value, field: &str) -> Vec<String> {
+    settings[field].as_array().map_or(Vec::new(), |list| list.iter().filter_map(|item| item.as_str().map(String::from)).collect())
+}
+
+/// `path`, if it's somewhere the page may go: `library`, or a folder added.
+fn allowed(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
+    let real = fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut places = listed(&settings(app)?, "folders").into_iter().map(PathBuf::from).collect::<Vec<_>>();
+    places.push(folder(app, "library")?);
+    let inside = |place: &PathBuf| fs::canonicalize(place).is_ok_and(|place| real.starts_with(place));
+    let dropped = app.state::<Dropped>().0.lock().map_err(|e| e.to_string())?.contains(&real);
+    if dropped || places.iter().any(inside) { Ok(real) } else { Err(format!("not in the library: {path}")) }
+}
+
+/// All the files under `folder`, with their sizes; not those in folders
+/// that aren't anyone's games: a hidden one, or a NAS's own, as @eaDir is.
+fn walk(folder: &Path, found: &mut Vec<Value>) {
+    let Ok(entries) = fs::read_dir(folder) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if !name.starts_with('.') && !name.starts_with('@') {
+                walk(&path, found);
+            }
+        } else if !path.to_string_lossy().ends_with(".part") {
+            let size = entry.metadata().map_or(0, |data| data.len());
+            found.push(json!({ "path": path.to_string_lossy(), "size": size }));
+        }
+    }
+}
+
+/// `folder` remembered.
+fn remember(app: &AppHandle, folder: &str) -> Result<(), String> {
+    let mut kept = settings(app)?;
+    if !listed(&kept, "folders").iter().any(|known| known == folder) {
+        kept["folders"].as_array_mut().ok_or("bad settings")?.push(json!(folder));
+        save_settings(app, &kept)?;
     }
     Ok(())
+}
+
+/// What Settings shows: the folders, the hidden, and the app's own folder.
+#[tauri::command(async)]
+fn library_settings(app: AppHandle) -> Result<Value, String> {
+    let kept = settings(&app)?;
+    let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(json!({ "folders": listed(&kept, "folders"), "hidden": listed(&kept, "hidden"), "data": data.to_string_lossy() }))
+}
+
+/// `path` gone from `field` of the settings.
+fn take_out(app: &AppHandle, field: &str, path: &str) -> Result<(), String> {
+    let mut kept = settings(app)?;
+    kept[field].as_array_mut().ok_or("bad settings")?.retain(|item| item != path);
+    save_settings(app, &kept)
+}
+
+/// A folder no longer looked in: its files are left as they are.
+#[tauri::command(async)]
+fn remove_folder(app: AppHandle, path: String) -> Result<(), String> {
+    take_out(&app, "folders", &path)
+}
+
+/// A game hidden, back.
+#[tauri::command(async)]
+fn restore_hidden(app: AppHandle, path: String) -> Result<(), String> {
+    take_out(&app, "hidden", &path)
+}
+
+/// A folder chosen, and remembered: its path, if one was.
+#[tauri::command(async)]
+fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
+    let Some(chosen) = app.dialog().file().blocking_pick_folder() else { return Ok(None) };
+    let chosen = chosen.into_path().map_err(|e| e.to_string())?.to_string_lossy().into_owned();
+    remember(&app, &chosen)?;
+    Ok(Some(chosen))
+}
+
+/// What was dropped on the window, by the window's own say: its folders
+/// remembered, and its files open to the page, to add as any are.
+#[tauri::command(async)]
+fn take_dropped(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
+    let (mut folders, mut files) = (Vec::new(), Vec::new());
+    for path in paths {
+        if Path::new(&path).is_dir() {
+            remember(&app, &path)?;
+            folders.push(path);
+        } else {
+            let real = fs::canonicalize(&path).map_err(|e| e.to_string())?;
+            app.state::<Dropped>().0.lock().map_err(|e| e.to_string())?.push(real);
+            files.push(path);
+        }
+    }
+    Ok(json!({ "folders": folders, "files": files }))
+}
+
+/// All the files of a folder that's been added.
+#[tauri::command(async)]
+fn folder_files(app: AppHandle, folder: String) -> Result<Vec<Value>, String> {
+    let mut found = Vec::new();
+    walk(&allowed(&app, &folder)?, &mut found);
+    Ok(found)
+}
+
+/// Every file there is: `library`'s, and the added folders', the hidden left
+/// out, as paths: which first, and whether it's a folder's, for the page.
+#[tauri::command(async)]
+fn all_files(app: AppHandle) -> Result<Value, String> {
+    let kept = settings(&app)?;
+    let hidden = listed(&kept, "hidden");
+    let mut library = Vec::new();
+    walk(&folder(&app, "library")?, &mut library);
+    let mut added = Vec::new();
+    for place in listed(&kept, "folders") {
+        walk(Path::new(&place), &mut added);
+    }
+    added.retain(|file| !hidden.iter().any(|path| file["path"] == *path));
+    Ok(json!({ "root": folder(&app, "library")?.to_string_lossy(), "library": library, "folders": added }))
+}
+
+/// A file of `library` deleted; one of a folder's, only hidden: it's yours.
+#[tauri::command(async)]
+fn forget_path(app: AppHandle, path: String) -> Result<(), String> {
+    let real = allowed(&app, &path)?;
+    if fs::canonicalize(folder(&app, "library")?).is_ok_and(|library| real.starts_with(library)) {
+        fs::remove_file(&real).map_err(|e| e.to_string())?;
+        if let Some(parent) = real.parent() {
+            let _ = fs::remove_dir(parent); // refused if there's anything in it
+        }
+        return Ok(());
+    }
+    let mut kept = settings(&app)?;
+    kept["hidden"].as_array_mut().ok_or("bad settings")?.push(json!(path));
+    save_settings(&app, &kept)
 }
 
 /// A game's art's file, by a hash of its key, which can be any text.
@@ -178,7 +310,7 @@ fn emulator() -> Result<PathBuf, String> {
 /// What `machine`, as the page says, is on the emulator's command line.
 fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String> {
     let text = |field: &str| machine[field].as_str().ok_or(format!("no {field}"));
-    let file = |name: &str| Ok::<_, String>(place(app, name)?.to_string_lossy().into_owned());
+    let file = |path: &str| Ok::<_, String>(allowed(app, path)?.to_string_lossy().into_owned());
     if text("kind")? == "nes" {
         return Ok(vec!["nes".to_string(), file(text("game")?)?]);
     }
@@ -204,25 +336,30 @@ fn window_place(window: &WebviewWindow) -> Result<String, String> {
 }
 
 /// What a failed game had to say: a panic's message, without its place in
-/// the code or where the library is.
-fn complaint(said: &str, library: &Path) -> String {
+/// the code, or the folders of the game it names.
+fn complaint(said: &str, game: &str) -> String {
     let useful = |line: &&str| !line.starts_with("thread ") && !line.starts_with("note:") && !line.is_empty();
     let line = said.lines().find(useful).unwrap_or("the game stopped");
-    let folder = format!("{}{}", library.display(), std::path::MAIN_SEPARATOR);
-    line.replace(&folder, "")
+    let name = Path::new(game).file_name().map_or(game.into(), |name| name.to_string_lossy());
+    line.replace(game, &name)
 }
 
 /// A game played, the window away until it's over.
 #[tauri::command]
 fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), String> {
     let library = folder(&app, "library")?;
-    let mut game = Command::new(emulator()?)
-        .args(command_line(&app, &machine)?)
+    let line = command_line(&app, &machine)?;
+    let first_file = line.get(1).cloned().unwrap_or_default();
+    let mut command = Command::new(emulator()?);
+    command
+        .args(line)
         .arg(window_place(&window)?)
         .current_dir(&library)
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
+        .stderr(Stdio::piped());
+    // Without a console flashing up behind it, on Windows.
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
+    let mut game = command.spawn().map_err(|e| e.to_string())?;
     thread::spawn(move || {
         thread::sleep(OVERLAP);
         if matches!(game.try_wait(), Ok(None)) {
@@ -235,14 +372,57 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
         let failed = !game.wait().is_ok_and(|status| status.success());
         let _ = window.show();
         let _ = window.set_focus();
-        let _ = app.emit("game-ended", failed.then(|| complaint(&said, &library)));
+        let _ = app.emit("game-ended", failed.then(|| complaint(&said, &first_file)));
     });
     Ok(())
 }
 
+/// The app's menu: its own items, told to the page, and the system's.
+fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let item = |id: &str, text: &str, keys: &str| MenuItem::with_id(app, id, text, true, Some(keys));
+    let library = Submenu::with_items(
+        app,
+        "Library",
+        true,
+        &[
+            &item("add-folder", "Add Folder…", "CmdOrCtrl+O")?,
+            &item("rescan", "Look for New Games", "CmdOrCtrl+R")?,
+            &item("find", "Search", "CmdOrCtrl+F")?,
+            &PredefinedMenuItem::separator(app)?,
+            &item("settings", "Settings…", "CmdOrCtrl+,")?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, None)?,
+        ],
+    )?;
+    let edit = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )?;
+    Menu::with_items(app, &[&library, &edit])
+}
+
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![file_names, file_bytes, keep_file, forget_file, keep_art, all_art, play])
+        .setup(|app| {
+            app.set_menu(menu(app.handle())?)?;
+            app.on_menu_event(|app, event| {
+                let _ = app.emit("menu", event.id().0.clone());
+            });
+            Ok(())
+        })
+        .manage(Dropped::default())
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            all_files, file_bytes, keep_file, forget_path, keep_art, all_art, pick_folder, take_dropped, folder_files, play,
+            library_settings, remove_folder, restore_hidden
+        ])
         .run(tauri::generate_context!())
         .expect("couldn't open the window");
 }

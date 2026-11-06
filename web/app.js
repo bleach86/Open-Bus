@@ -41,6 +41,9 @@ let chosen = [];
 const opened = new Set();
 /// How many covers come between showing them.
 const SHOWN_EVERY = 24;
+/// How long a message that isn't a problem stays, in milliseconds.
+const SHOWN_FOR = 6000;
+let saidTimer = 0;
 /// The art there is, by key, and its covers' addresses.
 let art = new Map();
 const covers = new Map();
@@ -49,10 +52,21 @@ const covers = new Map();
 /// game's on both, and one's picture isn't the other's.
 let coversByTitle = new Map();
 
+/// A message, in a toast that's there wherever the page is scrolled to. A
+/// problem stays until it's dismissed, and something under way until it's
+/// replaced; the rest go by themselves.
 function say(text, problem = false) {
-    page('message').textContent = text;
-    page('message').classList.toggle('problem', problem);
+    clearTimeout(saidTimer);
+    const message = page('message');
+    message.hidden = !text;
+    message.classList.toggle('problem', problem);
+    message.setAttribute('role', problem ? 'alert' : 'status');
+    message.querySelector('span').textContent = text;
+    if (text && !problem && !text.endsWith('…')) {
+        saidTimer = setTimeout(() => say(''), SHOWN_FOR);
+    }
 }
+page('dismiss').onclick = () => say('');
 
 /// The art kept, and where its covers can be shown from.
 async function loadArt() {
@@ -76,6 +90,11 @@ function showShelf(name) {
     localStorage.setItem('shelf', name);
     page('nes').hidden = name !== 'nes';
     page('apple-shelf').hidden = name !== 'apple';
+    page('settings').hidden = name !== 'settings';
+    page('tools').hidden = name === 'settings';
+    if (name === 'settings') {
+        fillSettings();
+    }
     for (const tab of document.querySelectorAll('.tabs button')) {
         tab.classList.toggle('on', tab.dataset.tab === name);
     }
@@ -134,6 +153,37 @@ page('find').onclick = findMissing;
 /// title, for a picture named after it.
 const artFor = (title, ...names) => [...names.map(artKey), keyOf(title)].find((key) => art.has(key)) ?? artKey(names[0]);
 
+/// What's said of an empty shelf.
+const noGames = native ? 'No games yet. Add a folder of them in Settings.' : 'No games yet. Add .nes, .fds or .zip files, or a folder of them.';
+
+/// Whether what's searched for is in a game's title, file, or what's known
+/// of it.
+const found = (wanted, title, file, known) => [title, file, known?.developer, known?.genre, known?.year].join(' ').toLowerCase().includes(wanted);
+
+/// `items` as the sort says, by title among those alike, those not known
+/// about last.
+function arranged(items, titleOf, knownOf) {
+    const way = page('sort').value;
+    const field = { newest: 'year', oldest: 'year', genre: 'genre', developer: 'developer', players: 'players' }[way];
+    const byTitle = (a, b) => natural(titleOf(a), titleOf(b));
+    return [...items].sort((a, b) => {
+        const [first, second] = [knownOf(a)?.[field], knownOf(b)?.[field]];
+        if (!field || first === second) {
+            return byTitle(a, b);
+        }
+        if (!first || !second) {
+            return first ? -1 : 1;
+        }
+        return way === 'newest' ? natural(second, first) : natural(first, second);
+    });
+}
+
+page('sort').value = localStorage.getItem('sort') ?? 'title';
+page('sort').onchange = () => {
+    localStorage.setItem('sort', page('sort').value);
+    refresh();
+};
+
 /// A tab's name, and how many it holds beside it.
 function showCount(tab, name, count) {
     const tally = document.createElement('span');
@@ -153,10 +203,11 @@ const titleOf = (name) => art.get(nesArt(name))?.title ?? plainTitle(name);
 
 function fillGames(wanted) {
     const all = files.filter(isGame);
-    const matches = (name) => `${titleOf(name)} ${name}`.toLowerCase().includes(wanted);
-    const shown = all.filter(matches).sort((a, b) => natural(titleOf(a), titleOf(b)));
+    const knownOf = (name) => art.get(nesArt(name));
+    const matches = (name) => found(wanted, titleOf(name), name, knownOf(name));
+    const shown = arranged(all.filter(matches), titleOf, knownOf);
     const list = page('games');
-    list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : 'No games yet. Add .nes or .zip files, or a folder of them.';
+    list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : noGames;
     showCount('tab-nes', 'NES', shown.length);
     list.replaceChildren(...shown.map((name) => {
         const item = document.createElement('li');
@@ -221,9 +272,10 @@ function caption(title, known, note = '') {
 
 /// The disks, as games: one tile each, a game of several able to open.
 function fillDisks(wanted) {
-    const matches = (game) => [game.title, ...game.disks].some((name) => name.toLowerCase().includes(wanted));
+    const knownOf = (game) => art.get(artFor(diskTitle(game), ...game.disks));
+    const matches = (game) => found(wanted, game.title, game.disks.join(' '), knownOf(game));
     const all = games(files.filter(isDisk));
-    const shown = all.filter(matches);
+    const shown = arranged(all.filter(matches), (game) => knownOf(game)?.title ?? diskTitle(game), knownOf);
     const list = page('disks');
     list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : 'No disks yet. Add disk images, or a folder of them.';
     showCount('tab-apple', 'Apple II', shown.length);
@@ -289,7 +341,7 @@ function diskTile(game, wanted) {
         remove.title = `Remove ${game.title}`;
         remove.setAttribute('aria-label', remove.title);
         remove.onclick = async () => {
-            if (confirm(`Remove ${game.title} and its ${game.disks.length} disks from this browser?`)) {
+            if (confirm(`Remove ${game.title} and its ${game.disks.length} disks from ${native ? 'the library' : 'this browser'}?`)) {
                 for (const disk of game.disks) {
                     await forget(disk);
                 }
@@ -342,7 +394,7 @@ function removeButton(name) {
     remove.title = `Remove ${shortName(name)}`;
     remove.setAttribute('aria-label', remove.title);
     remove.onclick = async () => {
-        if (confirm(`Remove ${shortName(name)} from this browser?`)) {
+        if (confirm(`Remove ${shortName(name)} from ${native ? 'the library' : 'this browser'}?`)) {
             await forget(name);
             refresh();
         }
@@ -591,13 +643,146 @@ page('apple').onclick = () => {
 
 /// In the desktop app, a game's on the native emulator, not here: a game
 /// over, what it's saved is in the library, and what went wrong is told.
-const playNatively = (machine) => native.play(machine).catch((problem) => say(String(problem), true));
+function playNatively(machine) {
+    if (machine.game && kind(machine.game) === 'fds' && !files.includes(FDS_BIOS)) {
+        say(`Disk System games need the BIOS, ${FDS_BIOS}: add it in Settings.`, true);
+        return;
+    }
+    native.play(machine).catch((problem) => say(String(problem), true));
+}
 native?.whenGameEnds((problem) => {
     say(problem ?? '', Boolean(problem));
     refresh();
 });
+
+/// A folder of the desktop app's, remembered, and its games staying where
+/// they are: what's taken from it once are the machines' ROMs, into the
+/// library, and the covers and game lists beside its games.
+async function addFolder(folder) {
+    const found = await native.folderFiles(folder);
+    const sorter = new RomSorter();
+    const romFiles = found.map(({ path, size }) => ({ path, size, name: path.split(/[/\\]/).pop() })).filter(mayHoldRoms);
+    for (const [at, { path, name }] of romFiles.entries()) {
+        say(`Looking through the folder: ${at + 1} of ${romFiles.length}…`);
+        if (sorter.add(name, await native.laterFile(path).read())) {
+            await native.hide(path); // a ROM, not a game
+        }
+    }
+    const roms = sorter.names();
+    for (const name of roms) {
+        await keep(name, sorter.bytes(name));
+    }
+    sorter.free();
+    const media = found.map(({ path }) => native.laterFile(path)).filter(({ name }) => isMedia(name));
+    const made = await takeArt(media, art, (at, total) => say(`Making covers: ${at} of ${total}…`));
+    await loadArt();
+    await refresh();
+    const count = (number, what) => (number ? ` ${number} ${what}${number > 1 ? 's' : ''}.` : '');
+    say(`Added ${native.gamesIn(folder)} games from ${folder}.${count(roms.length, 'system ROM')}${count(made, 'cover')}`);
+    if (!page('settings').hidden) {
+        showShelf(files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple');
+    }
+}
+
+/// Folders and files dropped on the window, or a folder picked.
+async function addNatively(folders, dropped) {
+    try {
+        for (const folder of folders) {
+            await addFolder(folder);
+        }
+        if (dropped.length) {
+            await add(await Promise.all(dropped.map(native.fileAt)));
+        }
+    } catch (problem) {
+        say(`Couldn't add it: ${problem}`, true);
+    }
+}
+
+/// A folder chosen in the system's own dialog, and added.
+async function chooseFolder() {
+    const folder = await native.pickFolder().catch((problem) => say(String(problem), true));
+    if (folder) {
+        await addNatively([folder], []);
+        fillSettings();
+    }
+}
+
+const row = (text, detail, button, action) => {
+    const item = document.createElement('li');
+    const words = document.createElement('span');
+    words.className = 'row-text';
+    words.textContent = text;
+    if (detail) {
+        const note = document.createElement('small');
+        note.textContent = detail;
+        words.append(note);
+    }
+    item.append(words);
+    if (button) {
+        const press = document.createElement('button');
+        press.textContent = button;
+        press.onclick = action;
+        item.append(press);
+    }
+    return item;
+};
+
+/// Settings, in the desktop app: the folders, what's hidden and the system
+/// files, as they are now.
+async function fillSettings() {
+    if (!native) {
+        return;
+    }
+    const { folders, hidden, data } = await native.settings();
+    const counted = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
+    page('folders').replaceChildren(...folders.map((folder) => row(folder, counted(native.gamesIn(folder), 'game'), 'Remove', async () => {
+        if (confirm(`Remove ${folder} from the library? Its files stay where they are.`)) {
+            await native.removeFolder(folder);
+            await refresh();
+            fillSettings();
+        }
+    })));
+    if (!folders.length) {
+        page('folders').append(row('No folders yet. Add one to start your library.'));
+    }
+    page('hidden-games').replaceChildren(...hidden.map((path) => row(shortName(path), path, 'Restore', async () => {
+        await native.restore(path);
+        await refresh();
+        fillSettings();
+    })));
+    const has = (name) => files.includes(name);
+    const appleFound = [...DISK_II_ROMS, ...IIE_ROMS.apple2ee].filter(has).length;
+    page('system-files').replaceChildren(
+        row('Disk System BIOS', has(FDS_BIOS) ? 'Found' : 'Missing: Disk System games need disksys.rom'),
+        row('Apple II ROMs', `${appleFound} of ${DISK_II_ROMS.length + IIE_ROMS.apple2ee.length} found`),
+    );
+    page('data-place').textContent = `Covers and system files are kept in ${data}`;
+}
+
+/// The desktop app's own way of looking: a window of its own, not a page.
 if (native) {
-    document.querySelector('header .quiet').textContent = 'Add your games, or drop files or whole folders anywhere here: covers and game lists beside them come too.';
+    document.documentElement.classList.add('native');
+    document.querySelector('nav.tabs').prepend(document.querySelector('h1'));
+    page('tools').append(page('find'));
+    page('file-actions').append(document.querySelector('label.primary'));
+    document.querySelector('header').hidden = true;
+    page('tab-settings').hidden = false;
+    addEventListener('contextmenu', (event) => event.preventDefault());
+    native.whenDropped(({ folders, files: dropped }) => addNatively(folders, dropped).then(fillSettings));
+    native.whenMenu((item) => {
+        if (item === 'add-folder') {
+            chooseFolder();
+        } else if (item === 'settings') {
+            showShelf('settings');
+        } else if (item === 'find') {
+            showShelf(page('nes').hidden && page('apple-shelf').hidden ? 'nes' : localStorage.getItem('shelf'));
+            page('filter').focus();
+        } else if (item === 'rescan') {
+            refresh().then(fillSettings);
+        }
+    });
+    page('add-path').onclick = chooseFolder;
+    page('rescan').onclick = () => refresh().then(fillSettings);
 }
 
 // Running a machine.
@@ -914,5 +1099,7 @@ page('frame').onpointermove = (event) => {
 await init();
 await loadArt();
 await refresh();
-showShelf(localStorage.getItem('shelf') ?? (files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple'));
+const firstShelf = native && !files.length ? 'settings' : (files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple');
+const lastShelf = localStorage.getItem('shelf');
+showShelf(native && !files.length ? firstShelf : lastShelf && lastShelf !== 'settings' ? lastShelf : firstShelf);
 requestAnimationFrame(tick);

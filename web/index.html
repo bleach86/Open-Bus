@@ -15,22 +15,55 @@
       <p class="quiet">Your games stay in this browser. Add them, or drop files or whole folders anywhere on the page: covers and game lists beside them come too.</p>
     </div>
     <div class="actions">
-      <input id="filter" type="search" placeholder="Filter" aria-label="Filter games and disks">
       <button id="find" hidden title="Looks online for what's missing: boxes from libretro's set on GitHub, and Apple II title screens from the Internet Archive. Your games stay here.">Find covers</button>
       <label class="button" id="add-folder-button">Add folder<input id="add-folder" class="unseen" type="file" webkitdirectory multiple></label>
       <label class="button primary">Add files<input id="add" class="unseen" type="file" multiple></label>
     </div>
   </header>
-  <p id="message" role="status"></p>
+  <div id="message" role="status" hidden><span></span><button id="dismiss" aria-label="Dismiss">×</button></div>
 
-  <nav class="tabs" aria-label="Machines">
-    <button id="tab-nes" data-tab="nes">NES</button>
-    <button id="tab-apple" data-tab="apple">Apple II</button>
-  </nav>
+  <div class="toolbar">
+    <nav class="tabs" aria-label="Machines">
+      <button id="tab-nes" data-tab="nes">NES</button>
+      <button id="tab-apple" data-tab="apple">Apple II</button>
+      <button id="tab-settings" data-tab="settings" hidden>Settings</button>
+    </nav>
+    <div id="tools" class="tools">
+      <input id="filter" type="search" placeholder="Search" aria-label="Search games and disks">
+      <select id="sort" aria-label="Sort by">
+        <option value="title">Title</option>
+        <option value="newest">Newest</option>
+        <option value="oldest">Oldest</option>
+        <option value="genre">Genre</option>
+        <option value="developer">Developer</option>
+        <option value="players">Players</option>
+      </select>
+    </div>
+  </div>
 
   <section id="nes" class="shelf">
     <ul id="games" class="grid"></ul>
     <p class="empty"></p>
+  </section>
+
+  <section id="settings" class="shelf settings" hidden>
+    <h2>Library folders</h2>
+    <p class="quiet">Open Bus shows the games in these folders. Nothing is copied or moved, and saves go beside each game.</p>
+    <ul id="folders" class="rows"></ul>
+    <p class="row-actions" id="folder-actions">
+      <button id="add-path" class="primary">Add folder…</button>
+      <button id="rescan">Look for new games</button>
+    </p>
+
+    <h2>Hidden games</h2>
+    <p class="quiet">Games you've removed from the library. Their files are still where they were.</p>
+    <ul id="hidden-games" class="rows"></ul>
+    <p class="empty">Nothing's hidden.</p>
+
+    <h2>System files</h2>
+    <ul id="system-files" class="rows"></ul>
+    <p class="row-actions" id="file-actions"></p>
+    <p class="quiet hint" id="data-place"></p>
   </section>
 
   <section id="apple-shelf" class="shelf" hidden>

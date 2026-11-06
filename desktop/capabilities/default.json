@@ -2,5 +2,5 @@
   "identifier": "default",
   "description": "What the library's window may do: its own commands, which need no listing, and Tauri's basics.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "dialog:default"]
 }
