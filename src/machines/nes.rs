@@ -98,6 +98,8 @@ pub const CLOCK_HZ: u32 = 1_789_773;
 
 /// How loud it is, of the host's full volume.
 const VOLUME: f32 = 0.85;
+/// A header, and the least a cartridge can hold: 16K and 8K.
+const HEADER_AND_BLANK: usize = 16 + 0x4000 + 0x2000;
 /// The Disk System's BIOS: its name, and its size.
 const FDS_BIOS: &str = "disksys.rom";
 const FDS_BIOS_SIZE: usize = 0x2000;
@@ -659,6 +661,20 @@ pub fn build(rom: &str, overscan: usize, region: Option<Region>) -> Result<CPU<N
     cpu.clock_hz = region.clock_hz();
     cpu.reset();
     Ok(cpu)
+}
+
+/// Only the controls being changed, with no game: its window closing when
+/// that's done. A cartridge of nothing, for the window to be a NES's.
+pub fn controls() {
+    let mut image = b"NES\x1A\x01\x01".to_vec();
+    image.resize(HEADER_AND_BLANK, 0);
+    let cartridge = Cartridge::new(&image).unwrap_or_else(|e| panic!("{e}"));
+    let mut cpu = CPU::with_bus(Nes::of(cartridge, Region::Ntsc));
+    cpu.variant = Variant::Ricoh2A03;
+    cpu.memory.overscan = 0;
+    let (width, height) = seen(0);
+    let window = Window::new("Open Bus: controls", width, height, size(0, Region::Ntsc), false);
+    Host::new(cpu, Box::new(window), PathBuf::new()).only_controls().run();
 }
 
 /// How big its picture's shown, `overscan` hidden: its dots and lines seen,

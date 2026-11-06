@@ -1,3 +1,5 @@
+use crate::host::controls::Controls;
+
 /// The host's sound: frames a second, for every machine; each frame its
 /// channels' samples, left then right.
 pub const SAMPLE_RATE: u32 = 48_000;
@@ -61,6 +63,25 @@ pub trait Display {
     /// machine's own uses (F11 is the window's fullscreen, F12 the
     /// machine's Reset key, held).
     fn function_key(&mut self) -> Option<u8> {
+        None
+    }
+
+    /// The next thing pressed, as a binding, if it's looking: a key, or a
+    /// button of either gamepad. For the host, to bind.
+    fn pressed(&mut self) -> Option<String> {
+        None
+    }
+
+    /// Whether it's to look for that, or for the controls as they are.
+    fn capture(&mut self, _on: bool) {}
+
+    /// Its controls, if it's a display whose can be changed.
+    fn controls(&mut self) -> Option<&mut Controls> {
+        None
+    }
+
+    /// What's to be said of it as a game starts, if anything is.
+    fn hint(&self) -> Option<&'static str> {
         None
     }
 

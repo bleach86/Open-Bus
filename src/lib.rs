@@ -21,6 +21,7 @@ pub mod chips {
 /// notices, its save states.
 pub mod host {
     pub mod clock;
+    pub mod controls;
     pub mod display;
     #[cfg_attr(target_arch = "wasm32", path = "files_web.rs")]
     pub mod files;
@@ -40,6 +41,7 @@ pub mod host {
     #[cfg(test)]
     mod tests {
         mod clock;
+        mod controls;
         mod files;
         mod notice;
         mod stats;

@@ -12,6 +12,7 @@
 //! the screen is wider. Closed, it tells the machine, to turn itself off.
 
 use std::sync::OnceLock;
+use crate::host::controls::{Action, Controls};
 use crate::host::display::{CHANNELS, Display, Gamepad, Joystick, Key, SAMPLE_RATE};
 use sdl2::EventPump;
 use sdl2::GameControllerSubsystem;
@@ -53,38 +54,32 @@ pub struct Window {
     keys_held: HashSet<Keycode>,
     /// The window closed.
     closed: bool,
+    /// What's bound; everything held that a binding could say; what's been
+    /// pressed, while the host's looking; and since when Select and Start
+    /// have both been held.
+    controls: Controls,
+    held: HashSet<String>,
+    pressed: VecDeque<String>,
+    capturing: bool,
+    both_held: Option<Instant>,
     /// A keypad key's own text, which it would type too: not typed.
     keypad_text: Option<char>,
     /// When the pointer last moved.
     pointer_moved: Instant,
 }
 
-/// A player's gamepad: its left stick, -1 to 1 each way, and its buttons held.
+/// A player's gamepad: its left stick, -1 to 1 each way, for a joystick; and
+/// what's held of it, by the bindings' words for its buttons, and its sticks'
+/// and triggers' for being pushed well over.
 struct Pad {
     controller: GameController,
     stick: (f32, f32),
-    held: HashSet<Button>,
+    held: HashSet<String>,
 }
 
 impl Pad {
     fn new(controller: GameController) -> Pad {
         Pad { controller, stick: (0.0, 0.0), held: HashSet::new() }
-    }
-
-    /// Its D-pad, or its stick pushed well over; its buttons.
-    fn gamepad(&self) -> Gamepad {
-        let held = |button| self.held.contains(&button);
-        let pushed = 0.5;
-        Gamepad {
-            up: held(Button::DPadUp) || self.stick.1 < -pushed,
-            down: held(Button::DPadDown) || self.stick.1 > pushed,
-            left: held(Button::DPadLeft) || self.stick.0 < -pushed,
-            right: held(Button::DPadRight) || self.stick.0 > pushed,
-            a: held(Button::A),
-            b: held(Button::X),
-            select: held(Button::Back),
-            start: held(Button::Start),
-        }
     }
 }
 
@@ -105,6 +100,10 @@ fn plugged_in(pads: &mut [Option<Pad>; 2], controllers: &GameControllerSubsystem
 
 /// A stick's travel taken as centred: a resting gamepad's isn't quite 0.
 const DEAD_ZONE: f32 = 0.15;
+/// How far a stick or trigger's pushed to be held; how long Select and Start
+/// are held together to go back to the library.
+const PUSHED: f32 = 0.5;
+const BOTH_HELD: Duration = Duration::from_secs(1);
 /// How long the pointer stays once it stops moving.
 const POINTER_SHOWN: Duration = Duration::from_secs(2);
 
@@ -192,6 +191,11 @@ impl Window {
             reset_held: false,
             keys_held: HashSet::new(),
             closed: false,
+            controls: Controls::load(),
+            held: HashSet::new(),
+            pressed: VecDeque::new(),
+            capturing: false,
+            both_held: None,
             keypad_text: None,
             pointer_moved: Instant::now(),
         };
@@ -199,6 +203,49 @@ impl Window {
             window.toggle_fullscreen();
         }
         window
+    }
+
+    /// Whether a binding's held, for `player`: a key, anyone's; a gamepad's,
+    /// their own.
+    fn is_held(&self, player: usize, source: &str) -> bool {
+        match source.strip_prefix("pad:") {
+            Some(button) => self.pads[player].as_ref().is_some_and(|pad| pad.held.contains(button)),
+            None => self.held.contains(source),
+        }
+    }
+
+    /// A player's gamepad, as what's held is bound.
+    fn mapped(&self, player: usize) -> Gamepad {
+        let held = |action| self.controls.holds(player, action, |source| self.is_held(player, source));
+        Gamepad {
+            up: held(Action::Up),
+            down: held(Action::Down),
+            left: held(Action::Left),
+            right: held(Action::Right),
+            a: held(Action::A),
+            b: held(Action::B),
+            select: held(Action::Select),
+            start: held(Action::Start),
+        }
+    }
+
+    /// Back to the library: by what's bound to it; or if the app opened
+    /// this, Select and Start held together a moment.
+    fn check_library(&mut self) {
+        if self.capturing {
+            self.both_held = None;
+            return;
+        }
+        if self.controls.holds(0, Action::Library, |source| self.is_held(0, source)) {
+            self.closed = true;
+        }
+        let pad = self.mapped(0);
+        if PLACE.get().is_some() && pad.select && pad.start {
+            let since = *self.both_held.get_or_insert_with(Instant::now);
+            self.closed |= since.elapsed() >= BOTH_HELD;
+        } else {
+            self.both_held = None;
+        }
     }
 
     /// Fullscreen, at the screen's own size; or back to the window.
@@ -237,6 +284,11 @@ impl Window {
                     ..
                 } => {
                     self.keypad_text = None;
+                    let name = format!("key:{}", keycode.name());
+                    if !repeat && self.capturing && !is_fixed(keycode) {
+                        self.pressed.push_back(name.clone());
+                    }
+                    self.held.insert(name);
                     if !is_modifier(keycode)
                         && function_key(keycode).is_none()
                         && !matches!(keycode, Keycode::F11 | Keycode::F12)
@@ -298,6 +350,7 @@ impl Window {
                 } => {
                     self.keypad_held.remove(&keycode);
                     self.keys_held.remove(&keycode);
+                    self.held.remove(&format!("key:{}", keycode.name()));
                     match keycode {
                         Keycode::LAlt => self.alt_held[0] = false,
                         Keycode::RAlt => self.alt_held[1] = false,
@@ -321,31 +374,47 @@ impl Window {
                 }
                 Event::ControllerAxisMotion { which, axis, value, .. } => {
                     let Some(pad) = pad_of(&mut self.pads, which) else { continue };
-                    let travel = value as f32 / 32767.0;
-                    let travel = if travel.abs() < DEAD_ZONE {
-                        0.0
-                    } else {
-                        travel.clamp(-1.0, 1.0)
-                    };
+                    let travel = (value as f32 / 32767.0).clamp(-1.0, 1.0);
+                    let settled = if travel.abs() < DEAD_ZONE { 0.0 } else { travel };
                     match axis {
-                        Axis::LeftX => pad.stick.0 = travel,
-                        Axis::LeftY => pad.stick.1 = travel,
+                        Axis::LeftX => pad.stick.0 = settled,
+                        Axis::LeftY => pad.stick.1 = settled,
                         _ => {}
+                    }
+                    let name = axis.string();
+                    let trigger = matches!(axis, Axis::TriggerLeft | Axis::TriggerRight);
+                    let ways = if trigger {
+                        vec![(name.clone(), travel)]
+                    } else {
+                        vec![(format!("{name}-"), -travel), (format!("{name}+"), travel)]
+                    };
+                    for (way, pushed) in ways {
+                        if pushed > PUSHED {
+                            if pad.held.insert(way.clone()) && self.capturing {
+                                self.pressed.push_back(format!("pad:{way}"));
+                            }
+                        } else {
+                            pad.held.remove(&way);
+                        }
                     }
                 }
                 Event::ControllerButtonDown { which, button, .. } => {
                     if let Some(pad) = pad_of(&mut self.pads, which) {
-                        pad.held.insert(button);
+                        pad.held.insert(button.string());
+                        if self.capturing {
+                            self.pressed.push_back(format!("pad:{}", button.string()));
+                        }
                     }
                 }
                 Event::ControllerButtonUp { which, button, .. } => {
                     if let Some(pad) = pad_of(&mut self.pads, which) {
-                        pad.held.remove(&button);
+                        pad.held.remove(&button.string());
                     }
                 }
                 _ => {}
             }
         }
+        self.check_library();
         if toggle {
             self.toggle_fullscreen();
         }
@@ -372,6 +441,11 @@ fn is_modifier(keycode: Keycode) -> bool {
 }
 
 /// F1 to F10's numbers.
+/// Whether it's a key that's always what it is, not to be bound.
+fn is_fixed(keycode: Keycode) -> bool {
+    function_key(keycode).is_some() || matches!(keycode, Keycode::F11 | Keycode::F12)
+}
+
 fn function_key(keycode: Keycode) -> Option<u8> {
     let keys = [
         Keycode::F1,
@@ -444,7 +518,7 @@ impl Display for Window {
     /// way; their buttons, and the Alt keys'.
     fn joystick(&self) -> Joystick {
         let first = self.pads.iter().flatten().next();
-        let pad = |button| first.is_some_and(|pad| pad.held.contains(&button));
+        let pad = |button: Button| first.is_some_and(|pad| pad.held.contains(&button.string()));
         let stick = first.map_or((0.0, 0.0), |pad| pad.stick);
         let keys = |held: &[Keycode]| held.iter().any(|key| self.keypad_held.contains(key));
         let left = pad(Button::DPadLeft) || keys(&[Keycode::Kp4, Keycode::Kp7, Keycode::Kp1]);
@@ -470,22 +544,28 @@ impl Display for Window {
     /// The first gamepad's, or the
     /// keyboard's.
     fn gamepad(&self) -> Gamepad {
-        let pad = self.pads[0].as_ref().map_or(Gamepad::default(), Pad::gamepad);
-        let key = |keycode| self.keys_held.contains(&keycode);
-        Gamepad {
-            up: pad.up || key(Keycode::Up),
-            down: pad.down || key(Keycode::Down),
-            left: pad.left || key(Keycode::Left),
-            right: pad.right || key(Keycode::Right),
-            a: pad.a || key(Keycode::X),
-            b: pad.b || key(Keycode::Z),
-            select: pad.select || self.right_shift_held || key(Keycode::Tab),
-            start: pad.start || key(Keycode::Return),
-        }
+        self.mapped(0)
     }
 
     fn gamepad_2(&self) -> Gamepad {
-        self.pads[1].as_ref().map_or(Gamepad::default(), Pad::gamepad)
+        self.mapped(1)
+    }
+
+    fn pressed(&mut self) -> Option<String> {
+        self.pressed.pop_front()
+    }
+
+    fn capture(&mut self, on: bool) {
+        self.capturing = on;
+        self.pressed.clear();
+    }
+
+    fn controls(&mut self) -> Option<&mut Controls> {
+        Some(&mut self.controls)
+    }
+
+    fn hint(&self) -> Option<&'static str> {
+        PLACE.get().map(|_| "F5, OR HOLD SELECT + START: LIBRARY")
     }
 
     fn reset_held(&self) -> bool {

@@ -882,6 +882,7 @@ if (native) {
         }
     });
     page('add-path').onclick = chooseFolder;
+    page('change-controls').onclick = () => playNatively({ kind: 'controls' });
     page('rescan').onclick = () => lookForChanges(true);
 }
 

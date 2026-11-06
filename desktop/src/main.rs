@@ -330,6 +330,9 @@ fn emulator() -> Result<PathBuf, String> {
 fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String> {
     let text = |field: &str| machine[field].as_str().ok_or(format!("no {field}"));
     let file = |path: &str| Ok::<_, String>(allowed(app, path)?.to_string_lossy().into_owned());
+    if text("kind")? == "controls" {
+        return Ok(vec!["controls".to_string()]);
+    }
     if text("kind")? == "nes" {
         return Ok(vec!["nes".to_string(), file(text("game")?)?]);
     }
