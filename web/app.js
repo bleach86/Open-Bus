@@ -384,6 +384,166 @@ function shelfShape(list) {
     return { columns, row: tile * COVER_SHAPE + words, down };
 }
 
+/// Gamepad or arrow keys around the library. A selection, by name on the
+/// shelf of games, by place among the Apple's tiles; held directions repeat.
+/// Nothing's taken until all's let go, coming back from a game, so that the
+/// A that ended it, say, doesn't start another.
+let selectedGame = null;
+let selectedDisk = -1;
+let moving = '';
+let moveAgainAt = 0;
+let wasPressed = {};
+let navigationWaits = false;
+let padsSaid = null;
+const FIRST_REPEAT = 350;
+const NEXT_REPEAT = 110;
+
+const appleShowing = () => !page('apple-shelf').hidden;
+const gamesShowing = () => !page('nes').hidden;
+
+/// What's pressed for moving around, on any gamepad, as the first player's
+/// are bound. In the app, what the emulator says, which it hasn't yet, just
+/// back from a game.
+function navigationPressed() {
+    if (native) {
+        return padsSaid;
+    }
+    const pressed = {};
+    const shoulders = (pad, button) => Boolean(pad.buttons[button]?.pressed);
+    for (const pad of padsNow()) {
+        const state = padState(pad);
+        const steered = { up: state.stickY < -0.5, down: state.stickY > 0.5, left: state.stickX < -0.5, right: state.stickX > 0.5 };
+        for (const action of ['up', 'down', 'left', 'right', 'a', 'b', 'start']) {
+            pressed[action] ||= steered[action] || boundHeld(0, action, pad, state);
+        }
+        pressed.previous ||= shoulders(pad, 4);
+        pressed.next ||= shoulders(pad, 5);
+    }
+    return pressed;
+}
+
+/// The selection shown, where the tiles are.
+function showSelected() {
+    document.querySelectorAll('.tile.selected').forEach((tile) => tile.classList.remove('selected'));
+    tiles.get(selectedGame)?.classList.add('selected');
+    document.querySelectorAll('#disks .tile')[selectedDisk]?.classList.add('selected');
+}
+
+/// The selection on the shelf of games moved, and scrolled to.
+function moveInGames(way) {
+    const list = page('games');
+    const { columns, row, down } = shelfShape(list);
+    const at = shelf.indexOf(selectedGame);
+    if (at < 0) {
+        // The first press takes the first tile in view.
+        selectedGame = shelf[Math.min(shelfRow, Math.ceil(shelf.length / columns) - 1) * columns] ?? shelf[0];
+    } else {
+        const step = { up: -columns, down: columns, left: -1, right: 1 }[way];
+        selectedGame = shelf[Math.min(shelf.length - 1, Math.max(0, at + step))];
+    }
+    const height = row + down;
+    const rowAt = Math.floor(shelf.indexOf(selectedGame) / columns);
+    const top = list.getBoundingClientRect().top + scrollY + rowAt * height;
+    const toolbar = document.querySelector('.toolbar').getBoundingClientRect().height;
+    if (top < scrollY + toolbar) {
+        scrollTo(0, top - toolbar - down);
+    } else if (top + row > scrollY + innerHeight) {
+        scrollTo(0, top + row + down - innerHeight);
+    }
+    placeShelf();
+    showSelected();
+}
+
+function moveInDisks(way) {
+    const all = [...document.querySelectorAll('#disks .tile')];
+    if (!all.length) {
+        return;
+    }
+    const columns = getComputedStyle(page('disks')).gridTemplateColumns.split(' ').length;
+    const step = { up: -columns, down: columns, left: -1, right: 1 }[way];
+    selectedDisk = selectedDisk < 0 ? 0 : Math.min(all.length - 1, Math.max(0, selectedDisk + step));
+    showSelected();
+    all[selectedDisk].scrollIntoView({ block: 'nearest' });
+}
+
+const move = (way) => (gamesShowing() ? moveInGames(way) : appleShowing() && moveInDisks(way));
+
+/// A press of confirm: the selected game started, or disk ticked.
+function confirmSelected() {
+    if (gamesShowing()) {
+        tiles.get(selectedGame)?.querySelector('.play').click();
+    } else if (appleShowing()) {
+        document.querySelectorAll('#disks .tile')[selectedDisk]?.querySelector('label').click();
+    }
+}
+
+function nextTab(step) {
+    const shelves = [...document.querySelectorAll('.tabs button')].filter((tab) => !tab.hidden);
+    const at = shelves.findIndex((tab) => tab.classList.contains('on'));
+    shelves[(at + step + shelves.length) % shelves.length].click();
+}
+
+/// A frame of the library: what's newly pressed acted on.
+function navigate(now) {
+    if (page('library').hidden || !document.hasFocus()) {
+        return;
+    }
+    const pressed = navigationPressed();
+    if (!pressed) {
+        return;
+    }
+    if (navigationWaits) {
+        navigationWaits = Object.values(pressed).some(Boolean);
+        wasPressed = pressed;
+        return;
+    }
+    const way = ['up', 'down', 'left', 'right'].find((direction) => pressed[direction]) ?? '';
+    if (way !== moving) {
+        moveAgainAt = now + FIRST_REPEAT;
+        moving = way;
+        if (way) {
+            move(way);
+        }
+    } else if (way && now >= moveAgainAt) {
+        moveAgainAt = now + NEXT_REPEAT;
+        move(way);
+    }
+    const newly = (name) => pressed[name] && !wasPressed[name];
+    if (newly('a')) {
+        navigationWaits = true;
+        confirmSelected();
+    } else if (newly('b')) {
+        const search = page('filter');
+        if (search.value) {
+            search.value = '';
+            refresh();
+        }
+    } else if (newly('start') && appleShowing()) {
+        navigationWaits = true;
+        page('apple').click();
+    } else if (newly('previous')) {
+        nextTab(-1);
+    } else if (newly('next')) {
+        nextTab(1);
+    }
+    wasPressed = pressed;
+}
+
+addEventListener('keydown', (event) => {
+    const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName);
+    if (emulator || typing || page('library').hidden || page('controls-dialog').open) {
+        return;
+    }
+    const way = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[event.code];
+    if (way) {
+        event.preventDefault();
+        move(way);
+    } else if (event.code === 'Enter' && (selectedGame || selectedDisk >= 0) && document.activeElement === document.body) {
+        event.preventDefault();
+        confirmSelected();
+    }
+});
+
 /// The tiles for where the page is scrolled to.
 function placeShelf(force = true) {
     const list = page('games');
@@ -409,6 +569,7 @@ function placeShelf(force = true) {
         }
         return tiles.get(name);
     }));
+    showSelected();
 }
 
 let shelfDue = false;
@@ -849,7 +1010,12 @@ function playNatively(machine) {
     }
     native.play(machine).catch((problem) => say(String(problem), true));
 }
+native?.whenPads((pressed) => {
+    padsSaid = pressed;
+});
 native?.whenGameEnds((problem) => {
+    navigationWaits = true;
+    padsSaid = null;
     say(problem ?? '', Boolean(problem));
     refresh();
 });
@@ -1086,6 +1252,7 @@ async function saveWritten() {
 }
 
 async function stop() {
+    navigationWaits = true;
     await saveWritten();
     emulator.free();
     emulator = null;
@@ -1223,6 +1390,7 @@ function tick(now) {
         return;
     }
     if (!emulator) {
+        navigate(now);
         return;
     }
     const period = 1000 / emulator.hz();
@@ -1343,6 +1511,12 @@ const firstShelf = native && !files.length ? 'settings' : (files.some(isGame) ||
 const lastShelf = localStorage.getItem('shelf');
 showShelf(native && !files.length ? firstShelf : lastShelf && lastShelf !== 'settings' ? lastShelf : firstShelf);
 if (native) {
-    lookForChanges();
+    // With nothing known yet, the folders may yet turn something up.
+    const startedEmpty = !files.length;
+    lookForChanges().then(() => {
+        if (startedEmpty && files.length) {
+            showShelf(files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple');
+        }
+    });
 }
 requestAnimationFrame(tick);

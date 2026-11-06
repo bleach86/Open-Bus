@@ -26,6 +26,8 @@
 /// to be resized: as the desktop app has it, in place of its library.
 /// `cpu_emu controls` for only the screen that changes the controls, as F6
 /// has it in a game; they're for all of these.
+/// `cpu_emu pads` for no window, and what the gamepads hold told on standard
+/// output until standard input closes: the desktop app's library's.
 use cpu_emu::{cpu, machines};
 use machines::apple2::video::Monitor;
 
@@ -39,6 +41,7 @@ fn main() {
     let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal]";
     match args.get(1).map(String::as_str) {
         Some("controls") => machines::nes::controls(),
+        Some("pads") => cpu_emu::host::pads::report(),
         Some("nes") => {
             let rom = args[2..]
                 .iter()

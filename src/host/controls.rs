@@ -38,7 +38,7 @@ pub const ACTIONS: [Action; 9] = [
 ];
 
 /// The file's word for an action.
-fn word(action: Action) -> &'static str {
+pub fn word(action: Action) -> &'static str {
     match action {
         Action::Up => "up",
         Action::Down => "down",

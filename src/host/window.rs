@@ -11,13 +11,12 @@
 //! fullscreen and back, the picture its shape still, bars at its sides if
 //! the screen is wider. Closed, it tells the machine, to turn itself off.
 
-use std::sync::OnceLock;
 use crate::host::controls::{Action, Controls};
 use crate::host::display::{CHANNELS, Display, Gamepad, Joystick, Key, SAMPLE_RATE};
+use crate::host::pads::{self, Pads};
 use sdl2::EventPump;
-use sdl2::GameControllerSubsystem;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
-use sdl2::controller::{Axis, Button, GameController};
+use sdl2::controller::Button;
 use sdl2::event::Event;
 use sdl2::keyboard::{Keycode, Mod};
 use sdl2::mouse::{MouseButton, MouseUtil};
@@ -25,6 +24,7 @@ use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::{Canvas, Texture};
 use sdl2::video::FullscreenType;
 use std::collections::{HashSet, VecDeque};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 /// Where a window's to open, and how big, if it's said: its X, Y, width and
@@ -41,9 +41,8 @@ pub struct Window {
     /// F1 to F10 pressed, by number, not yet taken.
     function_keys: VecDeque<u8>,
     audio: Option<AudioQueue<f32>>,
-    controllers: GameControllerSubsystem,
     /// The players' gamepads.
-    pads: [Option<Pad>; 2],
+    pads: Pads,
     /// The keypad's keys held, and the Alt keys.
     keypad_held: HashSet<Keycode>,
     alt_held: [bool; 2],
@@ -68,41 +67,7 @@ pub struct Window {
     pointer_moved: Instant,
 }
 
-/// A player's gamepad: its left stick, -1 to 1 each way, for a joystick; and
-/// what's held of it, by the bindings' words for its buttons, and its sticks'
-/// and triggers' for being pushed well over.
-struct Pad {
-    controller: GameController,
-    stick: (f32, f32),
-    held: HashSet<String>,
-}
-
-impl Pad {
-    fn new(controller: GameController) -> Pad {
-        Pad { controller, stick: (0.0, 0.0), held: HashSet::new() }
-    }
-}
-
-/// The gamepad of instance `which`, if it's a player's.
-fn pad_of(pads: &mut [Option<Pad>; 2], which: u32) -> Option<&mut Pad> {
-    pads.iter_mut().flatten().find(|pad| pad.controller.instance_id() == which)
-}
-
-/// A gamepad plugged in, or there already, as SDL says at the start: the
-/// first place free's, unless it has one.
-fn plugged_in(pads: &mut [Option<Pad>; 2], controllers: &GameControllerSubsystem, device: u32) {
-    let Some(place) = pads.iter().position(Option::is_none) else { return };
-    let Ok(controller) = controllers.open(device) else { return };
-    if pad_of(pads, controller.instance_id()).is_none() {
-        pads[place] = Some(Pad::new(controller));
-    }
-}
-
-/// A stick's travel taken as centred: a resting gamepad's isn't quite 0.
-const DEAD_ZONE: f32 = 0.15;
-/// How far a stick or trigger's pushed to be held; how long Select and Start
-/// are held together to go back to the library.
-const PUSHED: f32 = 0.5;
+/// How long Select and Start are held together to go back to the library.
 const BOTH_HELD: Duration = Duration::from_secs(1);
 /// How long the pointer stays once it stops moving.
 const POINTER_SHOWN: Duration = Duration::from_secs(2);
@@ -124,11 +89,19 @@ impl Window {
         size: (u32, u32),
         fullscreen: bool,
     ) -> Window {
+        pads::prepare();
         let sdl = sdl2::init().expect("SDL");
         let video = sdl.video().expect("SDL's video");
         let window = match PLACE.get() {
-            Some(&[x, y, width, height]) => video.window(title, width as u32, height as u32).position(x, y).resizable().build(),
-            None => video.window(title, size.0, size.1).position_centered().build(),
+            Some(&[x, y, width, height]) => video
+                .window(title, width as u32, height as u32)
+                .position(x, y)
+                .resizable()
+                .build(),
+            None => video
+                .window(title, size.0, size.1)
+                .position_centered()
+                .build(),
         }
         .expect("a window");
         let mut canvas = window
@@ -167,13 +140,7 @@ impl Window {
             queue.resume();
             Some(queue)
         });
-        let controllers = sdl.game_controller().expect("SDL's game controllers");
-        let mut opened = (0..controllers.num_joysticks().unwrap_or(0))
-            .filter(|&n| controllers.is_game_controller(n))
-            .filter_map(|n| controllers.open(n).ok())
-            .map(Pad::new);
-        let pads = [opened.next(), opened.next()];
-        drop(opened);
+        let pads = Pads::new(sdl.game_controller().expect("SDL's game controllers"));
         let events = sdl.event_pump().expect("SDL's events");
         let mut window = Window {
             canvas,
@@ -183,7 +150,6 @@ impl Window {
             keys: VecDeque::new(),
             function_keys: VecDeque::new(),
             audio,
-            controllers,
             pads,
             keypad_held: HashSet::new(),
             alt_held: [false; 2],
@@ -209,14 +175,17 @@ impl Window {
     /// their own.
     fn is_held(&self, player: usize, source: &str) -> bool {
         match source.strip_prefix("pad:") {
-            Some(button) => self.pads[player].as_ref().is_some_and(|pad| pad.held.contains(button)),
+            Some(button) => self.pads.holds(player, button),
             None => self.held.contains(source),
         }
     }
 
     /// A player's gamepad, as what's held is bound.
     fn mapped(&self, player: usize) -> Gamepad {
-        let held = |action| self.controls.holds(player, action, |source| self.is_held(player, source));
+        let held = |action| {
+            self.controls
+                .holds(player, action, |source| self.is_held(player, source))
+        };
         Gamepad {
             up: held(Action::Up),
             down: held(Action::Down),
@@ -236,7 +205,10 @@ impl Window {
             self.both_held = None;
             return;
         }
-        if self.controls.holds(0, Action::Library, |source| self.is_held(0, source)) {
+        if self
+            .controls
+            .holds(0, Action::Library, |source| self.is_held(0, source))
+        {
             self.closed = true;
         }
         let pad = self.mapped(0);
@@ -365,53 +337,11 @@ impl Window {
                     ..
                 } => toggle = !toggle,
                 Event::MouseMotion { .. } => self.pointer_moved = Instant::now(),
-                Event::ControllerDeviceAdded { which, .. } => plugged_in(&mut self.pads, &self.controllers, which),
-                Event::ControllerDeviceRemoved { which, .. } => {
-                    let place = self.pads.iter_mut().find(|pad| pad.as_ref().is_some_and(|pad| pad.controller.instance_id() == which));
-                    if let Some(place) = place {
-                        *place = None;
+                event => {
+                    if let Some(source) = self.pads.take(&event).filter(|_| self.capturing) {
+                        self.pressed.push_back(source);
                     }
                 }
-                Event::ControllerAxisMotion { which, axis, value, .. } => {
-                    let Some(pad) = pad_of(&mut self.pads, which) else { continue };
-                    let travel = (value as f32 / 32767.0).clamp(-1.0, 1.0);
-                    let settled = if travel.abs() < DEAD_ZONE { 0.0 } else { travel };
-                    match axis {
-                        Axis::LeftX => pad.stick.0 = settled,
-                        Axis::LeftY => pad.stick.1 = settled,
-                        _ => {}
-                    }
-                    let name = axis.string();
-                    let trigger = matches!(axis, Axis::TriggerLeft | Axis::TriggerRight);
-                    let ways = if trigger {
-                        vec![(name.clone(), travel)]
-                    } else {
-                        vec![(format!("{name}-"), -travel), (format!("{name}+"), travel)]
-                    };
-                    for (way, pushed) in ways {
-                        if pushed > PUSHED {
-                            if pad.held.insert(way.clone()) && self.capturing {
-                                self.pressed.push_back(format!("pad:{way}"));
-                            }
-                        } else {
-                            pad.held.remove(&way);
-                        }
-                    }
-                }
-                Event::ControllerButtonDown { which, button, .. } => {
-                    if let Some(pad) = pad_of(&mut self.pads, which) {
-                        pad.held.insert(button.string());
-                        if self.capturing {
-                            self.pressed.push_back(format!("pad:{}", button.string()));
-                        }
-                    }
-                }
-                Event::ControllerButtonUp { which, button, .. } => {
-                    if let Some(pad) = pad_of(&mut self.pads, which) {
-                        pad.held.remove(&button.string());
-                    }
-                }
-                _ => {}
             }
         }
         self.check_library();
@@ -420,7 +350,8 @@ impl Window {
         }
         // The pointer: gone in fullscreen, and in the window once it's still.
         let windowed = self.canvas.window().fullscreen_state() == FullscreenType::Off;
-        self.mouse.show_cursor(windowed && self.pointer_moved.elapsed() < POINTER_SHOWN);
+        self.mouse
+            .show_cursor(windowed && self.pointer_moved.elapsed() < POINTER_SHOWN);
     }
 }
 
@@ -517,7 +448,7 @@ impl Display for Window {
     /// The gamepad's stick, unless the D-pad or the keypad pushes it all the
     /// way; their buttons, and the Alt keys'.
     fn joystick(&self) -> Joystick {
-        let first = self.pads.iter().flatten().next();
+        let first = self.pads.first();
         let pad = |button: Button| first.is_some_and(|pad| pad.held.contains(&button.string()));
         let stick = first.map_or((0.0, 0.0), |pad| pad.stick);
         let keys = |held: &[Keycode]| held.iter().any(|key| self.keypad_held.contains(key));

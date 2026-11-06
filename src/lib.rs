@@ -28,6 +28,8 @@ pub mod host {
     pub mod font;
     pub mod machine;
     pub mod notice;
+    #[cfg(not(target_arch = "wasm32"))]
+    pub mod pads;
     pub mod stats;
     pub mod page;
     pub mod run;

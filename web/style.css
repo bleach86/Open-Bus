@@ -1409,3 +1409,10 @@ body.dropping::after {
     display: none;
   }
 }
+
+/* What a gamepad or the arrow keys have selected: within the art, as a tile
+   on the shelf of games clips what's outside it. */
+.tile.selected .art {
+  outline: 4px solid var(--cyan);
+  outline-offset: -4px;
+}

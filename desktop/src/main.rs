@@ -23,9 +23,9 @@
 
 use serde_json::{Value, json};
 use std::fs;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
@@ -326,6 +326,44 @@ fn emulator() -> Result<PathBuf, String> {
     [beside, built].into_iter().find(|path| path.exists()).ok_or("the emulator, cpu_emu, isn't here".to_string())
 }
 
+/// The gamepads, for the library: a webview's own miss what its gamepad
+/// library doesn't know, so they're read as a game reads them, by the
+/// emulator with no window, what's held told to the page. It's stopped for a
+/// game, which has the gamepads to itself.
+#[derive(Default)]
+struct Pads(Mutex<Option<Child>>);
+
+fn start_pads(app: &AppHandle) {
+    let Ok(emulator) = emulator() else { return };
+    let mut command = Command::new(emulator);
+    command.arg("pads").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
+    let Ok(mut pads) = command.spawn() else { return };
+    let Some(said) = pads.stdout.take() else { return };
+    *app.state::<Pads>().0.lock().unwrap() = Some(pads);
+    let app = app.clone();
+    thread::spawn(move || {
+        for line in BufReader::new(said).lines().map_while(Result::ok) {
+            let _ = app.emit("pads", line);
+        }
+    });
+}
+
+/// Told to go, by its input closing, and made to if it doesn't.
+fn stop_pads(app: &AppHandle) {
+    let Some(mut pads) = app.state::<Pads>().0.lock().unwrap().take() else { return };
+    drop(pads.stdin.take());
+    for _ in 0..50 {
+        if !matches!(pads.try_wait(), Ok(None)) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let _ = pads.kill();
+    let _ = pads.wait();
+}
+
 /// What `machine`, as the page says, is on the emulator's command line.
 fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String> {
     let text = |field: &str| machine[field].as_str().ok_or(format!("no {field}"));
@@ -381,7 +419,11 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
     // Without a console flashing up behind it, on Windows.
     #[cfg(windows)]
     std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
-    let mut game = command.spawn().map_err(|e| e.to_string())?;
+    stop_pads(&app);
+    let mut game = command.spawn().map_err(|e| {
+        start_pads(&app);
+        e.to_string()
+    })?;
     thread::spawn(move || {
         thread::sleep(OVERLAP);
         if matches!(game.try_wait(), Ok(None)) {
@@ -395,6 +437,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
         let _ = window.show();
         let _ = window.set_focus();
         let _ = app.emit("game-ended", failed.then(|| complaint(&said, &first_file)));
+        start_pads(&app);
     });
     Ok(())
 }
@@ -441,6 +484,7 @@ fn main() {
                     settings.set_enable_smooth_scrolling(true);
                 }
             })?;
+            start_pads(app.handle());
             app.set_menu(menu(app.handle())?)?;
             app.on_menu_event(|app, event| {
                 let _ = app.emit("menu", event.id().0.clone());
@@ -448,6 +492,7 @@ fn main() {
             Ok(())
         })
         .manage(Dropped::default())
+        .manage(Pads::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             all_files, known_files, file_bytes, keep_file, forget_path, keep_art, all_art, pick_folder, take_dropped, folder_files, play,

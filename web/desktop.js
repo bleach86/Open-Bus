@@ -134,6 +134,12 @@ export const play = (machine) => invoke('play', {
     },
 });
 
+/// `told` of what the gamepads hold for moving around the library, by name,
+/// each time that changes.
+export const whenPads = (told) => listen('pads', ({ payload }) => {
+    told(Object.fromEntries(payload.split(' ').filter(Boolean).map((name) => [name, true])));
+});
+
 /// `told` when a game's over, of what went wrong, if anything did.
 export const whenGameEnds = (told) => listen('game-ended', ({ payload }) => told(payload));
 
