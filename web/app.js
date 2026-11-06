@@ -6,6 +6,7 @@ import { keep, keepParts, forget, names, bytes, allArt, native } from './files.j
 import { touch, attach, letGo } from './touch.js';
 import { games, isVolume, storedNames, shortName, natural } from './disks.js';
 import { findCovers } from './covers.js';
+import * as bindings from './controls.js';
 import { artKey, isMedia, keyOf, plainTitle, tagsOf, takeArt, titleWords } from './art.js';
 
 const page = (id) => document.getElementById(id);
@@ -39,6 +40,13 @@ let files = [];
 let chosen = [];
 /// The games of several disks open, by their titles.
 const opened = new Set();
+/// What's bound; and in the dialog, whose are showing, the action waiting
+/// for a press, and what a gamepad had held when it began.
+const controlsBound = bindings.load();
+let controlsPlayer = 0;
+let awaiting = null;
+let heldBefore = new Set();
+
 /// How many covers come between showing them.
 const SHOWN_EVERY = 24;
 /// The shelf's sizes, in rem, and a cover's height as a share of its width,
@@ -75,6 +83,119 @@ function say(text, problem = false) {
     }
 }
 page('dismiss').onclick = () => say('');
+
+const padsNow = () => [...(navigator.getGamepads?.() ?? [])].filter(Boolean);
+
+/// The key hints under the game, as the keys are bound.
+function showControlHelp() {
+    const lines = [['up', 'Up'], ['down', 'Down'], ['left', 'Left'], ['right', 'Right'], ['a', 'A'], ['b', 'B'], ['start', 'Start'], ['select', 'Select']];
+    page('control-help').replaceChildren(...lines.flatMap(([action, label]) => {
+        const source = controlsBound[0][action].find((bound) => bound.startsWith('key:'));
+        if (!source) {
+            return [];
+        }
+        const key = document.createElement('kbd');
+        key.textContent = bindings.said(source);
+        return [key, ` ${label} `];
+    }));
+}
+
+/// The dialog's rows, as they're bound now.
+function fillControls() {
+    page('control-rows').replaceChildren(...bindings.ACTIONS.map((action) => {
+        const item = document.createElement('li');
+        const words = document.createElement('span');
+        words.className = 'row-text';
+        words.textContent = action[0].toUpperCase() + action.slice(1);
+        const note = document.createElement('small');
+        note.textContent = controlsBound[controlsPlayer][action].map(bindings.said).join(', ') || 'Nothing';
+        words.append(note);
+        const change = document.createElement('button');
+        change.textContent = awaiting === action ? 'Press something…' : 'Change';
+        change.onclick = () => {
+            awaiting = action;
+            heldBefore = new Set(padsNow().flatMap(bindings.rawPressed));
+            page('control-status').textContent = 'Press a key or gamepad button. Esc cancels.';
+            fillControls();
+        };
+        item.append(words, change);
+        return item;
+    }));
+    for (const who of [0, 1]) {
+        page(`controls-player-${who + 1}`).classList.toggle('on', who === controlsPlayer);
+    }
+}
+
+function bindAwaited(source) {
+    bindings.bind(controlsBound, controlsPlayer, awaiting, source);
+    bindings.save(controlsBound);
+    page('control-status').textContent = `${awaiting[0].toUpperCase()}${awaiting.slice(1)} is now ${bindings.said(source)}.`;
+    awaiting = null;
+    showControlHelp();
+    fillControls();
+}
+
+/// A gamepad's anything newly pressed, while one's being waited for.
+function lookForPress() {
+    if (awaiting) {
+        const pressed = padsNow().flatMap(bindings.rawPressed).find((source) => !heldBefore.has(source));
+        if (pressed) {
+            bindAwaited(pressed);
+        }
+    }
+}
+
+function openControls() {
+    held.clear();
+    awaiting = null;
+    page('control-status').textContent = '';
+    fillControls();
+    page('controls-dialog').showModal();
+}
+
+page('open-controls').onclick = openControls;
+page('game-controls').onclick = openControls;
+page('controls-done').onclick = () => page('controls-dialog').close();
+page('controls-reset').onclick = () => {
+    bindings.reset(controlsBound, controlsPlayer);
+    bindings.save(controlsBound);
+    awaiting = null;
+    page('control-status').textContent = 'Back to the defaults.';
+    showControlHelp();
+    fillControls();
+};
+for (const who of [0, 1]) {
+    page(`controls-player-${who + 1}`).onclick = () => {
+        controlsPlayer = who;
+        awaiting = null;
+        fillControls();
+    };
+}
+// Esc takes back a press being waited for, not the dialog.
+page('controls-dialog').addEventListener('cancel', (event) => {
+    if (awaiting) {
+        event.preventDefault();
+    }
+});
+addEventListener('keydown', (event) => {
+    if (!page('controls-dialog').open) {
+        return;
+    }
+    // Nothing reaches a paused machine.
+    event.stopImmediatePropagation();
+    if (!awaiting) {
+        return;
+    }
+    event.preventDefault();
+    if (event.code === 'Escape') {
+        awaiting = null;
+        page('control-status').textContent = '';
+        fillControls();
+    } else if (!/^F\d+$/.test(event.code)) {
+        bindAwaited(`key:${event.code}`);
+    }
+}, true);
+showControlHelp();
 
 /// The art kept, and where its covers can be shown from.
 async function loadArt() {
@@ -881,6 +1002,7 @@ if (native) {
             lookForChanges(true);
         }
     });
+    page('open-controls').hidden = true;
     page('add-path').onclick = chooseFolder;
     page('change-controls').onclick = () => playNatively({ kind: 'controls' });
     page('rescan').onclick = () => lookForChanges(true);
@@ -1031,11 +1153,19 @@ function padState(pad) {
     };
 }
 
-/// A gamepad's buttons, a bit each, its `pad` and what else presses them.
-function padBits(pad, up, down, left, right, a, b, select, start) {
-    return [pad.padUp || pad.stickY < -0.5 || up, pad.padDown || pad.stickY > 0.5 || down,
-        pad.padLeft || pad.stickX < -0.5 || left, pad.padRight || pad.stickX > 0.5 || right,
-        pad.a || a, pad.b || b, pad.select || select, pad.start || start]
+/// Whether what's bound to `action` is held, for `who`, with gamepad `pad`.
+function boundHeld(who, action, pad, state) {
+    return bindings.holds(controlsBound, who, action, (source) => (source.startsWith('key:')
+        ? held.has(source.slice('key:'.length))
+        : bindings.padHeld(source, pad, state)));
+}
+
+/// A player's console buttons, a bit each: as they're bound, with the stick
+/// steering, and what else presses them.
+function padBits(who, pad, state, touched = {}) {
+    const steered = { up: state.stickY < -0.5, down: state.stickY > 0.5, left: state.stickX < -0.5, right: state.stickX > 0.5 };
+    return bindings.ACTIONS.filter((action) => action !== 'library')
+        .map((action) => touched[action] || steered[action] || boundHeld(who, action, pad, state))
         .reduce((bits, on, bit) => bits | (on ? 1 << bit : 0), 0);
 }
 
@@ -1044,10 +1174,12 @@ function controls() {
     const [first, second] = [padState(pads[0]), padState(pads[1])];
     const key = (...codes) => codes.some((code) => held.has(code));
     const { stickX, stickY, padUp, padDown, padLeft, padRight } = first;
-    const gamepad = padBits(first, key('ArrowUp') || touch.up, key('ArrowDown') || touch.down,
-        key('ArrowLeft') || touch.left, key('ArrowRight') || touch.right, key('KeyX') || touch.a,
-        key('KeyZ') || touch.b, key('ShiftRight', 'Tab') || touch.select, key('Enter') || touch.start);
-    const gamepad2 = padBits(second);
+    const gamepad = padBits(0, pads[0], first, touch);
+    const gamepad2 = padBits(1, pads[1], second);
+    if (boundHeld(0, 'library', pads[0], first)) {
+        page('back').click();
+        return;
+    }
     // The joystick: the numeric keypad's too, and the Alt keys its buttons.
     const towards = (minus, plus, stick) => {
         if (minus !== plus) {
@@ -1085,6 +1217,11 @@ function show() {
 /// whatever it is; a tab long away doesn't run to catch up.
 function tick(now) {
     requestAnimationFrame(tick);
+    if (page('controls-dialog').open) {
+        lookForPress();
+        last = now;
+        return;
+    }
     if (!emulator) {
         return;
     }

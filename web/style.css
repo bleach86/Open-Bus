@@ -1368,3 +1368,44 @@ body.dropping::after {
 #games .tile {
   overflow: hidden;
 }
+
+/* The controls' dialog. */
+#controls-dialog {
+  width: min(30rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  padding: 1.1rem 1.25rem;
+  color: var(--text);
+  background: #14062f;
+  border: 1px solid var(--cyan);
+  border-radius: 8px;
+  box-shadow: 0 10px 40px #000c;
+}
+#controls-dialog::backdrop {
+  background: #05010dc0;
+}
+#controls-dialog h2 {
+  margin: 0 0 .6rem;
+  font: 600 1.05rem/1.3 system-ui, sans-serif;
+}
+#controls-dialog .rows li {
+  padding: .3rem .2rem;
+}
+.dialog-tabs {
+  display: flex;
+  gap: .3rem;
+}
+.dialog-tabs button.on {
+  color: var(--on-neon);
+  background: var(--cyan);
+  border-color: transparent;
+}
+#control-status {
+  min-height: 1.4em;
+  margin-top: .4rem;
+}
+/* The handheld's bar has no room: it's in the library, on a phone. */
+@media (pointer: coarse) {
+  #game-controls {
+    display: none;
+  }
+}

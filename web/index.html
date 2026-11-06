@@ -16,6 +16,7 @@
     </div>
     <div class="actions">
       <button id="find" hidden title="Looks online for what's missing: boxes from libretro's set on GitHub, and Apple II title screens from the Internet Archive. Your games stay here.">Find covers</button>
+      <button id="open-controls">Controls</button>
       <label class="button" id="add-folder-button">Add folder<input id="add-folder" class="unseen" type="file" webkitdirectory multiple></label>
       <label class="button primary">Add files<input id="add" class="unseen" type="file" multiple></label>
     </div>
@@ -102,6 +103,7 @@
       <button id="load">Load<span class="wide"> state</span></button>
       <button id="reset">Reset</button>
       <button id="disk" title="Change the disk, or turn it over (F9)" hidden>Disk</button>
+      <button id="game-controls" class="for-nes" title="Change the controls">Controls</button>
       <button id="info" title="How it's running (F3)">Info</button>
       <button id="full">Full<span class="wide">screen</span></button>
     </span>
@@ -140,16 +142,29 @@
     <span class="for-apple"><kbd>F8</kbd> monitor <kbd>F9</kbd> next disk, drive 1 <kbd>F10</kbd> drive 2
       <kbd>Numpad</kbd> joystick <kbd>Alt</kbd> its buttons</span>
     <span id="disk-help" hidden><kbd>F9</kbd> change disk</span>
-    <span class="for-nes"><kbd>Arrows</kbd> D-pad <kbd>X</kbd> A <kbd>Z</kbd> B <kbd>Enter</kbd> Start
-      <kbd>Tab</kbd> Select</span>
+    <span id="control-help" class="for-nes"></span>
   </p>
 </main>
+<dialog id="controls-dialog" aria-labelledby="controls-title">
+  <h2 id="controls-title">Controls</h2>
+  <div class="dialog-tabs">
+    <button id="controls-player-1" data-player="0">Player 1</button>
+    <button id="controls-player-2" data-player="1">Player 2</button>
+  </div>
+  <ul id="control-rows" class="rows"></ul>
+  <p id="control-status" class="quiet" role="status"></p>
+  <p class="row-actions">
+    <button id="controls-reset">Reset to defaults</button>
+    <button id="controls-done" class="primary">Done</button>
+  </p>
+</dialog>
+
 <script type="module">
 // A browser keeps a file a good while without asking whether it's changed,
 // and a page of old files and new doesn't work. So each is asked after first:
 // the answer's in the cache for what follows, and no bytes if it's as it was.
 // Failing that, as when offline, what's kept will do.
-const FILES = ['style.css', 'app.js', 'art.js', 'covers.js', 'desktop.js', 'disks.js', 'files.js', 'sound.js', 'touch.js',
+const FILES = ['style.css', 'app.js', 'art.js', 'controls.js', 'covers.js', 'desktop.js', 'disks.js', 'files.js', 'sound.js', 'touch.js',
     'pkg/cpu_emu.js', 'pkg/cpu_emu_bg.wasm'];
 const asked = (url) => fetch(url, { cache: 'no-cache' }).catch(() => null);
 // In the desktop app they're built in, and can't be old.
