@@ -501,9 +501,12 @@ fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
 /// Where a window of `outer` size goes, framed `outer - inner`, in the part of
 /// a screen at `at` and `area` that's free, a taskbar's left out: its `inner`
-/// size no more than leaves it all there, and the place that centres it.
+/// size no more than leaves it all there, and the place that centres it. Its
+/// frame's not known yet, on Linux, its `outer` size being a stand-in, less
+/// than `inner`: it's taken as having none.
 fn fitted(inner: (u32, u32), outer: (u32, u32), at: (i32, i32), area: (u32, u32)) -> ((u32, u32), (i32, i32)) {
-    let frame = (outer.0.saturating_sub(inner.0), outer.1.saturating_sub(inner.1));
+    let outer = (outer.0.max(inner.0), outer.1.max(inner.1));
+    let frame = (outer.0 - inner.0, outer.1 - inner.1);
     let (width, height) = (outer.0.min(area.0), outer.1.min(area.1));
     let size = (width.saturating_sub(frame.0), height.saturating_sub(frame.1));
     (size, (at.0 + (area.0 - width) as i32 / 2, at.1 + (area.1 - height) as i32 / 2))
@@ -571,6 +574,12 @@ mod tests {
     #[test]
     fn a_window_that_fits_stays_its_size_and_is_centred_in_whats_free() {
         assert_eq!(fitted((1280, 800), (1296, 860), (0, 0), (1920, 1040)), ((1280, 800), (312, 90)));
+    }
+
+    /// As Linux has it, before the window's first drawn.
+    #[test]
+    fn an_outer_size_less_than_the_inner_isnt_believed() {
+        assert_eq!(fitted((1280, 800), (320, 158), (0, 36), (1920, 1044)), ((1280, 800), (320, 158)));
     }
 
     /// On a second screen, the place is that screen's.
