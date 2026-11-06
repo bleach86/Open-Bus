@@ -1,0 +1,4 @@
+# Git on Windows gives text files CRLF unless it's told: sh won't run a script
+# with it, and a firmware image mustn't be taken for text.
+tools/* text eol=lf
+*.bin binary

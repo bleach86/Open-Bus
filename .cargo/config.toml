@@ -1,0 +1,4 @@
+# The SDL that's built in on Windows and Macs is older than CMake 4 accepts by
+# itself: it's still happy to build it, if it's told what to go by.
+[env]
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
