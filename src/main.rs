@@ -24,6 +24,8 @@
 /// or in roms/nes/, and F9 changing the disk.
 /// With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
 /// to be resized: as the desktop app has it, in place of its library.
+/// `--launched` says that a launcher started it, as EmulationStation might,
+/// for Select and Start held together to go back to.
 /// `cpu_emu controls` for only the screen that changes the controls, as F6
 /// has it in a game; they're for all of these.
 /// `cpu_emu pads` for no window, and what the gamepads hold told on standard
@@ -39,6 +41,9 @@ fn main() {
         let numbers: Vec<i32> = place.split(',').map_while(|number| number.parse().ok()).collect();
         let place: [i32; 4] = numbers.try_into().expect("--window=X,Y,WIDTH,HEIGHT");
         cpu_emu::host::window::PLACE.set(place).expect("one --window");
+    }
+    if args.iter().any(|arg| arg == "--launched") {
+        cpu_emu::host::window::LAUNCHED.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal]";
     match args.get(1).map(String::as_str) {

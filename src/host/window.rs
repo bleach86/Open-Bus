@@ -25,11 +25,21 @@ use sdl2::render::{Canvas, Texture};
 use sdl2::video::FullscreenType;
 use std::collections::{HashSet, VecDeque};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// Where a window's to open, and how big, if it's said: its X, Y, width and
 /// height.
 pub static PLACE: OnceLock<[i32; 4]> = OnceLock::new();
+
+/// Whether something else started this, to go back to, and has said so: as
+/// any launcher can, a handheld's having no keys and no Guide button either.
+pub static LAUNCHED: AtomicBool = AtomicBool::new(false);
+
+/// Whether there's a launcher to go back to: that's said, or it placed us.
+fn launched() -> bool {
+    PLACE.get().is_some() || LAUNCHED.load(Ordering::Relaxed)
+}
 
 pub struct Window {
     canvas: Canvas<sdl2::video::Window>,
@@ -212,7 +222,7 @@ impl Window {
             self.closed = true;
         }
         let pad = self.mapped(0);
-        if PLACE.get().is_some() && pad.select && pad.start {
+        if launched() && pad.select && pad.start {
             let since = *self.both_held.get_or_insert_with(Instant::now);
             self.closed |= since.elapsed() >= BOTH_HELD;
         } else {
@@ -496,7 +506,7 @@ impl Display for Window {
     }
 
     fn hint(&self) -> Option<&'static str> {
-        PLACE.get().map(|_| "F5, OR HOLD SELECT + START: LIBRARY")
+        launched().then_some("F5, OR HOLD SELECT + START: LIBRARY")
     }
 
     fn reset_held(&self) -> bool {
