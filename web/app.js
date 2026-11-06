@@ -18,8 +18,9 @@ const IIE_ROMS = {
         'Apple IIe Video ROM - 342-0133-A - US 1982.bin'],
 };
 const DISK_II_ROMS = ['disk2-p5-341-0027.bin', 'disk2-p6-341-0028.bin'];
-/// The function key that changes a Disk System's disk.
+/// The function key that changes a Disk System's disk; its BIOS's name.
 const CHANGE_DISK_KEY = 9;
+const FDS_BIOS = 'disksys.rom';
 const kind = (name) => name.split('.').pop().toLowerCase();
 const isGame = (name) => ['nes', 'fds', 'zip'].includes(kind(name));
 const isDisk = (name) => ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'].includes(kind(name));
@@ -355,7 +356,7 @@ function appleRoms() {
     return [...own, ...DISK_II_ROMS].map((name) => ({ name, here: files.includes(name) }));
 }
 
-const plusRom = () => files.find((name) => kind(name) === 'rom');
+const plusRom = () => files.find((name) => kind(name) === 'rom' && name !== FDS_BIOS);
 const isFloppy = (name) => ['dsk', 'do', 'nib', 'woz'].includes(kind(name));
 
 const plural = (count) => `${count} ROM${count === 1 ? '' : 's'} found`;
