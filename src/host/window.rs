@@ -11,6 +11,7 @@
 //! fullscreen and back, the picture its shape still, bars at its sides if
 //! the screen is wider. Closed, it tells the machine, to turn itself off.
 
+use std::sync::OnceLock;
 use crate::host::display::{CHANNELS, Display, Gamepad, Joystick, Key, SAMPLE_RATE};
 use sdl2::EventPump;
 use sdl2::GameControllerSubsystem;
@@ -24,6 +25,10 @@ use sdl2::render::{Canvas, Texture};
 use sdl2::video::FullscreenType;
 use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
+
+/// Where a window's to open, and how big, if it's said: its X, Y, width and
+/// height.
+pub static PLACE: OnceLock<[i32; 4]> = OnceLock::new();
 
 pub struct Window {
     canvas: Canvas<sdl2::video::Window>,
@@ -122,11 +127,11 @@ impl Window {
     ) -> Window {
         let sdl = sdl2::init().expect("SDL");
         let video = sdl.video().expect("SDL's video");
-        let window = video
-            .window(title, size.0, size.1)
-            .position_centered()
-            .build()
-            .expect("a window");
+        let window = match PLACE.get() {
+            Some(&[x, y, width, height]) => video.window(title, width as u32, height as u32).position(x, y).resizable().build(),
+            None => video.window(title, size.0, size.1).position_centered().build(),
+        }
+        .expect("a window");
         let mut canvas = window
             .into_canvas()
             .accelerated()

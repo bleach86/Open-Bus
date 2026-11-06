@@ -2,7 +2,7 @@
 // at a time, its picture and sound taken after each and what's pressed told
 // to it. The emulator itself is the WebAssembly, src/web.rs its side.
 import init, { Emulator, RomSorter, put_file, read_file, read_part, written_files, changed_files, take_changed_parts } from './pkg/cpu_emu.js';
-import { keep, keepParts, forget, names, bytes, allArt } from './files.js';
+import { keep, keepParts, forget, names, bytes, allArt, native } from './files.js';
 import { touch, attach, letGo } from './touch.js';
 import { games, isVolume, storedNames, shortName, natural } from './disks.js';
 import { findCovers } from './covers.js';
@@ -166,7 +166,9 @@ function fillGames(wanted) {
         const button = document.createElement('button');
         button.className = 'play';
         button.title = [titleOf(name), known?.developer, name].filter(Boolean).join('\n');
-        button.onclick = () => start(() => Emulator.nes(name, 8), 'nes', [name]);
+        button.onclick = () => (native
+            ? playNatively({ kind: 'nes', game: name })
+            : start(() => Emulator.nes(name, 8), 'nes', [name]));
         button.append(cover(key, titleOf(name)), caption(titleOf(name), known, tagsOf(name)));
         item.append(button, removeButton(name));
         return item;
@@ -580,8 +582,23 @@ page('apple').onclick = () => {
     const mockingboards = Number(page('mockingboards').value);
     const roms = model === 'apple2' ? plusRom() ?? '' : '';
     const disks = chosen;
-    start(() => Emulator.apple(model, roms, disks, mockingboards), 'apple', disks);
+    if (native) {
+        playNatively({ kind: 'apple', model, roms, disks, mockingboards });
+    } else {
+        start(() => Emulator.apple(model, roms, disks, mockingboards), 'apple', disks);
+    }
 };
+
+/// In the desktop app, a game's on the native emulator, not here: a game
+/// over, what it's saved is in the library, and what went wrong is told.
+const playNatively = (machine) => native.play(machine).catch((problem) => say(String(problem), true));
+native?.whenGameEnds((problem) => {
+    say(problem ?? '', Boolean(problem));
+    refresh();
+});
+if (native) {
+    document.querySelector('header .quiet').textContent = 'Add your games, or drop files or whole folders anywhere here: covers and game lists beside them come too.';
+}
 
 // Running a machine.
 let emulator = null;

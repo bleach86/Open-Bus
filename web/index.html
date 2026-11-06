@@ -112,7 +112,7 @@
 // and a page of old files and new doesn't work. So each is asked after first:
 // the answer's in the cache for what follows, and no bytes if it's as it was.
 // Failing that, as when offline, what's kept will do.
-const FILES = ['style.css', 'app.js', 'art.js', 'covers.js', 'disks.js', 'files.js', 'sound.js', 'touch.js',
+const FILES = ['style.css', 'app.js', 'art.js', 'covers.js', 'desktop.js', 'disks.js', 'files.js', 'sound.js', 'touch.js',
     'pkg/cpu_emu.js', 'pkg/cpu_emu_bg.wasm'];
 const asked = (url) => fetch(url, { cache: 'no-cache' }).catch(() => null);
 const [page] = await Promise.all([asked(location.href), ...FILES.map(asked)]);

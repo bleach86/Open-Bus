@@ -1,7 +1,10 @@
 // The files kept in this browser, in IndexedDB: name to bytes, and the parts
 // of them written over since, by name and where they start. A file's parts
 // go on top of it when it's read, and go when it's replaced. And the games'
-// art, by key: what art.js keeps.
+// art, by key: what art.js keeps. In the desktop app, all of it's on the
+// disk instead: see desktop.js.
+const desktop = window.__TAURI__ ? await import('./desktop.js') : null;
+
 const open = () => new Promise((resolve, reject) => {
     const request = indexedDB.open('cpu_emu', 3);
     request.onupgradeneeded = () => {
@@ -24,7 +27,7 @@ const open = () => new Promise((resolve, reject) => {
     request.onerror = () => reject(request.error);
 });
 
-const database = open();
+const database = desktop ? null : open();
 
 async function store(mode, use) {
     const db = await database;
@@ -41,37 +44,37 @@ async function store(mode, use) {
 /// anything that isn't, which sorts after every number.
 const partsOf = (name) => IDBKeyRange.bound([name], [name, []]);
 
-export const keep = (name, bytes) => store('readwrite', (files, parts) => {
+const keepHere = (name, bytes) => store('readwrite', (files, parts) => {
     parts.delete(partsOf(name));
     files.put(bytes, name);
 });
 
 /// `changed`, [where it starts, its bytes] each, kept all together.
-export const keepParts = (name, changed) => store('readwrite', (files, parts) => {
+const keepPartsHere = (name, changed) => store('readwrite', (files, parts) => {
     for (const [offset, bytes] of changed) {
         parts.put(bytes, [name, offset]);
     }
 });
 
-export const forget = (name) => store('readwrite', (files, parts) => {
+const forgetHere = (name) => store('readwrite', (files, parts) => {
     parts.delete(partsOf(name));
     files.delete(name);
 });
 
-export const keepArt = (art) => store('readwrite', (files, parts, kept) => {
+const keepArtHere = (art) => store('readwrite', (files, parts, kept) => {
     for (const [key, value] of art) {
         kept.put(value, key);
     }
 });
 
-export async function allArt() {
+async function allArtHere() {
     const [keys, values] = await store('readonly', (files, parts, kept) => [kept.getAllKeys(), kept.getAll()]);
     return new Map(keys.result.map((key, at) => [key, values.result[at]]));
 }
 
-export const names = async () => (await store('readonly', (files) => files.getAllKeys())).result;
+const namesHere = async () => (await store('readonly', (files) => files.getAllKeys())).result;
 
-export async function bytes(name) {
+async function bytesHere(name) {
     const [file, keys, parts] = await store('readonly', (files, kept) =>
         [files.get(name), kept.getAllKeys(partsOf(name)), kept.getAll(partsOf(name))]);
     const offsets = keys.result.map(([, offset]) => offset);
@@ -81,3 +84,13 @@ export async function bytes(name) {
     offsets.forEach((offset, at) => whole.set(parts.result[at], offset));
     return whole;
 }
+
+/// The desktop app's own, if this is it: playing a game, for one.
+export const native = desktop;
+export const keep = desktop?.keep ?? keepHere;
+export const keepParts = desktop?.keepParts ?? keepPartsHere;
+export const forget = desktop?.forget ?? forgetHere;
+export const keepArt = desktop?.keepArt ?? keepArtHere;
+export const allArt = desktop?.allArt ?? allArtHere;
+export const names = desktop?.names ?? namesHere;
+export const bytes = desktop?.bytes ?? bytesHere;

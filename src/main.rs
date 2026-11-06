@@ -22,11 +22,18 @@
 /// them, N dots or lines each (8, or 0 to see it all); or a Famicom Disk
 /// System's .fds image, or a zip of one, disksys.rom, its BIOS, beside it
 /// or in roms/nes/, and F9 changing the disk.
+/// With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
+/// to be resized: as the desktop app has it, in place of its library.
 use cpu_emu::{cpu, machines};
 use machines::apple2::video::Monitor;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if let Some(place) = args.iter().find_map(|arg| arg.strip_prefix("--window=")) {
+        let numbers: Vec<i32> = place.split(',').map_while(|number| number.parse().ok()).collect();
+        let place: [i32; 4] = numbers.try_into().expect("--window=X,Y,WIDTH,HEIGHT");
+        cpu_emu::host::window::PLACE.set(place).expect("one --window");
+    }
     let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal]";
     match args.get(1).map(String::as_str) {
         Some("nes") => {

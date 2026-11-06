@@ -1,0 +1,16 @@
+# Open Bus as a desktop app: the web page's library in a window of its own,
+# and the games on `cpu_emu`, the native emulator, beside it. By itself, not
+# part of `cpu_emu`, which has none of this to build.
+[package]
+name = "open-bus"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde_json = "1"
+tauri = { version = "2", features = [] }
+
+[workspace]

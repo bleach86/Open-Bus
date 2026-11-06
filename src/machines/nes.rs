@@ -620,8 +620,7 @@ fn cartridge(image: &[u8], path: &Path) -> Result<Cartridge, String> {
     };
     let places = [path.with_file_name(FDS_BIOS), Path::new("roms/nes").join(FDS_BIOS), Path::new(FDS_BIOS).to_path_buf()];
     let bios = places.iter().find_map(|place| files::read(place).ok().filter(|bios| bios.len() == FDS_BIOS_SIZE));
-    let place = if cfg!(target_arch = "wasm32") { "add it as you added the game" } else { "put it beside the game or in roms/nes/" };
-    let bios = bios.ok_or(format!("a Disk System game needs its BIOS, {FDS_BIOS}: {place}"))?;
+    let bios = bios.ok_or(format!("a Disk System game needs its BIOS, {FDS_BIOS}, added beside it"))?;
     Ok(Cartridge::disk(image, sides, &bios))
 }
 
