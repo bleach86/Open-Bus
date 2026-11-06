@@ -10,6 +10,7 @@
     "windows": [
       {
         "title": "Open Bus",
+        "center": true,
         "width": 1280,
         "height": 800,
         "minWidth": 640,
