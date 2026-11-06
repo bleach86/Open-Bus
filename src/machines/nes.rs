@@ -99,6 +99,7 @@ pub const CLOCK_HZ: u32 = 1_789_773;
 /// How loud it is, of the host's full volume.
 const VOLUME: f32 = 0.85;
 /// A header, and the least a cartridge can hold: 16K and 8K.
+#[cfg(not(target_arch = "wasm32"))]
 const HEADER_AND_BLANK: usize = 16 + 0x4000 + 0x2000;
 /// The Disk System's BIOS: its name, and its size.
 const FDS_BIOS: &str = "disksys.rom";
@@ -665,6 +666,7 @@ pub fn build(rom: &str, overscan: usize, region: Option<Region>) -> Result<CPU<N
 
 /// Only the controls being changed, with no game: its window closing when
 /// that's done. A cartridge of nothing, for the window to be a NES's.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn controls() {
     let mut image = b"NES\x1A\x01\x01".to_vec();
     image.resize(HEADER_AND_BLANK, 0);
