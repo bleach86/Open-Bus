@@ -1216,6 +1216,15 @@ body.dropping::after {
 .settings h2:first-child {
   margin-top: 0;
 }
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  cursor: pointer;
+}
+.check input {
+  accent-color: var(--cyan);
+}
 .rows {
   margin: .5rem 0;
 }

@@ -419,6 +419,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
     let mut command = emulator_command()?;
     command
         .args(line)
+        .args(machine["fullscreen"].as_bool().unwrap_or(false).then_some("--fullscreen"))
         .arg(window_place(&window)?)
         .current_dir(&library)
         .stderr(Stdio::piped());

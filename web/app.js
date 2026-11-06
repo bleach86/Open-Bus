@@ -1008,7 +1008,8 @@ function playNatively(machine) {
         say(`Disk System games need the BIOS, ${FDS_BIOS}: add it in Settings.`, true);
         return;
     }
-    native.play(machine).catch((problem) => say(String(problem), true));
+    const fullscreen = machine.kind !== 'controls' && page('start-fullscreen').checked;
+    native.play({ ...machine, fullscreen }).catch((problem) => say(String(problem), true));
 }
 native?.whenPads((pressed) => {
     padsSaid = pressed;
@@ -1168,6 +1169,8 @@ if (native) {
     page('add-path').onclick = chooseFolder;
     page('change-controls').onclick = () => playNatively({ kind: 'controls' });
     page('rescan').onclick = () => lookForChanges(true);
+    page('start-fullscreen').checked = localStorage.getItem('fullscreen') === 'yes';
+    page('start-fullscreen').onchange = ({ target }) => localStorage.setItem('fullscreen', target.checked ? 'yes' : 'no');
 }
 
 // Running a machine.
