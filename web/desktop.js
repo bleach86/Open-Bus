@@ -104,6 +104,14 @@ function change(section, came, gone = () => false) {
     }
 }
 
+/// Whether the file `name` is the app's own copy, in its library, which
+/// forgetting deletes; not a folder's, which forgetting only hides.
+export const isOwn = (name) => Boolean(found) && slashes(where.get(name) ?? '').startsWith(`${slashes(found.root)}/`);
+
+/// `question` asked, and whether the answer's yes: by the system's own dialog,
+/// as a webview's `confirm` doesn't wait for one.
+export const ask = (question) => window.__TAURI__.dialog.ask(question, { title: 'Open Bus', kind: 'warning' });
+
 /// `told` when games have come or gone from the folders, as a watcher saw,
 /// of how many: what's been found, as it is now, taken.
 export const whenFilesChange = (told) => listen('files-changed', async () => {

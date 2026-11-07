@@ -815,10 +815,11 @@ function diskTile(game, wanted) {
         };
         item.append(toggle);
         const remove = removeButton(game.disks[0]);
-        remove.title = `Remove ${game.title}`;
+        const { verb, question } = removing(game.disks[0], `${game.title} and its ${game.disks.length} disks`);
+        remove.title = `${verb} ${game.title}`;
         remove.setAttribute('aria-label', remove.title);
         remove.onclick = async () => {
-            if (confirm(`Remove ${game.title} and its ${game.disks.length} disks from ${native ? 'the library' : 'this browser'}?`)) {
+            if (await sure(question)) {
                 for (const disk of game.disks) {
                     await forget(disk);
                 }
@@ -864,14 +865,29 @@ function diskBox(name) {
     return label;
 }
 
+/// Whether `question`'s answered yes: in the app by the system's own dialog,
+/// as its webview's `confirm` goes on without waiting for an answer.
+const sure = (question) => (native ? native.ask(question) : Promise.resolve(confirm(question)));
+
+/// What taking `name` out of the library is, and what's asked first, of
+/// `what`: in the app a folder's game is only hidden, its own copy deleted;
+/// in a browser, its copy there deleted.
+function removing(name, what) {
+    if (native && !native.isOwn(name)) {
+        return { verb: 'Hide', question: `Hide ${what}? The files stay in their folder, and Settings can bring them back.` };
+    }
+    return { verb: 'Remove', question: `Remove ${what} from ${native ? 'the library? Its copy there is deleted.' : 'this browser?'}` };
+}
+
 function removeButton(name) {
     const remove = document.createElement('button');
+    const { verb, question } = removing(name, shortName(name));
     remove.className = 'remove';
     remove.textContent = '×';
-    remove.title = `Remove ${shortName(name)}`;
+    remove.title = `${verb} ${shortName(name)}`;
     remove.setAttribute('aria-label', remove.title);
     remove.onclick = async () => {
-        if (confirm(`Remove ${shortName(name)} from ${native ? 'the library' : 'this browser'}?`)) {
+        if (await sure(question)) {
             await forget(name);
             refresh();
         }
@@ -1254,7 +1270,7 @@ async function fillSettings() {
     const { folders, hidden, data } = await native.settings();
     const counted = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
     page('folders').replaceChildren(...folders.map((folder) => row(folder, counted(native.gamesIn(folder), 'game'), 'Remove', async () => {
-        if (confirm(`Remove ${folder} from the library? Its files stay where they are.`)) {
+        if (await sure(`Remove ${folder} from the library? Its files stay where they are.`)) {
             await native.removeFolder(folder);
             await refresh();
             fillSettings();
