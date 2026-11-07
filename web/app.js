@@ -1464,7 +1464,7 @@ if (native) {
     }
     page('quick-resume').onchange = ({ target }) => localStorage.setItem('resume', target.checked ? 'yes' : 'no');
     page('performance-mode').onchange = ({ target }) => localStorage.setItem('performance', target.checked ? 'yes' : 'no');
-    page('background').value = localStorage.getItem('background') ?? 'smooth';
+    page('background').value = localStorage.getItem('background') ?? 'sunset';
     page('background').onchange = ({ target }) => {
         localStorage.setItem('background', target.value);
         showScene();
