@@ -1504,4 +1504,17 @@ html.tv {
 .tv .grid {
   grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
 }
+/* Its games, sized by shelfShape, for whole rows to fit the screen. */
+.tv #games {
+  grid-template-columns: repeat(var(--columns), var(--tile));
+  justify-content: center;
+}
+/* Below the toolbar, and below the last row, the gap between rows, GAP_DOWN,
+   as when it's scrolled: rows line up with the screen to the end. */
+.tv.native .shelf {
+  margin-top: 1.1rem;
+}
+.tv.native #library {
+  padding-bottom: 1.1rem;
+}
 

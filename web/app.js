@@ -378,16 +378,27 @@ let shelf = [];
 const tiles = new Map();
 let shelfRow = 0;
 let shelfPlaced = -1;
+let shelfSize = 0;
 
 /// A row's height, and how many tiles are in one: as the CSS's grid has it.
 function shelfShape(list) {
     const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
-    const least = document.documentElement.classList.contains('tv') ? TV_TILE : SMALLEST_TILE;
-    const [smallest, across, down, words] = [least, GAP_ACROSS, GAP_DOWN, CAPTION].map((size) => size * rem);
+    const tv = document.documentElement.classList.contains('tv');
+    const [smallest, across, down, words] = [tv ? TV_TILE : SMALLEST_TILE, GAP_ACROSS, GAP_DOWN, CAPTION].map((size) => size * rem);
     const width = list.clientWidth;
+    if (tv) {
+        // Whole rows, as many as the screen's height has room for at the
+        // TV's size, but two at least: the tiles as big as that lets them be,
+        // as many across as fit, the shelf centred.
+        const room = innerHeight - document.querySelector('.toolbar').getBoundingClientRect().height - 2 * down;
+        const rows = Math.max(2, Math.floor((room + down) / (smallest * COVER_SHAPE + words + down)));
+        const row = (room - (rows - 1) * down) / rows;
+        const tile = Math.min((row - words) / COVER_SHAPE, width);
+        return { columns: Math.max(1, Math.floor((width + across) / (tile + across))), row, down, tile, rows };
+    }
     const columns = Math.max(1, Math.floor((width + across) / (smallest + across)));
     const tile = (width - across * (columns - 1)) / columns;
-    return { columns, row: tile * COVER_SHAPE + words, down };
+    return { columns, row: tile * COVER_SHAPE + words, down, tile };
 }
 
 /// Gamepad or arrow keys around the library. On the shelf of games a tile's
@@ -450,7 +461,7 @@ function showSelected() {
 /// The selection on the shelf of games moved, and scrolled to.
 function moveInGames(way) {
     const list = page('games');
-    const { columns, row, down } = shelfShape(list);
+    const { columns, row, down, rows } = shelfShape(list);
     const at = shelf.indexOf(selectedGame);
     if (at < 0) {
         // The first press takes the first tile in view.
@@ -468,7 +479,8 @@ function moveInGames(way) {
     if (top < scrollY + toolbar) {
         scrollTo(0, top - toolbar - down);
     } else if (top + row > scrollY + innerHeight) {
-        scrollTo(0, top + row + down - innerHeight);
+        // The TV's shelf, whole rows to the screen, lined up by the top one.
+        scrollTo(0, rows ? top - toolbar - down - (rows - 1) * height : top + row + down - innerHeight);
     }
     placeShelf();
     showSelected();
@@ -651,18 +663,23 @@ function placeShelf(force = true) {
     if (!list.clientWidth) {
         return;
     }
-    const { columns, row, down } = shelfShape(list);
+    const shape = shelfShape(list);
+    const { columns, row, down, tile } = shape;
+    list.style.setProperty('--columns', columns);
+    list.style.setProperty('--tile', `${tile}px`);
     const rows = Math.ceil(shelf.length / columns);
     const scrolled = Math.max(0, -list.getBoundingClientRect().top);
     const first = Math.max(0, Math.floor(scrolled / (row + down)) - SHELF_EXTRA);
     const count = Math.ceil(innerHeight / (row + down)) + 2 * SHELF_EXTRA + 1;
-    if (!force && first === shelfRow && shelfPlaced === columns) {
+    if (!force && first === shelfRow && shelfPlaced === columns && shelfSize === row) {
         return;
     }
-    [shelfRow, shelfPlaced] = [first, columns];
+    [shelfRow, shelfPlaced, shelfSize] = [first, columns, row];
     list.style.setProperty('--row', `${row}px`);
     list.style.paddingTop = `${first * (row + down)}px`;
-    list.style.minHeight = `${Math.max(0, rows * (row + down) - down)}px`;
+    // On the TV's shelf, whole screenfuls, so that the last lines up too.
+    const filled = shape.rows ? Math.ceil(rows / shape.rows) * shape.rows : rows;
+    list.style.minHeight = `${Math.max(0, filled * (row + down) - down)}px`;
     const inView = shelf.slice(first * columns, (first + count) * columns);
     list.replaceChildren(...inView.map((name) => {
         if (!tiles.has(name)) {
