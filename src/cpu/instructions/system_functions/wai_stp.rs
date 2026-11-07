@@ -1,5 +1,5 @@
-use crate::cpu::bus::Bus;
 use crate::cpu::CPU;
+use crate::cpu::bus::Bus;
 
 impl<B: Bus> CPU<B> {
     /// The WDC 65C02's WAI: it waits, its clock still going, for an IRQ or

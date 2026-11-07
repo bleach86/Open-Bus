@@ -9,7 +9,11 @@ mod tests {
     fn zip(files: &[(&str, &[u8], bool)]) -> Vec<u8> {
         let (mut archive, mut directory) = (Vec::new(), Vec::new());
         for &(name, bytes, deflated) in files {
-            let data = if deflated { miniz_oxide::deflate::compress_to_vec(bytes, 6) } else { bytes.to_vec() };
+            let data = if deflated {
+                miniz_oxide::deflate::compress_to_vec(bytes, 6)
+            } else {
+                bytes.to_vec()
+            };
             let method: u16 = if deflated { 8 } else { 0 };
             let sizes = [crc32(bytes), data.len() as u32, bytes.len() as u32];
             let local = archive.len() as u32;
@@ -17,7 +21,9 @@ mod tests {
             archive.extend([20, 0, 0, 0]); // the version needed; flags
             archive.extend(method.to_le_bytes());
             archive.extend([0; 4]); // its time and date
-            sizes.iter().for_each(|size| archive.extend(size.to_le_bytes()));
+            sizes
+                .iter()
+                .for_each(|size| archive.extend(size.to_le_bytes()));
             archive.extend((name.len() as u16).to_le_bytes());
             archive.extend([0, 0]); // no extra field
             archive.extend(name.as_bytes());
@@ -27,7 +33,9 @@ mod tests {
             directory.extend([20, 0, 20, 0, 0, 0]); // made by; needed; flags
             directory.extend(method.to_le_bytes());
             directory.extend([0; 4]);
-            sizes.iter().for_each(|size| directory.extend(size.to_le_bytes()));
+            sizes
+                .iter()
+                .for_each(|size| directory.extend(size.to_le_bytes()));
             directory.extend((name.len() as u16).to_le_bytes());
             directory.extend([0; 8]); // extra, comment, disk, internal attributes
             directory.extend([0; 4]); // external attributes
@@ -50,11 +58,25 @@ mod tests {
     #[test]
     fn a_file_is_found_by_its_name() {
         let game: Vec<u8> = (0..40_000).map(|n| (n % 251) as u8).collect();
-        let archive = zip(&[("readme.txt", b"hello", false), ("Game (USA).nes", &game, true)]);
+        let archive = zip(&[
+            ("readme.txt", b"hello", false),
+            ("Game (USA).nes", &game, true),
+        ]);
         let nes = |name: &str| name.to_lowercase().ends_with(".nes");
-        assert_eq!(file(&archive, nes).unwrap(), ("Game (USA).nes".to_string(), game.clone()), "deflated");
-        assert_eq!(file(&archive, |name| name == "readme.txt").unwrap().1, b"hello", "stored");
-        assert!(file(&archive, |name| name.ends_with(".fds")).is_err(), "none such");
+        assert_eq!(
+            file(&archive, nes).unwrap(),
+            ("Game (USA).nes".to_string(), game.clone()),
+            "deflated"
+        );
+        assert_eq!(
+            file(&archive, |name| name == "readme.txt").unwrap().1,
+            b"hello",
+            "stored"
+        );
+        assert!(
+            file(&archive, |name| name.ends_with(".fds")).is_err(),
+            "none such"
+        );
     }
 
     #[test]
@@ -64,7 +86,10 @@ mod tests {
         archive[30 + "game.nes".len() + 10] ^= 1; // a byte of it changed
         let refused = file(&archive, |_| true).unwrap_err();
         assert!(refused.contains("CRC"), "{refused}");
-        assert_eq!(file(b"not a zip at all, not one", |_| true).unwrap_err(), "not a zip");
+        assert_eq!(
+            file(b"not a zip at all, not one", |_| true).unwrap_err(),
+            "not a zip"
+        );
         assert_eq!(file(&[], |_| true).unwrap_err(), "not a zip");
     }
 }

@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::cpu::{Variant, CPU};
+    use crate::cpu::{CPU, Variant};
     use std::path::Path;
 
     const IRQS: usize = 0x00;
@@ -31,7 +31,10 @@ mod tests {
     }
 
     fn label(labels: &str, name: &str) -> u16 {
-        let line = labels.lines().find(|line| line.ends_with(&format!(" .{name}"))).unwrap();
+        let line = labels
+            .lines()
+            .find(|line| line.ends_with(&format!(" .{name}")))
+            .unwrap();
         u16::from_str_radix(&line[3..9], 16).unwrap()
     }
 
@@ -42,13 +45,19 @@ mod tests {
         let clock = cpu.clock;
         cpu.execute(cycles);
         assert_eq!(cpu.clock - clock, cycles, "its clock not going");
-        assert_eq!(cpu.memory.bus_log.take().unwrap(), vec![], "on its bus, waiting or stopped");
+        assert_eq!(
+            cpu.memory.bus_log.take().unwrap(),
+            vec![],
+            "on its bus, waiting or stopped"
+        );
         assert_eq!(cpu.pc, at, "it went on");
     }
 
     #[test]
     fn wai_waits_for_an_irq_then_takes_it() {
-        let Some((mut cpu, labels)) = machine() else { return };
+        let Some((mut cpu, labels)) = machine() else {
+            return;
+        };
         cpu.pc = label(&labels, "wai_irq");
         let clock = cpu.clock;
         cpu.execute(1); // CLI
@@ -69,7 +78,9 @@ mod tests {
 
     #[test]
     fn wai_with_i_set_goes_on_after_an_irq_and_takes_an_nmi() {
-        let Some((mut cpu, labels)) = machine() else { return };
+        let Some((mut cpu, labels)) = machine() else {
+            return;
+        };
         cpu.pc = label(&labels, "wai_masked");
         cpu.execute(1); // SEI
         cpu.execute(1); // WAI
@@ -93,7 +104,9 @@ mod tests {
 
     #[test]
     fn stp_stops_until_reset() {
-        let Some((mut cpu, labels)) = machine() else { return };
+        let Some((mut cpu, labels)) = machine() else {
+            return;
+        };
         cpu.pc = label(&labels, "stop");
         cpu.execute(1); // STP
         let after = label(&labels, "after_stop");
@@ -101,7 +114,11 @@ mod tests {
         cpu.irq = true;
         cpu.nmi = true;
         still(&mut cpu, 100, after);
-        assert_eq!((cpu.memory.data[IRQS], cpu.memory.data[NMIS]), (0, 0), "an interrupt taken, stopped");
+        assert_eq!(
+            (cpu.memory.data[IRQS], cpu.memory.data[NMIS]),
+            (0, 0),
+            "an interrupt taken, stopped"
+        );
         cpu.irq = false;
         cpu.nmi = false;
 

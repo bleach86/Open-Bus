@@ -114,16 +114,20 @@ export const ask = (question) => window.__TAURI__.dialog.ask(question, { title: 
 
 /// `told` when games have come or gone from the folders, as a watcher saw,
 /// of how many: what's been found, as it is now, taken.
-export const whenFilesChange = (told) => listen('files-changed', async () => {
-    const games = () => [...where.keys()].filter((name) => GAMES.includes(extension(name)));
-    const before = games();
-    const known = await invoke('known_files');
-    if (known) {
-        take(known);
-    }
-    const now = games();
-    told({ came: now.filter((name) => !before.includes(name)).length, went: before.filter((name) => !now.includes(name)).length });
-});
+export const whenFilesChange = (told) =>
+    listen('files-changed', async () => {
+        const games = () => [...where.keys()].filter((name) => GAMES.includes(extension(name)));
+        const before = games();
+        const known = await invoke('known_files');
+        if (known) {
+            take(known);
+        }
+        const now = games();
+        told({
+            came: now.filter((name) => !before.includes(name)).length,
+            went: before.filter((name) => !now.includes(name)).length,
+        });
+    });
 
 /// Hidden games, back in the library at once.
 export async function restore(paths) {
@@ -136,8 +140,8 @@ export async function addFolderFiles(entries) {
 }
 
 /// How many games there are in `folder`.
-export const gamesIn = (folder) => [...where.values()].filter((path) => slashes(path).startsWith(`${slashes(folder)}/`)).length;
-
+export const gamesIn = (folder) =>
+    [...where.values()].filter((path) => slashes(path).startsWith(`${slashes(folder)}/`)).length;
 
 /// A file at `path` as the page reads one, not read until it's wanted.
 export function laterFile(path) {
@@ -154,9 +158,10 @@ export function laterFile(path) {
 export const fileAt = async (path) => new File([await asBytes(await invoke('file_bytes', { path }))], baseName(path));
 
 /// `told` of paths dropped on the window; the folders among them remembered.
-export const whenDropped = (told) => listen('tauri://drag-drop', async ({ payload }) => {
-    told(await invoke('take_dropped', { paths: payload.paths }));
-});
+export const whenDropped = (told) =>
+    listen('tauri://drag-drop', async ({ payload }) => {
+        told(await invoke('take_dropped', { paths: payload.paths }));
+    });
 
 export async function keepArt(art) {
     for (const [key, { cover, ...known }] of art) {
@@ -169,14 +174,15 @@ export async function keepArt(art) {
 /// A machine started on the native emulator, the app's window going as its
 /// comes: `game`, for the NES; for the Apple, `model`, `roms`, `disks` and
 /// `mockingboards`.
-export const play = (machine) => invoke('play', {
-    machine: {
-        ...machine,
-        game: where.get(machine.game),
-        roms: where.get(machine.roms),
-        disks: machine.disks?.map((disk) => where.get(disk)),
-    },
-});
+export const play = (machine) =>
+    invoke('play', {
+        machine: {
+            ...machine,
+            game: where.get(machine.game),
+            roms: where.get(machine.roms),
+            disks: machine.disks?.map((disk) => where.get(disk)),
+        },
+    });
 
 /// The machines' ROMs among the files at `paths`, put into the library by
 /// the emulator: `held`, those with any, `roms`, and the II+'s `chips`.
@@ -188,9 +194,17 @@ export async function sortRoms(paths) {
 
 /// `told` of what the gamepads hold for moving around the library, by name,
 /// each time that changes.
-export const whenPads = (told) => listen('pads', ({ payload }) => {
-    told(Object.fromEntries(payload.split(' ').filter(Boolean).map((name) => [name, true])));
-});
+export const whenPads = (told) =>
+    listen('pads', ({ payload }) => {
+        told(
+            Object.fromEntries(
+                payload
+                    .split(' ')
+                    .filter(Boolean)
+                    .map((name) => [name, true]),
+            ),
+        );
+    });
 
 /// The window fullscreen, or back as it was.
 export const fullscreen = (on) => invoke('fullscreen', { on });
@@ -206,14 +220,19 @@ export async function allArt() {
     const all = await invoke('all_art');
     const view = new DataView(all);
     const art = new Map();
-    for (let at = 0; at < all.byteLength;) {
+    for (let at = 0; at < all.byteLength; ) {
         const fileLength = view.getUint32(at, true);
         const textLength = view.getUint32(at + 4, true);
         const text = new TextDecoder().decode(new Uint8Array(all, at + 8, textLength));
         const { key, known } = JSON.parse(text);
         const coverStart = at + 8 + textLength;
         const coverEnd = at + 4 + fileLength;
-        art.set(key, coverEnd > coverStart ? { ...known, cover: new Blob([all.slice(coverStart, coverEnd)], { type: 'image/jpeg' }) } : known);
+        art.set(
+            key,
+            coverEnd > coverStart
+                ? { ...known, cover: new Blob([all.slice(coverStart, coverEnd)], { type: 'image/jpeg' }) }
+                : known,
+        );
         at = coverEnd;
     }
     return art;

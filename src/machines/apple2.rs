@@ -20,10 +20,10 @@ pub mod clock_card;
 pub mod disk2;
 pub mod disk_image;
 pub mod hard_disk;
-pub mod rom_set;
 pub mod iie;
 pub mod language_card;
 pub mod mockingboard;
+pub mod rom_set;
 pub mod video;
 
 #[cfg(test)]
@@ -592,7 +592,6 @@ impl Apple2 {
     fn lower_case(&self) -> Option<bool> {
         self.iie.as_ref().map(|iie| iie.altcharset)
     }
-
 }
 
 /// A screen byte's character: the II+'s 64, upper case letters and
@@ -773,7 +772,11 @@ impl Machine for Apple2 {
             (true, false) if double => "DOUBLE LORES",
             (true, false) => "LORES",
         };
-        let mixed = if switches.graphics && switches.mixed { " MIXED" } else { "" };
+        let mixed = if switches.graphics && switches.mixed {
+            " MIXED"
+        } else {
+            ""
+        };
         let page = if switches.page2 { " PAGE 2" } else { "" };
         let mut lines = vec![
             format!("APPLE {model} FRAME {}", self.frames),
@@ -787,7 +790,10 @@ impl Machine for Apple2 {
             lines.push(format!("D2 {}", self.disk_name(1)));
         }
         if let Some(card) = &self.hard_disk {
-            lines.push(format!("HARD DISK {} VOLUMES", card.units.iter().flatten().count()));
+            lines.push(format!(
+                "HARD DISK {} VOLUMES",
+                card.units.iter().flatten().count()
+            ));
         }
         let boards = self.mockingboards.iter().flatten().count();
         if boards > 0 {
@@ -998,12 +1004,16 @@ pub fn build(
             return read(&path);
         }
         let found: &rom_set::Sorted = found.get_or_init(|| rom_set::scan(roms));
-        found.bytes(name).ok_or_else(|| format!("no {name} in {}", roms.display()))
+        found
+            .bytes(name)
+            .ok_or_else(|| format!("no {name} in {}", roms.display()))
     };
     let state = save_state::path(disks.first().map_or(roms, |disk| Path::new(disk)));
     let (mut apple, folder, own_variant) = match model {
         Model::IIPlus => {
-            let zipped = roms.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("zip"));
+            let zipped = roms
+                .extension()
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("zip"));
             let rom = if files::is_folder(roms) || zipped {
                 rom_named(roms, rom_set::PLUS_ROM)?
             } else {
@@ -1014,12 +1024,20 @@ pub fn build(
             }
             let mut apple = Apple2::new(rom[rom.len() - 0x3000..].to_vec());
             apple.language_card = Some(language_card::LanguageCard::new());
-            let folder = if files::is_folder(roms) { roms } else { roms.parent().unwrap_or(Path::new(".")) };
+            let folder = if files::is_folder(roms) {
+                roms
+            } else {
+                roms.parent().unwrap_or(Path::new("."))
+            };
             (apple, folder.to_path_buf(), Variant::Nmos6502)
         }
         Model::IIe | Model::IIeEnhanced => {
             let enhanced = model == Model::IIeEnhanced;
-            let names = if enhanced { iie::ENHANCED_ROMS } else { iie::ROMS };
+            let names = if enhanced {
+                iie::ENHANCED_ROMS
+            } else {
+                iie::ROMS
+            };
             let cd = rom_named(roms, names[0])?;
             let ef = rom_named(roms, names[1])?;
             let characters = rom_named(roms, names[2])?;
@@ -1029,8 +1047,14 @@ pub fn build(
             } else {
                 Variant::Nmos6502
             };
-            let zipped = roms.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("zip"));
-            let folder = if zipped { roms.parent().unwrap_or(Path::new(".")) } else { roms };
+            let zipped = roms
+                .extension()
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("zip"));
+            let folder = if zipped {
+                roms.parent().unwrap_or(Path::new("."))
+            } else {
+                roms
+            };
             (apple, folder.to_path_buf(), variant)
         }
     };
@@ -1050,7 +1074,10 @@ pub fn build(
         images.into_iter().partition(|image| is_volume(image));
     if !volumes.is_empty() {
         if volumes.len() > 2 {
-            return Err(format!("the hard disk has two drives, not {}", volumes.len()));
+            return Err(format!(
+                "the hard disk has two drives, not {}",
+                volumes.len()
+            ));
         }
         let mut card = hard_disk::HardDisk::new();
         for (unit, volume) in card.units.iter_mut().zip(&volumes) {

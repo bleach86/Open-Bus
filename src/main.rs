@@ -40,9 +40,14 @@ use machines::apple2::video::Monitor;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if let Some(place) = args.iter().find_map(|arg| arg.strip_prefix("--window=")) {
-        let numbers: Vec<i32> = place.split(',').map_while(|number| number.parse().ok()).collect();
+        let numbers: Vec<i32> = place
+            .split(',')
+            .map_while(|number| number.parse().ok())
+            .collect();
         let place: [i32; 4] = numbers.try_into().expect("--window=X,Y,WIDTH,HEIGHT");
-        cpu_emu::host::window::PLACE.set(place).expect("one --window");
+        cpu_emu::host::window::PLACE
+            .set(place)
+            .expect("one --window");
     }
     if args.iter().any(|arg| arg == "--resume") {
         cpu_emu::host::run::RESUME.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -56,7 +61,8 @@ fn main() {
         Some("pads") => cpu_emu::host::pads::report(),
         Some("roms") => {
             let out = args.get(2).expect("cpu_emu roms FOLDER");
-            machines::apple2::rom_set::sort(std::path::Path::new(out)).expect("couldn't sort the ROMs");
+            machines::apple2::rom_set::sort(std::path::Path::new(out))
+                .expect("couldn't sort the ROMs");
         }
         Some("nes") => {
             let rom = args[2..]
@@ -67,9 +73,18 @@ fn main() {
                 Some(dots) => dots.parse().ok().filter(|&dots| dots <= 32).expect(usage),
                 None => 8,
             };
-            let region = args.iter().find_map(|arg| arg.strip_prefix("--region=")).map(|name| machines::nes::region::Region::parse(name).expect(usage));
+            let region = args
+                .iter()
+                .find_map(|arg| arg.strip_prefix("--region="))
+                .map(|name| machines::nes::region::Region::parse(name).expect(usage));
             let fast = args.iter().any(|arg| arg == "--fast");
-            machines::nes::run(rom, args.iter().any(|arg| arg == "--fullscreen"), overscan, region, fast);
+            machines::nes::run(
+                rom,
+                args.iter().any(|arg| arg == "--fullscreen"),
+                overscan,
+                region,
+                fast,
+            );
         }
         Some(machine @ ("apple2" | "apple2e")) => {
             let files: Vec<&String> = args[2..]

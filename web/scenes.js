@@ -31,7 +31,12 @@ const NES = {
 
 /// Ordered dithering: whether `x`, `y` takes the second of two colours,
 /// `t` of the way from the first.
-const BAYER = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+const BAYER = [
+    [0, 8, 2, 10],
+    [12, 4, 14, 6],
+    [3, 11, 1, 9],
+    [15, 7, 13, 5],
+];
 const dithered = (x, y, t) => t * 16 > BAYER[y & 3][x & 3];
 
 /// Numbers that look random, the same each time from the same seed.
@@ -57,7 +62,8 @@ function noise(seed) {
         const bottom = hash(x0, y0 + 1) * (1 - tx) + hash(x0 + 1, y0 + 1) * tx;
         return top * (1 - ty) + bottom * ty;
     };
-    return (x, y) => once(x, y) * 0.5 + once(x * 2, y * 2) * 0.25 + once(x * 4, y * 4) * 0.15 + once(x * 8, y * 8) * 0.1;
+    return (x, y) =>
+        once(x, y) * 0.5 + once(x * 2, y * 2) * 0.25 + once(x * 4, y * 4) * 0.15 + once(x * 8, y * 8) * 0.1;
 }
 
 /// The canvas's pixels, to draw on and then show.
@@ -127,7 +133,12 @@ function stars(p, random, top, bottom, count) {
         const [x, y] = [Math.floor(random() * p.w), Math.floor(top + random() * (bottom - top))];
         p.set(x, y, [NES.white, NES.silver, NES.sky, NES.lilac, NES.pale][Math.floor(random() * 5)]);
         if (random() < 0.08) {
-            for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            for (const [dx, dy] of [
+                [1, 0],
+                [-1, 0],
+                [0, 1],
+                [0, -1],
+            ]) {
                 p.set(x + dx, y + dy, NES.blue);
             }
         }
@@ -156,7 +167,13 @@ function sunset(p, centre) {
     const horizon = Math.round(h * 0.62);
     const row = (y, from, to, colour) => p.rect(from, y, to - from, 1, colour);
 
-    bands(p, 0, horizon, [NES.black, NES.navy, NES.blue, NES.violet, NES.plum, NES.purple, NES.rose, NES.pink], [5, 3, 3, 3, 3, 2, 2, 1]);
+    bands(
+        p,
+        0,
+        horizon,
+        [NES.black, NES.navy, NES.blue, NES.violet, NES.plum, NES.purple, NES.rose, NES.pink],
+        [5, 3, 3, 3, 3, 2, 2, 1],
+    );
     stars(p, seeded(7), 0, horizon * 0.45, (w * h) / 900);
 
     // Warm at the top, striped at the bottom, the stripes wider as it goes.
@@ -249,7 +266,10 @@ function city(p, centre) {
     const [mx, my, mr] = [Math.round(centre + w * 0.2), h * 0.2, Math.round(h * 0.085)];
     disc(p, mx, my, mr + 2, (x, y) => (dithered(x, y, 0.5) ? NES.violet : null));
     disc(p, mx, my, mr, (x, y, u, v) => {
-        const sea = (u + 0.3) ** 2 + (v + 0.2) ** 2 < 0.12 || (u - 0.35) ** 2 + (v - 0.3) ** 2 < 0.06 || (u + 0.1) ** 2 + (v - 0.45) ** 2 < 0.04;
+        const sea =
+            (u + 0.3) ** 2 + (v + 0.2) ** 2 < 0.12 ||
+            (u - 0.35) ** 2 + (v - 0.3) ** 2 < 0.06 ||
+            (u + 0.1) ** 2 + (v - 0.45) ** 2 < 0.04;
         return sea ? NES.lavender : NES.peach;
     });
 
@@ -257,7 +277,7 @@ function city(p, centre) {
     // lit windows, some antennas, and on the near ones a few neon signs.
     const skyline = (colour, lit, unlit, low, high, widths, signs, seed) => {
         const r = seeded(seed);
-        for (let x = -Math.round(r() * 10); x < w;) {
+        for (let x = -Math.round(r() * 10); x < w; ) {
             const width = Math.round(widths[0] + r() * (widths[1] - widths[0]));
             const middle = 1 - Math.min(1, Math.abs(x + width / 2 - centre) / (w * 0.45));
             const height = Math.round(h * (low + (high - low) * (0.35 * r() + 0.65 * r() * (0.4 + 0.6 * middle))));
@@ -394,8 +414,25 @@ function space(p, centre) {
         }
     };
     rings(false);
-    const belts = [NES.cream, NES.amber, NES.coral, NES.amber, NES.peach, NES.coral, NES.rose, NES.amber, NES.cream, NES.coral];
-    const darker = { [NES.cream]: NES.amber, [NES.amber]: NES.brown, [NES.coral]: NES.rust, [NES.peach]: NES.coral, [NES.rose]: NES.plum };
+    const belts = [
+        NES.cream,
+        NES.amber,
+        NES.coral,
+        NES.amber,
+        NES.peach,
+        NES.coral,
+        NES.rose,
+        NES.amber,
+        NES.cream,
+        NES.coral,
+    ];
+    const darker = {
+        [NES.cream]: NES.amber,
+        [NES.amber]: NES.brown,
+        [NES.coral]: NES.rust,
+        [NES.peach]: NES.coral,
+        [NES.rose]: NES.plum,
+    };
     const swirl = noise(2);
     disc(p, px, py, pr, (x, y, u, v) => {
         const latitude = v + (swirl(x / 14, y / 5) - 0.5) * 0.18;

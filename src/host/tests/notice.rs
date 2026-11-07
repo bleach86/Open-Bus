@@ -14,7 +14,10 @@ mod tests {
 
     /// How wide the lit dots' span is, on the picture, across all its lines.
     fn span(picture: &[u32], width: usize) -> usize {
-        let lit: Vec<usize> = (0..picture.len()).filter(|&at| picture[at] == 0xFFFFFF).map(|at| at % width).collect();
+        let lit: Vec<usize> = (0..picture.len())
+            .filter(|&at| picture[at] == 0xFFFFFF)
+            .map(|at| at % width)
+            .collect();
         lit.iter().max().unwrap() - lit.iter().min().unwrap() + 1
     }
 
@@ -23,8 +26,14 @@ mod tests {
         for (width, height) in [(560, 192), (240, 224), (256, 240)] {
             let picture = drawn(width, height, "A");
             let (above, band) = picture.split_at((height - 12) * width);
-            assert!(above.iter().all(|&dot| dot == 0x808080), "{width}: over what's above the band");
-            assert!(band.iter().all(|&dot| dot == 0x000000 || dot == 0xFFFFFF), "{width}: not its band");
+            assert!(
+                above.iter().all(|&dot| dot == 0x808080),
+                "{width}: over what's above the band"
+            );
+            assert!(
+                band.iter().all(|&dot| dot == 0x000000 || dot == 0xFFFFFF),
+                "{width}: not its band"
+            );
             assert!(band.iter().any(|&dot| dot == 0xFFFFFF), "{width}: no text");
         }
     }
@@ -42,8 +51,14 @@ mod tests {
         // 34 characters fit 240 dots, of 7: the first's start to the last's end.
         assert_eq!(span(&drawn(240, 224, &long), 240), 33 * 7 + 5);
         let picture = drawn(240, 224, "HH");
-        let lit: Vec<usize> = (0..picture.len()).filter(|&at| picture[at] == 0xFFFFFF).map(|at| at % 240).collect();
+        let lit: Vec<usize> = (0..picture.len())
+            .filter(|&at| picture[at] == 0xFFFFFF)
+            .map(|at| at % 240)
+            .collect();
         let (left, right) = (lit.iter().min().unwrap(), lit.iter().max().unwrap());
-        assert!((left + right).abs_diff(238) <= 2, "not centred: {left} to {right}");
+        assert!(
+            (left + right).abs_diff(238) <= 2,
+            "not centred: {left} to {right}"
+        );
     }
 }

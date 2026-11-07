@@ -1,6 +1,6 @@
 use crate::cpu::bus::Bus;
-use crate::cpu::{CPU, StatusFlag};
 use crate::cpu::instructions::op_codes::Opcode;
+use crate::cpu::{CPU, StatusFlag};
 
 const CHECK_SET: [Opcode; 4] = [Opcode::BCS, Opcode::BEQ, Opcode::BMI, Opcode::BVS];
 

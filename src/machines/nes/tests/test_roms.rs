@@ -10,11 +10,11 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::cpu::{CPU, Variant};
     use crate::host::machine::Machine;
-    use crate::cpu::{Variant, CPU};
     use crate::machines::nes::cartridge::Cartridge;
     use crate::machines::nes::region::Region;
-    use crate::machines::nes::{self, Nes, CLOCK_HZ};
+    use crate::machines::nes::{self, CLOCK_HZ, Nes};
     use std::path::{Path, PathBuf};
 
     fn dir() -> PathBuf {
@@ -37,27 +37,56 @@ mod tests {
 
     #[test]
     fn nestest_runs_as_its_log_does() {
-        let (Some(mut cpu), Ok(log)) = (nes(&dir().join("other/nestest.nes")), std::fs::read_to_string(dir().join("other/nestest.log"))) else {
+        let (Some(mut cpu), Ok(log)) = (
+            nes(&dir().join("other/nestest.nes")),
+            std::fs::read_to_string(dir().join("other/nestest.log")),
+        ) else {
             eprintln!("nes test: no nestest in roms/nes/tests/");
             return;
         };
         cpu.pc = 0xC000; // its automatic start, no PPU needed
         for (n, line) in log.lines().enumerate() {
-            let field = |name: &str| line.split(name).nth(1).unwrap().split_whitespace().next().unwrap();
+            let field = |name: &str| {
+                line.split(name)
+                    .nth(1)
+                    .unwrap()
+                    .split_whitespace()
+                    .next()
+                    .unwrap()
+            };
             let hex = |name: &str| u8::from_str_radix(field(name), 16).unwrap();
-            let want = (u16::from_str_radix(&line[..4], 16).unwrap(), hex("A:"), hex("X:"), hex("Y:"), hex("P:"), hex("SP:"));
+            let want = (
+                u16::from_str_radix(&line[..4], 16).unwrap(),
+                hex("A:"),
+                hex("X:"),
+                hex("Y:"),
+                hex("P:"),
+                hex("SP:"),
+            );
             let ppu = line.split("PPU:").nth(1).unwrap();
             let (ppu_line, ppu_dot) = ppu[..7].split_once(',').unwrap();
-            let want_ppu = (ppu_line.trim().parse::<u16>().unwrap(), ppu_dot.trim().parse::<u16>().unwrap());
+            let want_ppu = (
+                ppu_line.trim().parse::<u16>().unwrap(),
+                ppu_dot.trim().parse::<u16>().unwrap(),
+            );
             let cycles: u32 = field("CYC:").parse().unwrap();
             let p = (cpu.status.to_byte() & !0x10) | 0x20;
             let have = (cpu.pc, cpu.a, cpu.x, cpu.y, p, cpu.sp);
             assert_eq!(have, want, "line {}: {line}", n + 1);
             assert_eq!(cpu.clock, cycles, "line {}, its cycles: {line}", n + 1);
-            assert_eq!((cpu.memory.ppu.line, cpu.memory.ppu.dot), want_ppu, "line {}, the PPU's dot: {line}", n + 1);
+            assert_eq!(
+                (cpu.memory.ppu.line, cpu.memory.ppu.dot),
+                want_ppu,
+                "line {}, the PPU's dot: {line}",
+                n + 1
+            );
             cpu.execute(1);
         }
-        assert_eq!((cpu.memory.ram[2], cpu.memory.ram[3]), (0, 0), "nestest's own results, $02 and $03");
+        assert_eq!(
+            (cpu.memory.ram[2], cpu.memory.ram[3]),
+            (0, 0),
+            "nestest's own results, $02 and $03"
+        );
     }
 
     /// A blargg test of the newer kind run: its result, and its text.
@@ -81,7 +110,10 @@ mod tests {
             if status == 0x81 && asked_at.is_none() && !let_go {
                 asked_at = Some(cpu.clock);
             }
-            if asked_at.is_some_and(|at| cpu.clock - at > CLOCK_HZ / 20) && reset_at.is_none() && !let_go {
+            if asked_at.is_some_and(|at| cpu.clock - at > CLOCK_HZ / 20)
+                && reset_at.is_none()
+                && !let_go
+            {
                 reset_at = Some(cpu.clock);
                 cpu.memory.reset_button(true);
             }
@@ -93,12 +125,21 @@ mod tests {
                 (reset_at, let_go) = (None, true);
             }
             if status < 0x80 {
-                let text: Vec<u8> = (0x6004..0x7000).map(|addr| ram(cpu, addr)).take_while(|&byte| byte != 0).collect();
+                let text: Vec<u8> = (0x6004..0x7000)
+                    .map(|addr| ram(cpu, addr))
+                    .take_while(|&byte| byte != 0)
+                    .collect();
                 return (status, String::from_utf8_lossy(&text).trim().to_string());
             }
         }
-        let text: Vec<u8> = (0x6004..0x7000).map(|addr| ram(cpu, addr)).take_while(|&byte| byte != 0).collect();
-        (0xFF, format!("never finished: {}", String::from_utf8_lossy(&text).trim()))
+        let text: Vec<u8> = (0x6004..0x7000)
+            .map(|addr| ram(cpu, addr))
+            .take_while(|&byte| byte != 0)
+            .collect();
+        (
+            0xFF,
+            format!("never finished: {}", String::from_utf8_lossy(&text).trim()),
+        )
     }
 
     /// A blargg test of 2005's run for `seconds`: its result, at `at`.
@@ -130,7 +171,13 @@ mod tests {
         if missing == roms.len() {
             eprintln!("nes test: no test ROMs in roms/nes/tests/");
         }
-        assert!(failed.is_empty(), "{} of {} failed:\n{}", failed.len(), roms.len(), failed.join("\n"));
+        assert!(
+            failed.is_empty(),
+            "{} of {} failed:\n{}",
+            failed.len(),
+            roms.len(),
+            failed.join("\n")
+        );
     }
 
     fn newer_passes(cpu: &mut CPU<Nes>) -> (bool, String) {
@@ -148,43 +195,89 @@ mod tests {
     #[test]
     fn blargg_cpu_instructions() {
         let roms: Vec<String> = [
-            "01-basics", "02-implied", "03-immediate", "04-zero_page", "05-zp_xy", "06-absolute", "07-abs_xy",
-            "08-ind_x", "09-ind_y", "10-branches", "11-stack", "12-jmp_jsr", "13-rts", "14-rti", "15-brk", "16-special",
+            "01-basics",
+            "02-implied",
+            "03-immediate",
+            "04-zero_page",
+            "05-zp_xy",
+            "06-absolute",
+            "07-abs_xy",
+            "08-ind_x",
+            "09-ind_y",
+            "10-branches",
+            "11-stack",
+            "12-jmp_jsr",
+            "13-rts",
+            "14-rti",
+            "15-brk",
+            "16-special",
         ]
         .iter()
         .map(|name| format!("instr_test-v5/rom_singles/{name}.nes"))
         .collect();
-        run_all(&roms.iter().map(String::as_str).collect::<Vec<_>>(), newer_passes);
+        run_all(
+            &roms.iter().map(String::as_str).collect::<Vec<_>>(),
+            newer_passes,
+        );
     }
 
     #[test]
     fn blargg_cpu_bus() {
         run_all(
-            &["cpu_dummy_writes/cpu_dummy_writes_oam.nes", "cpu_dummy_writes/cpu_dummy_writes_ppumem.nes", "cpu_exec_space/test_cpu_exec_space_ppuio.nes"],
+            &[
+                "cpu_dummy_writes/cpu_dummy_writes_oam.nes",
+                "cpu_dummy_writes/cpu_dummy_writes_ppumem.nes",
+                "cpu_exec_space/test_cpu_exec_space_ppuio.nes",
+            ],
             newer_passes,
         );
     }
 
     #[test]
     fn blargg_branch_timing() {
-        run_all(&["branch_timing_tests/1.Branch_Basics.nes", "branch_timing_tests/2.Backward_Branch.nes", "branch_timing_tests/3.Forward_Branch.nes"], old_passes(4, 0xF8));
+        run_all(
+            &[
+                "branch_timing_tests/1.Branch_Basics.nes",
+                "branch_timing_tests/2.Backward_Branch.nes",
+                "branch_timing_tests/3.Forward_Branch.nes",
+            ],
+            old_passes(4, 0xF8),
+        );
     }
 
     #[test]
     fn blargg_ppu_vbl_nmi() {
         let roms: Vec<String> = [
-            "01-vbl_basics", "02-vbl_set_time", "03-vbl_clear_time", "04-nmi_control", "05-nmi_timing", "06-suppression",
-            "07-nmi_on_timing", "08-nmi_off_timing", "09-even_odd_frames", "10-even_odd_timing",
+            "01-vbl_basics",
+            "02-vbl_set_time",
+            "03-vbl_clear_time",
+            "04-nmi_control",
+            "05-nmi_timing",
+            "06-suppression",
+            "07-nmi_on_timing",
+            "08-nmi_off_timing",
+            "09-even_odd_frames",
+            "10-even_odd_timing",
         ]
         .iter()
         .map(|name| format!("ppu_vbl_nmi/rom_singles/{name}.nes"))
         .collect();
-        run_all(&roms.iter().map(String::as_str).collect::<Vec<_>>(), newer_passes);
+        run_all(
+            &roms.iter().map(String::as_str).collect::<Vec<_>>(),
+            newer_passes,
+        );
     }
 
     #[test]
     fn blargg_ppu_memory() {
-        run_all(&["oam_read/oam_read.nes", "oam_stress/oam_stress.nes", "ppu_open_bus/ppu_open_bus.nes"], newer_passes);
+        run_all(
+            &[
+                "oam_read/oam_read.nes",
+                "oam_stress/oam_stress.nes",
+                "ppu_open_bus/ppu_open_bus.nes",
+            ],
+            newer_passes,
+        );
         run_all(
             &[
                 "blargg_ppu_tests_2005.09.15b/palette_ram.nes",
@@ -199,31 +292,63 @@ mod tests {
     #[test]
     fn blargg_sprites() {
         let hits: Vec<String> = [
-            "01.basics", "02.alignment", "03.corners", "04.flip", "05.left_clip", "06.right_edge", "07.screen_bottom",
-            "08.double_height", "09.timing_basics", "10.timing_order", "11.edge_timing",
+            "01.basics",
+            "02.alignment",
+            "03.corners",
+            "04.flip",
+            "05.left_clip",
+            "06.right_edge",
+            "07.screen_bottom",
+            "08.double_height",
+            "09.timing_basics",
+            "10.timing_order",
+            "11.edge_timing",
         ]
         .iter()
         .map(|name| format!("sprite_hit_tests_2005.10.05/{name}.nes"))
         .collect();
-        run_all(&hits.iter().map(String::as_str).collect::<Vec<_>>(), old_passes(4, 0xF8));
         run_all(
-            &["sprite_overflow_tests/1.Basics.nes", "sprite_overflow_tests/2.Details.nes", "sprite_overflow_tests/3.Timing.nes", "sprite_overflow_tests/4.Obscure.nes", "sprite_overflow_tests/5.Emulator.nes"],
+            &hits.iter().map(String::as_str).collect::<Vec<_>>(),
+            old_passes(4, 0xF8),
+        );
+        run_all(
+            &[
+                "sprite_overflow_tests/1.Basics.nes",
+                "sprite_overflow_tests/2.Details.nes",
+                "sprite_overflow_tests/3.Timing.nes",
+                "sprite_overflow_tests/4.Obscure.nes",
+                "sprite_overflow_tests/5.Emulator.nes",
+            ],
             old_passes(4, 0xF8),
         );
     }
 
     #[test]
     fn blargg_vbl_nmi_timing() {
-        let roms: Vec<String> = ["1.frame_basics", "2.vbl_timing", "3.even_odd_frames", "4.vbl_clear_timing", "5.nmi_suppression", "6.nmi_disable", "7.nmi_timing"]
-            .iter()
-            .map(|name| format!("vbl_nmi_timing/{name}.nes"))
-            .collect();
-        run_all(&roms.iter().map(String::as_str).collect::<Vec<_>>(), old_passes(8, 0xF8));
+        let roms: Vec<String> = [
+            "1.frame_basics",
+            "2.vbl_timing",
+            "3.even_odd_frames",
+            "4.vbl_clear_timing",
+            "5.nmi_suppression",
+            "6.nmi_disable",
+            "7.nmi_timing",
+        ]
+        .iter()
+        .map(|name| format!("vbl_nmi_timing/{name}.nes"))
+        .collect();
+        run_all(
+            &roms.iter().map(String::as_str).collect::<Vec<_>>(),
+            old_passes(8, 0xF8),
+        );
     }
 
     /// The ROMs named `names` in `folder`, as `.nes` files.
     fn named(folder: &str, names: &[&str]) -> Vec<String> {
-        names.iter().map(|name| format!("{folder}/{name}.nes")).collect()
+        names
+            .iter()
+            .map(|name| format!("{folder}/{name}.nes"))
+            .collect()
     }
 
     fn strs(roms: &[String]) -> Vec<&str> {
@@ -234,7 +359,16 @@ mod tests {
     fn blargg_apu() {
         let roms = named(
             "apu_test/rom_singles",
-            &["1-len_ctr", "2-len_table", "3-irq_flag", "4-jitter", "5-len_timing", "6-irq_flag_timing", "7-dmc_basics", "8-dmc_rates"],
+            &[
+                "1-len_ctr",
+                "2-len_table",
+                "3-irq_flag",
+                "4-jitter",
+                "5-len_timing",
+                "6-irq_flag_timing",
+                "7-dmc_basics",
+                "8-dmc_rates",
+            ],
         );
         run_all(&strs(&roms), newer_passes);
     }
@@ -244,8 +378,16 @@ mod tests {
         let roms = named(
             "pal_apu_tests",
             &[
-                "01.len_ctr", "02.len_table", "03.irq_flag", "04.clock_jitter", "05.len_timing_mode0", "06.len_timing_mode1",
-                "07.irq_flag_timing", "08.irq_timing", "10.len_halt_timing", "11.len_reload_timing",
+                "01.len_ctr",
+                "02.len_table",
+                "03.irq_flag",
+                "04.clock_jitter",
+                "05.len_timing_mode0",
+                "06.len_timing_mode1",
+                "07.irq_flag_timing",
+                "08.irq_timing",
+                "10.len_halt_timing",
+                "11.len_reload_timing",
             ],
         );
         run_all_of(Region::Pal, &strs(&roms), old_passes(30, 0xF8));
@@ -256,8 +398,17 @@ mod tests {
         let roms = named(
             "blargg_apu_2005.07.30",
             &[
-                "01.len_ctr", "02.len_table", "03.irq_flag", "04.clock_jitter", "05.len_timing_mode0", "06.len_timing_mode1",
-                "07.irq_flag_timing", "08.irq_timing", "09.reset_timing", "10.len_halt_timing", "11.len_reload_timing",
+                "01.len_ctr",
+                "02.len_table",
+                "03.irq_flag",
+                "04.clock_jitter",
+                "05.len_timing_mode0",
+                "06.len_timing_mode1",
+                "07.irq_flag_timing",
+                "08.irq_timing",
+                "09.reset_timing",
+                "10.len_halt_timing",
+                "11.len_reload_timing",
             ],
         );
         run_all(&strs(&roms), old_passes(10, 0xF0));
@@ -267,7 +418,14 @@ mod tests {
     fn blargg_apu_reset() {
         let roms = named(
             "apu_reset",
-            &["4015_cleared", "4017_timing", "4017_written", "irq_flag_cleared", "len_ctrs_enabled", "works_immediately"],
+            &[
+                "4015_cleared",
+                "4017_timing",
+                "4017_written",
+                "irq_flag_cleared",
+                "len_ctrs_enabled",
+                "works_immediately",
+            ],
         );
         run_all(&strs(&roms), newer_passes);
     }
@@ -276,10 +434,22 @@ mod tests {
     fn blargg_cpu_interrupts_and_timing() {
         let mut roms = named(
             "cpu_interrupts_v2/rom_singles",
-            &["1-cli_latency", "2-nmi_and_brk", "3-nmi_and_irq", "4-irq_and_dma", "5-branch_delays_irq"],
+            &[
+                "1-cli_latency",
+                "2-nmi_and_brk",
+                "3-nmi_and_irq",
+                "4-irq_and_dma",
+                "5-branch_delays_irq",
+            ],
         );
-        roms.extend(named("instr_timing/rom_singles", &["1-instr_timing", "2-branch_timing"]));
-        roms.extend(named("sprdma_and_dmc_dma", &["sprdma_and_dmc_dma", "sprdma_and_dmc_dma_512"]));
+        roms.extend(named(
+            "instr_timing/rom_singles",
+            &["1-instr_timing", "2-branch_timing"],
+        ));
+        roms.extend(named(
+            "sprdma_and_dmc_dma",
+            &["sprdma_and_dmc_dma", "sprdma_and_dmc_dma_512"],
+        ));
         run_all(&strs(&roms), newer_passes);
     }
 
@@ -301,7 +471,15 @@ mod tests {
 
     #[test]
     fn blargg_misc() {
-        let mut roms = named("instr_misc/rom_singles", &["01-abs_x_wrap", "02-branch_wrap", "03-dummy_reads", "04-dummy_reads_apu"]);
+        let mut roms = named(
+            "instr_misc/rom_singles",
+            &[
+                "01-abs_x_wrap",
+                "02-branch_wrap",
+                "03-dummy_reads",
+                "04-dummy_reads_apu",
+            ],
+        );
         roms.extend(named("cpu_reset", &["ram_after_reset", "registers"]));
         roms.push("ppu_read_buffer/test_ppu_read_buffer.nes".to_string());
         run_all(&strs(&roms), newer_passes);
@@ -318,20 +496,38 @@ mod tests {
             return;
         };
         // Up to "run every test" at the top of its menu, and Start.
-        for (tenths, up, start) in [(10, false, false), (2, true, false), (2, false, false), (2, false, true), (900, false, false)] {
+        for (tenths, up, start) in [
+            (10, false, false),
+            (2, true, false),
+            (2, false, false),
+            (2, false, true),
+            (900, false, false),
+        ] {
             cpu.memory.gamepad.up = up;
             cpu.memory.gamepad.start = start;
             cpu.execute(tenths * CLOCK_HZ / 10);
         }
         let (passed, ran) = (cpu.memory.ram[0x38], cpu.memory.ram[0x37]);
-        assert!(ran == 147 && passed >= ACCURACY_COIN, "{passed} of {ran}, not {ACCURACY_COIN}");
+        assert!(
+            ran == 147 && passed >= ACCURACY_COIN,
+            "{passed} of {ran}, not {ACCURACY_COIN}"
+        );
     }
 
     #[test]
     fn blargg_mmc3() {
         // The fifth for the MMC3 most boards have; the sixth, the older's
         // IRQ, isn't.
-        let roms = named("mmc3_test_2/rom_singles", &["1-clocking", "2-details", "3-A12_clocking", "4-scanline_timing", "5-MMC3"]);
+        let roms = named(
+            "mmc3_test_2/rom_singles",
+            &[
+                "1-clocking",
+                "2-details",
+                "3-A12_clocking",
+                "4-scanline_timing",
+                "5-MMC3",
+            ],
+        );
         run_all(&strs(&roms), newer_passes);
     }
 }

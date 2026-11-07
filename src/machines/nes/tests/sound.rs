@@ -8,7 +8,7 @@ mod tests {
     use crate::cpu::bus::Bus;
     use crate::host::machine::Machine;
     use crate::machines::nes::cartridge::Cartridge;
-    use crate::machines::nes::{Nes, CLOCK_HZ};
+    use crate::machines::nes::{CLOCK_HZ, Nes};
 
     /// The triangle playing at `period` for a second, its last half second
     /// heard: its loudest, of the left channel's samples.
@@ -26,7 +26,10 @@ mod tests {
             nes.tick();
         }
         let heard = nes.sound();
-        heard[heard.len() / 2..].iter().step_by(2).fold(0.0, |loudest: f32, sample| loudest.max(sample.abs()))
+        heard[heard.len() / 2..]
+            .iter()
+            .step_by(2)
+            .fold(0.0, |loudest: f32, sample| loudest.max(sample.abs()))
     }
 
     #[test]
@@ -35,6 +38,9 @@ mod tests {
         let note = triangle((CLOCK_HZ / (32 * 440) - 1) as u16);
         let ultrasonic = triangle(0);
         assert!(note > 0.02, "the note not heard: {note}");
-        assert!(ultrasonic < note / 100.0, "the ultrasonic triangle heard: {ultrasonic}, the note {note}");
+        assert!(
+            ultrasonic < note / 100.0,
+            "the ultrasonic triangle heard: {ultrasonic}, the note {note}"
+        );
     }
 }

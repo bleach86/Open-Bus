@@ -11,19 +11,33 @@ import { drawScene } from './scenes.js';
 
 /// The emulator's WebAssembly: the browser's only, the desktop app's games
 /// being the native emulator's, which sorts its ROMs too.
-const { default: init, Emulator, RomSorter, put_file, read_file, read_part, written_files, changed_files, take_changed_parts } = native ? {} : await import('./pkg/cpu_emu.js');
+const {
+    default: init,
+    Emulator,
+    RomSorter,
+    put_file,
+    read_file,
+    read_part,
+    written_files,
+    changed_files,
+    take_changed_parts,
+} = native ? {} : await import('./pkg/cpu_emu.js');
 
 const page = (id) => document.getElementById(id);
 /// What the library scrolls in: in the desktop app, the library itself, its
 /// scrollbar over the scene behind it; in a browser, the page.
 const scroller = native ? page('library') : document.scrollingElement;
 const IIE_ROMS = {
-    apple2ee: ['Apple IIe Enhanced ROM Pages C0-DF - 342-0304-A - 1984.bin',
+    apple2ee: [
+        'Apple IIe Enhanced ROM Pages C0-DF - 342-0304-A - 1984.bin',
         'Apple IIe Enhanced ROM Pages E0-FF - 342-0303-A - 1984.bin',
-        'Apple IIe Enhanced Video ROM - 342-0265-A - US 1983.bin'],
-    apple2e: ['Apple IIe ROM Pages C0-DF - 342-0135-A - 1982.bin',
+        'Apple IIe Enhanced Video ROM - 342-0265-A - US 1983.bin',
+    ],
+    apple2e: [
+        'Apple IIe ROM Pages C0-DF - 342-0135-A - 1982.bin',
         'Apple IIe ROM Pages E0-FF - 342-0134-A - 1982.bin',
-        'Apple IIe Video ROM - 342-0133-A - US 1982.bin'],
+        'Apple IIe Video ROM - 342-0133-A - US 1982.bin',
+    ],
 };
 const DISK_II_ROMS = ['disk2-p5-341-0027.bin', 'disk2-p6-341-0028.bin'];
 /// The function key that changes a Disk System's disk; its BIOS's name.
@@ -33,7 +47,8 @@ const kind = (name) => name.split('.').pop().toLowerCase();
 const isGame = (name) => ['nes', 'fds', 'zip'].includes(kind(name));
 const isDisk = (name) => ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'].includes(kind(name));
 const isOurs = (name) => ['srm', 'state', 'resume'].includes(kind(name));
-const isRom = (name) => kind(name) === 'rom' || DISK_II_ROMS.includes(name) || Object.values(IIE_ROMS).flat().includes(name);
+const isRom = (name) =>
+    kind(name) === 'rom' || DISK_II_ROMS.includes(name) || Object.values(IIE_ROMS).flat().includes(name);
 const isUsable = (name) => isGame(name) || isDisk(name) || isOurs(name) || isRom(name);
 /// The most a file can be and hold a ROM, a zip's and any other's; and what
 /// isn't worth looking in.
@@ -97,39 +112,52 @@ const padsNow = () => [...(navigator.getGamepads?.() ?? [])].filter(Boolean);
 
 /// The key hints under the game, as the keys are bound.
 function showControlHelp() {
-    const lines = [['up', 'Up'], ['down', 'Down'], ['left', 'Left'], ['right', 'Right'], ['a', 'A'], ['b', 'B'], ['start', 'Start'], ['select', 'Select']];
-    page('control-help').replaceChildren(...lines.flatMap(([action, label]) => {
-        const source = controlsBound[0][action].find((bound) => bound.startsWith('key:'));
-        if (!source) {
-            return [];
-        }
-        const key = document.createElement('kbd');
-        key.textContent = bindings.said(source);
-        return [key, ` ${label} `];
-    }));
+    const lines = [
+        ['up', 'Up'],
+        ['down', 'Down'],
+        ['left', 'Left'],
+        ['right', 'Right'],
+        ['a', 'A'],
+        ['b', 'B'],
+        ['start', 'Start'],
+        ['select', 'Select'],
+    ];
+    page('control-help').replaceChildren(
+        ...lines.flatMap(([action, label]) => {
+            const source = controlsBound[0][action].find((bound) => bound.startsWith('key:'));
+            if (!source) {
+                return [];
+            }
+            const key = document.createElement('kbd');
+            key.textContent = bindings.said(source);
+            return [key, ` ${label} `];
+        }),
+    );
 }
 
 /// The dialog's rows, as they're bound now.
 function fillControls() {
-    page('control-rows').replaceChildren(...bindings.ACTIONS.map((action) => {
-        const item = document.createElement('li');
-        const words = document.createElement('span');
-        words.className = 'row-text';
-        words.textContent = action[0].toUpperCase() + action.slice(1);
-        const note = document.createElement('small');
-        note.textContent = controlsBound[controlsPlayer][action].map(bindings.said).join(', ') || 'Nothing';
-        words.append(note);
-        const change = document.createElement('button');
-        change.textContent = awaiting === action ? 'Press something…' : 'Change';
-        change.onclick = () => {
-            awaiting = action;
-            heldBefore = new Set(padsNow().flatMap(bindings.rawPressed));
-            page('control-status').textContent = 'Press a key or gamepad button. Esc cancels.';
-            fillControls();
-        };
-        item.append(words, change);
-        return item;
-    }));
+    page('control-rows').replaceChildren(
+        ...bindings.ACTIONS.map((action) => {
+            const item = document.createElement('li');
+            const words = document.createElement('span');
+            words.className = 'row-text';
+            words.textContent = action[0].toUpperCase() + action.slice(1);
+            const note = document.createElement('small');
+            note.textContent = controlsBound[controlsPlayer][action].map(bindings.said).join(', ') || 'Nothing';
+            words.append(note);
+            const change = document.createElement('button');
+            change.textContent = awaiting === action ? 'Press something…' : 'Change';
+            change.onclick = () => {
+                awaiting = action;
+                heldBefore = new Set(padsNow().flatMap(bindings.rawPressed));
+                page('control-status').textContent = 'Press a key or gamepad button. Esc cancels.';
+                fillControls();
+            };
+            item.append(words, change);
+            return item;
+        }),
+    );
     for (const who of [0, 1]) {
         page(`controls-player-${who + 1}`).classList.toggle('on', who === controlsPlayer);
     }
@@ -138,7 +166,8 @@ function fillControls() {
 function bindAwaited(source) {
     bindings.bind(controlsBound, controlsPlayer, awaiting, source);
     bindings.save(controlsBound);
-    page('control-status').textContent = `${awaiting[0].toUpperCase()}${awaiting.slice(1)} is now ${bindings.said(source)}.`;
+    page('control-status').textContent =
+        `${awaiting[0].toUpperCase()}${awaiting.slice(1)} is now ${bindings.said(source)}.`;
     awaiting = null;
     showControlHelp();
     fillControls();
@@ -147,7 +176,9 @@ function bindAwaited(source) {
 /// A gamepad's anything newly pressed, while one's being waited for.
 function lookForPress() {
     if (awaiting) {
-        const pressed = padsNow().flatMap(bindings.rawPressed).find((source) => !heldBefore.has(source));
+        const pressed = padsNow()
+            .flatMap(bindings.rawPressed)
+            .find((source) => !heldBefore.has(source));
         if (pressed) {
             bindAwaited(pressed);
         }
@@ -186,24 +217,28 @@ page('controls-dialog').addEventListener('cancel', (event) => {
         event.preventDefault();
     }
 });
-addEventListener('keydown', (event) => {
-    if (!page('controls-dialog').open) {
-        return;
-    }
-    // Nothing reaches a paused machine.
-    event.stopImmediatePropagation();
-    if (!awaiting) {
-        return;
-    }
-    event.preventDefault();
-    if (event.code === 'Escape') {
-        awaiting = null;
-        page('control-status').textContent = '';
-        fillControls();
-    } else if (!/^F\d+$/.test(event.code)) {
-        bindAwaited(`key:${event.code}`);
-    }
-}, true);
+addEventListener(
+    'keydown',
+    (event) => {
+        if (!page('controls-dialog').open) {
+            return;
+        }
+        // Nothing reaches a paused machine.
+        event.stopImmediatePropagation();
+        if (!awaiting) {
+            return;
+        }
+        event.preventDefault();
+        if (event.code === 'Escape') {
+            awaiting = null;
+            page('control-status').textContent = '';
+            fillControls();
+        } else if (!/^F\d+$/.test(event.code)) {
+            bindAwaited(`key:${event.code}`);
+        }
+    },
+    true,
+);
 showControlHelp();
 
 /// The art kept, and where its covers can be shown from.
@@ -263,7 +298,10 @@ async function refresh() {
 /// The games with no cover, as `findCovers` wants them.
 function coverless() {
     const nes = files.filter(isGame).map((file) => ({
-        machine: kind(file) === 'fds' ? 'fds' : 'nes', file, title: plainTitle(file), key: nesArt(file),
+        machine: kind(file) === 'fds' ? 'fds' : 'nes',
+        file,
+        title: plainTitle(file),
+        key: nesArt(file),
     }));
     const apple = games(files.filter(isDisk)).map((game) => {
         const title = diskTitle(game);
@@ -288,21 +326,28 @@ async function findMissing() {
     await refresh();
     button.disabled = false;
     const stopped = problems.map((problem) => `Stopped: ${problem}. What's found is kept.`);
-    say([`Found ${found} cover${found === 1 ? '' : 's'}${missed ? `, none for ${missed}` : ''}.`, ...stopped].join(' '), problems.length > 0);
+    say(
+        [`Found ${found} cover${found === 1 ? '' : 's'}${missed ? `, none for ${missed}` : ''}.`, ...stopped].join(' '),
+        problems.length > 0,
+    );
 }
 
 page('find').onclick = findMissing;
 
 /// Whose art a game has: that of its file, or of any of them, or of its
 /// title, for a picture named after it.
-const artFor = (title, ...names) => [...names.map(artKey), keyOf(title)].find((key) => art.has(key)) ?? artKey(names[0]);
+const artFor = (title, ...names) =>
+    [...names.map(artKey), keyOf(title)].find((key) => art.has(key)) ?? artKey(names[0]);
 
 /// What's said of an empty shelf.
-const noGames = native ? 'No games yet. Add a folder of them in Settings.' : 'No games yet. Add .nes, .fds or .zip files, or a folder of them.';
+const noGames = native
+    ? 'No games yet. Add a folder of them in Settings.'
+    : 'No games yet. Add .nes, .fds or .zip files, or a folder of them.';
 
 /// Whether what's searched for is in a game's title, file, or what's known
 /// of it.
-const found = (wanted, title, file, known) => [title, file, known?.developer, known?.genre, known?.year].join(' ').toLowerCase().includes(wanted);
+const found = (wanted, title, file, known) =>
+    [title, file, known?.developer, known?.genre, known?.year].join(' ').toLowerCase().includes(wanted);
 
 /// `items` as the sort says, by title among those alike, those not known
 /// about last.
@@ -339,7 +384,7 @@ function showCount(tab, name, count) {
 /// Whose art a NES game has: its own, or one of its title's.
 function nesArt(name) {
     const key = artFor(plainTitle(name), name);
-    return covers.has(key) ? key : coversByTitle.get(titleWords(plainTitle(name))) ?? key;
+    return covers.has(key) ? key : (coversByTitle.get(titleWords(plainTitle(name))) ?? key);
 }
 
 /// A game's title, by what's known of it, else its file.
@@ -367,9 +412,8 @@ function gameTile(name) {
     const button = document.createElement('button');
     button.className = 'play';
     button.dataset.tip = [titleOf(name), known?.developer, name].filter(Boolean).join('\n');
-    button.onclick = () => (native
-        ? playNatively({ kind: 'nes', game: name })
-        : start(() => Emulator.nes(name, 8), 'nes', [name]));
+    button.onclick = () =>
+        native ? playNatively({ kind: 'nes', game: name }) : start(() => Emulator.nes(name, 8), 'nes', [name]);
     button.append(cover(key, titleOf(name)), caption(titleOf(name), known, tagsOf(name)));
     item.append(button, removeButton(name));
     return item;
@@ -388,7 +432,9 @@ let shelfSize = 0;
 function shelfShape(list) {
     const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
     const tv = document.documentElement.classList.contains('tv');
-    const [smallest, across, down, words] = [tv ? TV_TILE : SMALLEST_TILE, GAP_ACROSS, GAP_DOWN, CAPTION].map((size) => size * rem);
+    const [smallest, across, down, words] = [tv ? TV_TILE : SMALLEST_TILE, GAP_ACROSS, GAP_DOWN, CAPTION].map(
+        (size) => size * rem,
+    );
     const width = list.clientWidth;
     if (tv) {
         // Whole rows, as many as the screen's height has room for at the
@@ -436,7 +482,12 @@ function navigationPressed() {
     const shoulders = (pad, button) => Boolean(pad.buttons[button]?.pressed);
     for (const pad of padsNow()) {
         const state = padState(pad);
-        const steered = { up: state.stickY < -0.5, down: state.stickY > 0.5, left: state.stickX < -0.5, right: state.stickX > 0.5 };
+        const steered = {
+            up: state.stickY < -0.5,
+            down: state.stickY > 0.5,
+            left: state.stickX < -0.5,
+            right: state.stickX > 0.5,
+        };
         for (const action of ['up', 'down', 'left', 'right', 'a', 'b', 'start']) {
             pressed[action] ||= steered[action] || boundHeld(0, action, pad, state);
         }
@@ -495,10 +546,24 @@ function moveInGames(way) {
 /// choice, the page's buttons, choices and ticks, the Apple's disks; not the
 /// search, which wants typing, nor a tile's remove button.
 function focusable() {
-    const all = document.querySelectorAll(['.toolbar button', '.toolbar select', '.shelf:not([hidden]) button',
-        '.shelf:not([hidden]) select', '.shelf:not([hidden]) summary', '.shelf:not([hidden]) label.check', '#disks .tile label'].join());
-    return [...all].filter((element) => !element.closest('#games') && !element.matches('.remove')
-        && !element.disabled && element.getClientRects().length);
+    const all = document.querySelectorAll(
+        [
+            '.toolbar button',
+            '.toolbar select',
+            '.shelf:not([hidden]) button',
+            '.shelf:not([hidden]) select',
+            '.shelf:not([hidden]) summary',
+            '.shelf:not([hidden]) label.check',
+            '#disks .tile label',
+        ].join(),
+    );
+    return [...all].filter(
+        (element) =>
+            !element.closest('#games') &&
+            !element.matches('.remove') &&
+            !element.disabled &&
+            element.getClientRects().length,
+    );
 }
 
 /// The nearest of `options` from `from` the way `way` goes: by how far
@@ -755,7 +820,10 @@ if (native) {
     /// Glided to `to`, from where it's going if it's moving already.
     const glideTo = (to) => {
         const moving = target !== null;
-        target = Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, to(moving ? target : scroller.scrollTop)));
+        target = Math.max(
+            0,
+            Math.min(scroller.scrollHeight - scroller.clientHeight, to(moving ? target : scroller.scrollTop)),
+        );
         if (!moving) {
             left = scroller.scrollTop;
             requestAnimationFrame(glide);
@@ -815,7 +883,7 @@ function cover(key, title, media = '') {
     label.textContent = title;
     blank.append(label);
     const hue = [...title].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 360, 7);
-    blank.style.setProperty('--hue', 180 + hue % 170);
+    blank.style.setProperty('--hue', 180 + (hue % 170));
     return blank;
 }
 
@@ -846,12 +914,16 @@ function fillDisks(wanted) {
     const all = games(files.filter(isDisk));
     const shown = arranged(all.filter(matches), (game) => knownOf(game)?.title ?? diskTitle(game), knownOf);
     const list = page('disks');
-    list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : 'No disks yet. Add disk images, or a folder of them.';
+    list.nextElementSibling.textContent = wanted
+        ? 'Nothing matches.'
+        : 'No disks yet. Add disk images, or a folder of them.';
     showCount('tab-apple', 'Apple II', shown.length);
-    list.replaceChildren(...shown.flatMap((game) => {
-        const open = game.disks.length > 1 && (opened.has(game.title) || wanted);
-        return open ? [diskTile(game, wanted), diskList(game)] : [diskTile(game, wanted)];
-    }));
+    list.replaceChildren(
+        ...shown.flatMap((game) => {
+            const open = game.disks.length > 1 && (opened.has(game.title) || wanted);
+            return open ? [diskTile(game, wanted), diskList(game)] : [diskTile(game, wanted)];
+        }),
+    );
 }
 
 /// What tells a disk from others of the title: its brackets, or its kind.
@@ -891,7 +963,12 @@ function diskTile(game, wanted) {
     drive.title = 'The order the disks go in';
     const key = artFor(title, ...game.disks);
     const media = game.disks.every(isVolume) ? 'hard' : 'floppy';
-    label.append(box, cover(key, title, media), caption(art.get(key)?.title ?? title, art.get(key), several ? '' : diskNote(game.disks[0])), drive);
+    label.append(
+        box,
+        cover(key, title, media),
+        caption(art.get(key)?.title ?? title, art.get(key), several ? '' : diskNote(game.disks[0])),
+        drive,
+    );
     item.append(label);
     if (several) {
         const toggle = document.createElement('button');
@@ -930,11 +1007,13 @@ function diskList(game) {
     const item = document.createElement('li');
     item.className = 'opened';
     const list = document.createElement('ul');
-    list.replaceChildren(...game.disks.map((name) => {
-        const row = document.createElement('li');
-        row.append(diskBox(name), removeButton(name));
-        return row;
-    }));
+    list.replaceChildren(
+        ...game.disks.map((name) => {
+            const row = document.createElement('li');
+            row.append(diskBox(name), removeButton(name));
+            return row;
+        }),
+    );
     item.append(list);
     return item;
 }
@@ -966,9 +1045,15 @@ const sure = (question) => (native ? native.ask(question) : Promise.resolve(conf
 /// in a browser, its copy there deleted.
 function removing(name, what) {
     if (native && !native.isOwn(name)) {
-        return { verb: 'Hide', question: `Hide ${what}? The files stay in their folder, and Settings can bring them back.` };
+        return {
+            verb: 'Hide',
+            question: `Hide ${what}? The files stay in their folder, and Settings can bring them back.`,
+        };
     }
-    return { verb: 'Remove', question: `Remove ${what} from ${native ? 'the library? Its copy there is deleted.' : 'this browser?'}` };
+    return {
+        verb: 'Remove',
+        question: `Remove ${what} from ${native ? 'the library? Its copy there is deleted.' : 'this browser?'}`,
+    };
 }
 
 function removeButton(name) {
@@ -1008,40 +1093,50 @@ function showRoms() {
     page('apple').disabled = short > 0;
     page('roms').classList.toggle('short', short > 0);
     page('roms').open = short > 0;
-    page('roms').querySelector('summary').textContent = short ? `Still needs ${short} ROM${short > 1 ? 's' : ''}` : plural(roms.filter((rom) => rom.here).length);
-    page('rom-list').replaceChildren(...roms.map(({ name, here }) => {
-        const item = document.createElement('li');
-        item.classList.toggle('missing', !here);
-        const mark = document.createElement('span');
-        mark.className = 'mark';
-        mark.textContent = here ? '✓' : '✗';
-        const label = document.createElement('span');
-        label.className = 'rom';
-        label.textContent = name;
-        item.append(mark, label);
-        if (here) {
-            item.append(removeButton(name));
-        }
-        return item;
-    }));
+    page('roms').querySelector('summary').textContent = short
+        ? `Still needs ${short} ROM${short > 1 ? 's' : ''}`
+        : plural(roms.filter((rom) => rom.here).length);
+    page('rom-list').replaceChildren(
+        ...roms.map(({ name, here }) => {
+            const item = document.createElement('li');
+            item.classList.toggle('missing', !here);
+            const mark = document.createElement('span');
+            mark.className = 'mark';
+            mark.textContent = here ? '✓' : '✗';
+            const label = document.createElement('span');
+            label.className = 'rom';
+            label.textContent = name;
+            item.append(mark, label);
+            if (here) {
+                item.append(removeButton(name));
+            }
+            return item;
+        }),
+    );
     const disksChosen = chosen.length;
-    page('picked').textContent = disksChosen ? `${disksChosen} disk${disksChosen > 1 ? 's' : ''} chosen` : 'No disks chosen';
-    page('disks').querySelectorAll('label').forEach((label) => {
-        const box = label.querySelector('input');
-        const drive = label.querySelector('.drive');
-        if (box.dataset.game) {
-            const disks = JSON.parse(box.dataset.game);
-            const places = disks.map((disk) => chosen.indexOf(disk)).filter((at) => at >= 0);
-            box.checked = places.length === disks.length;
-            box.indeterminate = places.length > 0 && !box.checked;
-            label.classList.toggle('some', box.indeterminate);
-            drive.textContent = places.length ? `${Math.min(...places) + 1}–${Math.max(...places) + 1}`.replace(/^(\d+)–\1$/, '$1') : '';
-            return;
-        }
-        box.checked = chosen.includes(box.value);
-        const at = chosen.indexOf(box.value);
-        drive.textContent = at < 0 ? '' : at + 1;
-    });
+    page('picked').textContent = disksChosen
+        ? `${disksChosen} disk${disksChosen > 1 ? 's' : ''} chosen`
+        : 'No disks chosen';
+    page('disks')
+        .querySelectorAll('label')
+        .forEach((label) => {
+            const box = label.querySelector('input');
+            const drive = label.querySelector('.drive');
+            if (box.dataset.game) {
+                const disks = JSON.parse(box.dataset.game);
+                const places = disks.map((disk) => chosen.indexOf(disk)).filter((at) => at >= 0);
+                box.checked = places.length === disks.length;
+                box.indeterminate = places.length > 0 && !box.checked;
+                label.classList.toggle('some', box.indeterminate);
+                drive.textContent = places.length
+                    ? `${Math.min(...places) + 1}–${Math.max(...places) + 1}`.replace(/^(\d+)–\1$/, '$1')
+                    : '';
+                return;
+            }
+            box.checked = chosen.includes(box.value);
+            const at = chosen.indexOf(box.value);
+            drive.textContent = at < 0 ? '' : at + 1;
+        });
 }
 
 /// Files added: `list`, chosen one by one, replacing any of the name; and
@@ -1056,12 +1151,12 @@ async function add(given, dropped = [], sorted = null) {
     const inFolders = dropped.filter((file) => !isMedia(file.name));
     // The Apple's ROMs out of it first, whatever they're called.
     const sorter = sorted ? null : new RomSorter();
-    const isOneOfThem = async (file) => sorter && mayHoldRoms(file)
-        && sorter.add(file.name, new Uint8Array(await file.arrayBuffer()));
+    const isOneOfThem = async (file) =>
+        sorter && mayHoldRoms(file) && sorter.add(file.name, new Uint8Array(await file.arrayBuffer()));
     const notRoms = async (files) => {
         const rest = [];
         for (const file of files) {
-            if (!await isOneOfThem(file)) {
+            if (!(await isOneOfThem(file))) {
                 rest.push(file);
             }
         }
@@ -1075,7 +1170,10 @@ async function add(given, dropped = [], sorted = null) {
     const fromFolders = others.filter((file) => isUsable(file.name));
     // What each's stored as: in its game's folder, if it's in one; and
     // copies in a folder under a game's left out.
-    const stored = storedNames(fromFolders.map((file) => file.path), (path) => isDisk(path));
+    const stored = storedNames(
+        fromFolders.map((file) => file.path),
+        (path) => isDisk(path),
+    );
     const nameOf = (file) => (file.path === undefined ? file.name : stored.get(file.path));
     const added = [];
     const repeated = [];
@@ -1157,7 +1255,7 @@ async function folderFiles(folder) {
         }
     }
     for (const under of folders) {
-        found.push(...await folderFiles(under));
+        found.push(...(await folderFiles(under)));
     }
     return found;
 }
@@ -1169,7 +1267,7 @@ async function addDropped(entries) {
     try {
         for (const entry of entries) {
             if (entry.isDirectory) {
-                inFolders.push(...await folderFiles(entry));
+                inFolders.push(...(await folderFiles(entry)));
             } else {
                 loose.push(await fileOf(entry));
             }
@@ -1193,7 +1291,10 @@ page('add-folder').onchange = async (event) => {
     for (const file of inFolder) {
         file.path = `/${file.webkitRelativePath}`;
     }
-    await add([], inFolder.sort((a, b) => depth(a) - depth(b)));
+    await add(
+        [],
+        inFolder.sort((a, b) => depth(a) - depth(b)),
+    );
     event.target.value = '';
 };
 page('add-folder-button').hidden = !('webkitdirectory' in HTMLInputElement.prototype);
@@ -1219,7 +1320,7 @@ addEventListener('drop', (event) => {
 page('apple').onclick = () => {
     const model = page('model').value;
     const mockingboards = Number(page('mockingboards').value);
-    const roms = model === 'apple2' ? plusRom() ?? '' : '';
+    const roms = model === 'apple2' ? (plusRom() ?? '') : '';
     const disks = chosen;
     if (native) {
         playNatively({ kind: 'apple', model, roms, disks, mockingboards });
@@ -1280,7 +1381,9 @@ async function addFolder(folder) {
     await refresh();
     const count = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
     const also = (number, what) => (number ? ` ${count(number, what)}.` : '');
-    say(`Added ${count(native.gamesIn(folder), 'game')} from ${folder}.${also(roms.length, 'system ROM')}${also(made, 'cover')}`);
+    say(
+        `Added ${count(native.gamesIn(folder), 'game')} from ${folder}.${also(roms.length, 'system ROM')}${also(made, 'cover')}`,
+    );
     if (!page('settings').hidden) {
         showShelf(files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple');
     }
@@ -1361,13 +1464,17 @@ async function fillSettings() {
     }
     const { folders, hidden, data } = await native.settings();
     const counted = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
-    page('folders').replaceChildren(...folders.map((folder) => row(folder, counted(native.gamesIn(folder), 'game'), 'Remove', async () => {
-        if (await sure(`Remove ${folder} from the library? Its files stay where they are.`)) {
-            await native.removeFolder(folder);
-            await refresh();
-            fillSettings();
-        }
-    })));
+    page('folders').replaceChildren(
+        ...folders.map((folder) =>
+            row(folder, counted(native.gamesIn(folder), 'game'), 'Remove', async () => {
+                if (await sure(`Remove ${folder} from the library? Its files stay where they are.`)) {
+                    await native.removeFolder(folder);
+                    await refresh();
+                    fillSettings();
+                }
+            }),
+        ),
+    );
     if (!folders.length) {
         page('folders').append(row('No folders yet. Add one to start your library.'));
     }
@@ -1387,10 +1494,12 @@ async function fillSettings() {
         say(`${paths.length} game${paths.length === 1 ? '' : 's'} back in the library.`);
         fillSettings();
     };
-    page('hidden-games').replaceChildren(...hidden.map((path) => {
-        const item = row(shortName(path), path, 'Restore', () => restoring([path], [item]));
-        return item;
-    }));
+    page('hidden-games').replaceChildren(
+        ...hidden.map((path) => {
+            const item = row(shortName(path), path, 'Restore', () => restoring([path], [item]));
+            return item;
+        }),
+    );
     page('restore-all').onclick = () => restoring(hidden, [...page('hidden-games').children]);
     const has = (name) => files.includes(name);
     const appleFound = [...DISK_II_ROMS, ...IIE_ROMS.apple2ee].filter(has).length;
@@ -1444,14 +1553,19 @@ if (native) {
         }
         await refresh();
         const counted = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
-        say([came && `${counted(came, 'new game')}`, went && `${counted(went, 'game')} gone`].filter(Boolean).join(', ') + '.');
+        say(
+            [came && `${counted(came, 'new game')}`, went && `${counted(went, 'game')} gone`]
+                .filter(Boolean)
+                .join(', ') + '.',
+        );
         if (!page('settings').hidden) {
             fillSettings();
         }
     });
     page('quit-app').hidden = false;
     page('start-fullscreen').checked = localStorage.getItem('fullscreen') === 'yes';
-    page('start-fullscreen').onchange = ({ target }) => localStorage.setItem('fullscreen', target.checked ? 'yes' : 'no');
+    page('start-fullscreen').onchange = ({ target }) =>
+        localStorage.setItem('fullscreen', target.checked ? 'yes' : 'no');
     page('performance-mode').checked = localStorage.getItem('performance') === 'yes';
     page('quick-resume').checked = localStorage.getItem('resume') === 'yes';
     page('tv-layout').checked = localStorage.getItem('tv') === 'yes';
@@ -1463,7 +1577,8 @@ if (native) {
         tvLayout(true);
     }
     page('quick-resume').onchange = ({ target }) => localStorage.setItem('resume', target.checked ? 'yes' : 'no');
-    page('performance-mode').onchange = ({ target }) => localStorage.setItem('performance', target.checked ? 'yes' : 'no');
+    page('performance-mode').onchange = ({ target }) =>
+        localStorage.setItem('performance', target.checked ? 'yes' : 'no');
     page('background').value = localStorage.getItem('background') ?? 'sunset';
     page('background').onchange = ({ target }) => {
         localStorage.setItem('background', target.value);
@@ -1571,8 +1686,10 @@ async function start(make, machine, using) {
 /// files saved, whole; a hard disk's volume, only the parts written over.
 async function saveWritten() {
     const whole = written_files().map((name) => [name, read_file(name)]);
-    const parts = changed_files().map((name) => [name,
-        [...take_changed_parts(name)].map((offset) => [offset, read_part(name, offset)])]);
+    const parts = changed_files().map((name) => [
+        name,
+        [...take_changed_parts(name)].map((offset) => [offset, read_part(name, offset)]),
+    ]);
     for (const [name, data] of whole) {
         await keep(name, data);
     }
@@ -1652,15 +1769,20 @@ function padState(pad) {
 
 /// Whether what's bound to `action` is held, for `who`, with gamepad `pad`.
 function boundHeld(who, action, pad, state) {
-    return bindings.holds(controlsBound, who, action, (source) => (source.startsWith('key:')
-        ? held.has(source.slice('key:'.length))
-        : bindings.padHeld(source, pad, state)));
+    return bindings.holds(controlsBound, who, action, (source) =>
+        source.startsWith('key:') ? held.has(source.slice('key:'.length)) : bindings.padHeld(source, pad, state),
+    );
 }
 
 /// A player's console buttons, a bit each: as they're bound, with the stick
 /// steering, and what else presses them.
 function padBits(who, pad, state, touched = {}) {
-    const steered = { up: state.stickY < -0.5, down: state.stickY > 0.5, left: state.stickX < -0.5, right: state.stickX > 0.5 };
+    const steered = {
+        up: state.stickY < -0.5,
+        down: state.stickY > 0.5,
+        left: state.stickX < -0.5,
+        right: state.stickX > 0.5,
+    };
     return bindings.ACTIONS.filter((action) => action !== 'library')
         .map((action) => touched[action] || steered[action] || boundHeld(who, action, pad, state))
         .reduce((bits, on, bit) => bits | (on ? 1 << bit : 0), 0);
@@ -1684,12 +1806,18 @@ function controls() {
         }
         return stick;
     };
-    const x = towards(padLeft || key('Numpad4', 'Numpad7', 'Numpad1'),
-        padRight || key('Numpad6', 'Numpad9', 'Numpad3'), stickX);
-    const y = towards(padUp || key('Numpad8', 'Numpad7', 'Numpad9'),
-        padDown || key('Numpad2', 'Numpad1', 'Numpad3'), stickY);
-    const buttons = (first.a || key('Numpad0', 'AltLeft') ? 1 : 0)
-        | (first.east || key('NumpadDecimal', 'AltRight') ? 2 : 0);
+    const x = towards(
+        padLeft || key('Numpad4', 'Numpad7', 'Numpad1'),
+        padRight || key('Numpad6', 'Numpad9', 'Numpad3'),
+        stickX,
+    );
+    const y = towards(
+        padUp || key('Numpad8', 'Numpad7', 'Numpad9'),
+        padDown || key('Numpad2', 'Numpad1', 'Numpad3'),
+        stickY,
+    );
+    const buttons =
+        (first.a || key('Numpad0', 'AltLeft') ? 1 : 0) | (first.east || key('NumpadDecimal', 'AltRight') ? 2 : 0);
     const down_ = [...held].some((code) => !/^(Shift|Control|Alt|Meta)/.test(code));
     emulator.controls(gamepad, gamepad2, x, y, buttons, down_, reset);
 }
@@ -1753,7 +1881,7 @@ addEventListener('keydown', (event) => {
         return;
     }
     const code = event.code;
-    if (code.startsWith('Numpad') && code !== 'NumpadEnter' || code.startsWith('Alt')) {
+    if ((code.startsWith('Numpad') && code !== 'NumpadEnter') || code.startsWith('Alt')) {
         held.add(code);
         event.preventDefault();
         return;
@@ -1837,7 +1965,7 @@ if (!native) {
 }
 await loadArt();
 await refresh();
-const firstShelf = native && !files.length ? 'settings' : (files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple');
+const firstShelf = native && !files.length ? 'settings' : files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple';
 const lastShelf = localStorage.getItem('shelf');
 showShelf(native && !files.length ? firstShelf : lastShelf && lastShelf !== 'settings' ? lastShelf : firstShelf);
 if (native) {

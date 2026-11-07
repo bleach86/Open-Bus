@@ -24,9 +24,21 @@ const LOOK_EVERY: Duration = Duration::from_millis(4);
 const SETTLE: Duration = Duration::from_millis(150);
 
 /// What the library moves by, as it's bound, and its shoulders and triggers.
-const LIBRARY: [Action; 7] = [Action::Up, Action::Down, Action::Left, Action::Right, Action::A, Action::B, Action::Start];
-const SHOULDERS: [(&str, &str); 4] =
-    [("leftshoulder", "previous"), ("rightshoulder", "next"), ("lefttrigger", "pageup"), ("righttrigger", "pagedown")];
+const LIBRARY: [Action; 7] = [
+    Action::Up,
+    Action::Down,
+    Action::Left,
+    Action::Right,
+    Action::A,
+    Action::B,
+    Action::Start,
+];
+const SHOULDERS: [(&str, &str); 4] = [
+    ("leftshoulder", "previous"),
+    ("rightshoulder", "next"),
+    ("lefttrigger", "pageup"),
+    ("righttrigger", "pagedown"),
+];
 
 /// To be said before SDL starts, by anything using it for gamepads: that
 /// buttons go by where they are; and SDL's own driver for Switch
@@ -77,7 +89,10 @@ impl Pads {
             .map(Pad::new);
         let places = [opened.next(), opened.next()];
         drop(opened);
-        Pads { controllers, places }
+        Pads {
+            controllers,
+            places,
+        }
     }
 
     /// The first there is.
@@ -87,12 +102,17 @@ impl Pads {
 
     /// Whether `button`'s held by `player`.
     pub fn holds(&self, player: usize, button: &str) -> bool {
-        self.places[player].as_ref().is_some_and(|pad| pad.held.contains(button))
+        self.places[player]
+            .as_ref()
+            .is_some_and(|pad| pad.held.contains(button))
     }
 
     /// The gamepad of instance `which`, if it's a player's.
     fn of(&mut self, which: u32) -> Option<&mut Pad> {
-        self.places.iter_mut().flatten().find(|pad| pad.controller.instance_id() == which)
+        self.places
+            .iter_mut()
+            .flatten()
+            .find(|pad| pad.controller.instance_id() == which)
     }
 
     /// A gamepad plugged in, or there already, as SDL says at the start: the
@@ -116,16 +136,23 @@ impl Pads {
             Event::ControllerDeviceAdded { which, .. } => self.plugged_in(which),
             Event::ControllerDeviceRemoved { which, .. } => {
                 let place = self.places.iter_mut().find(|pad| {
-                    pad.as_ref().is_some_and(|pad| pad.controller.instance_id() == which)
+                    pad.as_ref()
+                        .is_some_and(|pad| pad.controller.instance_id() == which)
                 });
                 if let Some(place) = place {
                     *place = None;
                 }
             }
-            Event::ControllerAxisMotion { which, axis, value, .. } => {
+            Event::ControllerAxisMotion {
+                which, axis, value, ..
+            } => {
                 let pad = self.of(which)?;
                 let travel = (value as f32 / 32767.0).clamp(-1.0, 1.0);
-                let settled = if travel.abs() < DEAD_ZONE { 0.0 } else { travel };
+                let settled = if travel.abs() < DEAD_ZONE {
+                    0.0
+                } else {
+                    travel
+                };
                 match axis {
                     Axis::LeftX => pad.stick.0 = settled,
                     Axis::LeftY => pad.stick.1 = settled,
@@ -168,9 +195,23 @@ impl Pads {
     fn library(&self, controls: &Controls) -> String {
         let mut words: Vec<&str> = Vec::new();
         for player in 0..2 {
-            let held = |source: &str| source.strip_prefix("pad:").is_some_and(|button| self.holds(player, button));
-            words.extend(LIBRARY.iter().filter(|&&action| controls.holds(player, action, held)).map(|&action| word(action)));
-            words.extend(SHOULDERS.iter().filter(|(button, _)| self.holds(player, button)).map(|(_, name)| *name));
+            let held = |source: &str| {
+                source
+                    .strip_prefix("pad:")
+                    .is_some_and(|button| self.holds(player, button))
+            };
+            words.extend(
+                LIBRARY
+                    .iter()
+                    .filter(|&&action| controls.holds(player, action, held))
+                    .map(|&action| word(action)),
+            );
+            words.extend(
+                SHOULDERS
+                    .iter()
+                    .filter(|(button, _)| self.holds(player, button))
+                    .map(|(_, name)| *name),
+            );
         }
         words.sort_unstable();
         words.dedup();

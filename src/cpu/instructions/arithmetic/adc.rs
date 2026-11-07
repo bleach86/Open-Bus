@@ -1,5 +1,5 @@
 use crate::cpu::bus::Bus;
-use crate::cpu::{Variant, CPU};
+use crate::cpu::{CPU, Variant};
 
 impl<B: Bus> CPU<B> {
     fn adc_set_flags(&mut self, result: u16, operand: u8) {

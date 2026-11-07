@@ -1,5 +1,5 @@
-use crate::cpu::bus::Bus;
 use crate::cpu::CPU;
+use crate::cpu::bus::Bus;
 
 impl<B: Bus> CPU<B> {
     pub fn sta_zero_page(&mut self) {
@@ -39,7 +39,6 @@ impl<B: Bus> CPU<B> {
 
     pub fn sta_indirect_x(&mut self) {
         let addr = self.fetch_addr_indirect_x();
-
 
         self.write_byte(addr, self.a);
     }

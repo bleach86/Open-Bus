@@ -1,5 +1,5 @@
-use crate::cpu::bus::Bus;
 use crate::cpu::CPU;
+use crate::cpu::bus::Bus;
 
 impl<B: Bus> CPU<B> {
     /// The 65C02's TSB and TRB: Z from A AND the byte, as BIT's; then A's

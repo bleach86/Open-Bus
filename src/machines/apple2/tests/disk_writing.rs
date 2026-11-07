@@ -8,10 +8,10 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::host::machine::Machine;
     use crate::cpu::CPU;
-    use crate::machines::apple2::disk2::Disk2;
+    use crate::host::machine::Machine;
     use crate::machines::apple2::disk_image::Disk;
+    use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::{Apple2, CLOCK_HZ};
     use std::path::{Path, PathBuf};
 
@@ -75,9 +75,15 @@ mod tests {
         let mut bytes = vec![0xFF; 20]; // syncs ahead, to read in step
         bytes.extend(field);
         write_bytes(&mut card, &bytes);
-        assert!(card.drives[0].disk.as_ref().unwrap().written, "the disk not marked written");
+        assert!(
+            card.drives[0].disk.as_ref().unwrap().written,
+            "the disk not marked written"
+        );
         let read = read_bytes(&mut card);
-        assert!(read.windows(field.len()).any(|bytes| bytes == field), "{field:02X?} not read back");
+        assert!(
+            read.windows(field.len()).any(|bytes| bytes == field),
+            "{field:02X?} not read back"
+        );
     }
 
     #[test]
@@ -96,14 +102,20 @@ mod tests {
             protected
         };
         card.io(0xC0E9, None);
-        assert!(!sense(&mut card), "write protect sensed, the disk not protected");
+        assert!(
+            !sense(&mut card),
+            "write protect sensed, the disk not protected"
+        );
 
         card.drives[0].disk.as_mut().unwrap().write_protected = true;
         assert!(sense(&mut card), "write protect not sensed");
         let before = card.drives[0].disk.as_ref().unwrap().tracks.clone();
         write_bytes(&mut card, &[0x96; 100]);
         let disk = card.drives[0].disk.as_ref().unwrap();
-        assert!(!disk.written && disk.tracks == before, "a write protected disk written");
+        assert!(
+            !disk.written && disk.tracks == before,
+            "a write protected disk written"
+        );
     }
 
     /// An Apple II+ with the card and `disk`, reset; None without the ROMs.
@@ -131,7 +143,9 @@ mod tests {
     /// prompt, `]` alone, for up to `seconds`.
     fn run_to_prompt(cpu: &mut CPU<Apple2>, seconds: u32) -> bool {
         let until = cpu.clock + seconds * CLOCK_HZ;
-        let prompt = |cpu: &CPU<Apple2>| cpu.memory.text()[(cpu.memory.ram[0x25] as usize).min(23)].trim_end() == "]";
+        let prompt = |cpu: &CPU<Apple2>| {
+            cpu.memory.text()[(cpu.memory.ram[0x25] as usize).min(23)].trim_end() == "]"
+        };
         while !prompt(cpu) && cpu.clock < until {
             cpu.execute(100_000);
         }
@@ -151,7 +165,11 @@ mod tests {
     /// DOS 3.3 booted, at its prompt, the screen cleared.
     fn booted(disk: Disk) -> Option<CPU<Apple2>> {
         let mut cpu = apple(disk)?;
-        assert!(run_until(&mut cpu, "DOS VERSION 3.3", 10), "DOS 3.3 not up: {:#?}", cpu.memory.text());
+        assert!(
+            run_until(&mut cpu, "DOS VERSION 3.3", 10),
+            "DOS 3.3 not up: {:#?}",
+            cpu.memory.text()
+        );
         cpu.execute(CLOCK_HZ); // to the prompt
         type_in(&mut cpu, b"HOME\r");
         cpu.execute(CLOCK_HZ / 10);
@@ -165,9 +183,20 @@ mod tests {
             return;
         };
         let file = std::env::temp_dir().join(format!("cpu_emu_saved_{}.dsk", std::process::id()));
-        cpu.memory.disk2.as_mut().unwrap().drives[0].disk.as_mut().unwrap().path = Some(file.clone());
-        type_in(&mut cpu, b"NEW\r10 PRINT \"SAVED ON DISK\"\rSAVE TEST\rCATALOG\r");
-        assert!(run_until(&mut cpu, " TEST", 10), "TEST not in the catalog: {:#?}", cpu.memory.text());
+        cpu.memory.disk2.as_mut().unwrap().drives[0]
+            .disk
+            .as_mut()
+            .unwrap()
+            .path = Some(file.clone());
+        type_in(
+            &mut cpu,
+            b"NEW\r10 PRINT \"SAVED ON DISK\"\rSAVE TEST\rCATALOG\r",
+        );
+        assert!(
+            run_until(&mut cpu, " TEST", 10),
+            "TEST not in the catalog: {:#?}",
+            cpu.memory.text()
+        );
         cpu.memory.keep_saved(false);
         assert!(!file.exists(), "saved while the disk was still turning");
         // Saved at the frame's end after the drive stops.
@@ -180,7 +209,11 @@ mod tests {
         std::fs::remove_file(&file).unwrap();
         let mut cpu = booted(Disk::from_dsk(&image).unwrap()).unwrap();
         type_in(&mut cpu, b"RUN TEST\r");
-        assert!(run_until(&mut cpu, "SAVED ON DISK", 5), "TEST didn't run: {:#?}", cpu.memory.text());
+        assert!(
+            run_until(&mut cpu, "SAVED ON DISK", 5),
+            "TEST didn't run: {:#?}",
+            cpu.memory.text()
+        );
     }
 
     #[test]
@@ -197,15 +230,28 @@ mod tests {
         cpu.memory.disk2.as_mut().unwrap().drives[0].disk = Some(blank);
         type_in(&mut cpu, b"INIT HELLO\r");
         cpu.execute(CLOCK_HZ);
-        assert!(run_to_prompt(&mut cpu, 60), "INIT didn't finish: {:#?}", cpu.memory.text());
+        assert!(
+            run_to_prompt(&mut cpu, 60),
+            "INIT didn't finish: {:#?}",
+            cpu.memory.text()
+        );
         while cpu.memory.disk2.as_ref().unwrap().spinning() {
             cpu.execute(100_000);
         }
 
-        let image = cpu.memory.disk2.as_ref().unwrap().drives[0].disk.as_ref().unwrap().to_image();
-        let image = image.unwrap_or_else(|e| panic!("the formatted disk doesn't read as a .dsk: {e}"));
+        let image = cpu.memory.disk2.as_ref().unwrap().drives[0]
+            .disk
+            .as_ref()
+            .unwrap()
+            .to_image();
+        let image =
+            image.unwrap_or_else(|e| panic!("the formatted disk doesn't read as a .dsk: {e}"));
         let mut cpu = apple(Disk::from_dsk(&image).unwrap()).unwrap();
-        assert!(run_until(&mut cpu, "FORMATTED BY INIT", 10), "it didn't boot: {:#?}", cpu.memory.text());
+        assert!(
+            run_until(&mut cpu, "FORMATTED BY INIT", 10),
+            "it didn't boot: {:#?}",
+            cpu.memory.text()
+        );
     }
 
     #[test]
@@ -214,9 +260,24 @@ mod tests {
             eprintln!("disk writing test: no ROMs or System Master in roms/apple2/");
             return;
         };
-        cpu.memory.disk2.as_mut().unwrap().drives[0].disk.as_mut().unwrap().write_protected = true;
+        cpu.memory.disk2.as_mut().unwrap().drives[0]
+            .disk
+            .as_mut()
+            .unwrap()
+            .write_protected = true;
         type_in(&mut cpu, b"NEW\r10 END\rSAVE TEST\r");
-        assert!(run_until(&mut cpu, "WRITE PROTECTED", 10), "no WRITE PROTECTED: {:#?}", cpu.memory.text());
-        assert!(!cpu.memory.disk2.as_ref().unwrap().drives[0].disk.as_ref().unwrap().written, "written");
+        assert!(
+            run_until(&mut cpu, "WRITE PROTECTED", 10),
+            "no WRITE PROTECTED: {:#?}",
+            cpu.memory.text()
+        );
+        assert!(
+            !cpu.memory.disk2.as_ref().unwrap().drives[0]
+                .disk
+                .as_ref()
+                .unwrap()
+                .written,
+            "written"
+        );
     }
 }

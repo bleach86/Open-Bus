@@ -8,9 +8,9 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
-    use crate::machines::apple2::hard_disk::{HardDisk, Volume, FIRMWARE};
+    use crate::cpu::bus::Bus;
+    use crate::machines::apple2::hard_disk::{FIRMWARE, HardDisk, Volume};
     use crate::machines::apple2::{Apple2, CLOCK_HZ};
     use std::path::{Path, PathBuf};
 
@@ -20,14 +20,29 @@ mod tests {
 
     #[test]
     fn the_cards_firmware_is_its_sources() {
-        let cc65 = std::env::var("HOME").map(|home| Path::new(&home).join("cc65/bin")).unwrap_or_default();
-        let tool = |name: &str| if cc65.join(name).exists() { cc65.join(name) } else { PathBuf::from(name) };
+        let cc65 = std::env::var("HOME")
+            .map(|home| Path::new(&home).join("cc65/bin"))
+            .unwrap_or_default();
+        let tool = |name: &str| {
+            if cc65.join(name).exists() {
+                cc65.join(name)
+            } else {
+                PathBuf::from(name)
+            }
+        };
         let out = std::env::temp_dir().join(format!("cpu_emu_firmware_{}", std::process::id()));
         std::fs::create_dir_all(&out).unwrap();
-        for (name, firmware) in [("hard_disk", FIRMWARE), ("clock", crate::machines::apple2::clock_card::FIRMWARE)] {
+        for (name, firmware) in [
+            ("hard_disk", FIRMWARE),
+            ("clock", crate::machines::apple2::clock_card::FIRMWARE),
+        ] {
             let object = out.join(format!("{name}.o"));
             let assembled = std::process::Command::new(tool("ca65"))
-                .args(["-o", object.to_str().unwrap(), roms().join(format!("{name}.s")).to_str().unwrap()])
+                .args([
+                    "-o",
+                    object.to_str().unwrap(),
+                    roms().join(format!("{name}.s")).to_str().unwrap(),
+                ])
                 .status();
             if !assembled.is_ok_and(|status| status.success()) {
                 eprintln!("hard disk test: no cc65, to check the firmware against its source");
@@ -41,19 +56,32 @@ mod tests {
                 .unwrap();
             assert!(linked.success(), "ld65, {name}");
             let fresh = std::fs::read(&binary).unwrap();
-            assert_eq!(&fresh[..], &firmware[..], "roms/{name}.bin not {name}.s's: run make -C roms and commit it");
+            assert_eq!(
+                &fresh[..],
+                &firmware[..],
+                "roms/{name}.bin not {name}.s's: run make -C roms and commit it"
+            );
         }
         std::fs::remove_dir_all(&out).unwrap();
         // The hard disk's signature, and its last bytes: two volumes, the
         // driver's place.
-        assert_eq!([FIRMWARE[1], FIRMWARE[3], FIRMWARE[5], FIRMWARE[7]], [0x20, 0x00, 0x03, 0x3C]);
+        assert_eq!(
+            [FIRMWARE[1], FIRMWARE[3], FIRMWARE[5], FIRMWARE[7]],
+            [0x20, 0x00, 0x03, 0x3C]
+        );
         assert_eq!(FIRMWARE[0xFE], 0x1F);
     }
 
     /// A volume of `blocks` blocks in a temporary image, block n's bytes n.
     fn image(name: &str, blocks: usize) -> PathBuf {
         let file = std::env::temp_dir().join(format!("cpu_emu_{}_{name}.hdv", std::process::id()));
-        std::fs::write(&file, (0..blocks * 512).map(|at| (at / 512) as u8).collect::<Vec<u8>>()).unwrap();
+        std::fs::write(
+            &file,
+            (0..blocks * 512)
+                .map(|at| (at / 512) as u8)
+                .collect::<Vec<u8>>(),
+        )
+        .unwrap();
         file
     }
 
@@ -69,7 +97,11 @@ mod tests {
         reg(&mut card, 0, 0);
         reg(&mut card, 1, 0x70);
         reg(&mut card, 4, 0);
-        assert_eq!((get(&mut card, 4), get(&mut card, 5), get(&mut card, 6)), (0, 44, 1), "STATUS: 300 blocks, $012C");
+        assert_eq!(
+            (get(&mut card, 4), get(&mut card, 5), get(&mut card, 6)),
+            (0, 44, 1),
+            "STATUS: 300 blocks, $012C"
+        );
 
         // READ block 7: its bytes, 7.
         reg(&mut card, 0, 1);
@@ -89,8 +121,17 @@ mod tests {
         reg(&mut card, 4, 0);
         assert_eq!(get(&mut card, 4), 0, "WRITE's error");
         let saved = std::fs::read(&file).unwrap();
-        assert!(saved[9 * 512..10 * 512].iter().enumerate().all(|(n, &byte)| byte == n as u8), "block 9 not in the image");
-        assert!(saved[8 * 512..9 * 512].iter().all(|&byte| byte == 8), "block 8 written");
+        assert!(
+            saved[9 * 512..10 * 512]
+                .iter()
+                .enumerate()
+                .all(|(n, &byte)| byte == n as u8),
+            "block 9 not in the image"
+        );
+        assert!(
+            saved[8 * 512..9 * 512].iter().all(|&byte| byte == 8),
+            "block 8 written"
+        );
 
         // The errors: past the volume's end; drive 2, none; write protected.
         reg(&mut card, 0, 1);
@@ -126,13 +167,37 @@ mod tests {
         cpu.execute(200_000);
 
         let ram = &cpu.memory.ram;
-        assert_eq!(u16::from_le_bytes([ram[0], ram[1]]), 1000, "STATUS's blocks");
-        assert_eq!((ram[2], ram[3] & 1), (0, 0), "WRITE: an error, or the carry set");
-        assert_eq!((ram[4], ram[5] & 1), (0, 0), "READ: an error, or the carry set");
-        assert_eq!(ram[0x2000..0x2200], ram[0x3000..0x3200], "the block read back not the one written");
-        assert_eq!((ram[6], ram[7] & 1), (0x28, 1), "drive 2: not no device, the carry set");
+        assert_eq!(
+            u16::from_le_bytes([ram[0], ram[1]]),
+            1000,
+            "STATUS's blocks"
+        );
+        assert_eq!(
+            (ram[2], ram[3] & 1),
+            (0, 0),
+            "WRITE: an error, or the carry set"
+        );
+        assert_eq!(
+            (ram[4], ram[5] & 1),
+            (0, 0),
+            "READ: an error, or the carry set"
+        );
+        assert_eq!(
+            ram[0x2000..0x2200],
+            ram[0x3000..0x3200],
+            "the block read back not the one written"
+        );
+        assert_eq!(
+            (ram[6], ram[7] & 1),
+            (0x28, 1),
+            "drive 2: not no device, the carry set"
+        );
         let saved = std::fs::read(&file).unwrap();
-        assert_eq!(saved[5 * 512..6 * 512], ram[0x2000..0x2200], "block 5 not in the image");
+        assert_eq!(
+            saved[5 * 512..6 * 512],
+            ram[0x2000..0x2200],
+            "block 5 not in the image"
+        );
         std::fs::remove_file(&file).unwrap();
     }
 
@@ -157,14 +222,27 @@ mod tests {
         let mut cpu = CPU::with_bus(apple);
         cpu.clock_hz = u32::MAX; // as fast as it goes
         cpu.reset();
-        let up = |cpu: &CPU<Apple2>| cpu.memory.text().iter().any(|line| line.contains("PRODOS 8"));
+        let up = |cpu: &CPU<Apple2>| {
+            cpu.memory
+                .text()
+                .iter()
+                .any(|line| line.contains("PRODOS 8"))
+        };
         while !up(&cpu) && cpu.clock < 5 * CLOCK_HZ {
             cpu.execute(100_000);
         }
         assert!(up(&cpu), "ProDOS not up: {:#?}", cpu.memory.text());
         // On into the game, its high-res, loaded from the card alone.
         cpu.execute(5 * CLOCK_HZ);
-        assert!(cpu.memory.graphics && cpu.memory.hires, "the game not up: {:#?}", cpu.memory.text());
-        assert_eq!(cpu.memory.read(0xC7FF), FIRMWARE[0xFF], "slot 7 not the card's firmware");
+        assert!(
+            cpu.memory.graphics && cpu.memory.hires,
+            "the game not up: {:#?}",
+            cpu.memory.text()
+        );
+        assert_eq!(
+            cpu.memory.read(0xC7FF),
+            FIRMWARE[0xFF],
+            "slot 7 not the card's firmware"
+        );
     }
 }

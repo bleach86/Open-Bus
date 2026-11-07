@@ -1,5 +1,5 @@
-use crate::cpu::bus::Bus;
 use crate::cpu::CPU;
+use crate::cpu::bus::Bus;
 
 impl<B: Bus> CPU<B> {
     fn cpy_set_flags(&mut self, result: u8, operand: u8) {

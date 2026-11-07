@@ -7,7 +7,9 @@
 #[cfg(test)]
 mod tests {
     use crate::host::zip::crc32;
-    use crate::machines::apple2::rom_set::{self, DISK_II_P5, DISK_II_P6, Is, PLUS_ROM, Rom, Sorted, rom};
+    use crate::machines::apple2::rom_set::{
+        self, DISK_II_P5, DISK_II_P6, Is, PLUS_ROM, Rom, Sorted, rom,
+    };
     use crate::machines::apple2::video::Monitor;
     use crate::machines::apple2::{self, Model, iie};
     use std::path::{Path, PathBuf};
@@ -18,7 +20,13 @@ mod tests {
 
     /// `size` bytes, different for each `seed`.
     fn made_up(seed: u8, size: usize) -> Vec<u8> {
-        (0..size).map(|at| (at as u8).wrapping_mul(seed).wrapping_add(seed ^ (at >> 8) as u8)).collect()
+        (0..size)
+            .map(|at| {
+                (at as u8)
+                    .wrapping_mul(seed)
+                    .wrapping_add(seed ^ (at >> 8) as u8)
+            })
+            .collect()
     }
 
     /// Files sorted as the desktop app has them: which held ROMs and what
@@ -36,11 +44,20 @@ mod tests {
         std::fs::write(&not_rom, &other).unwrap();
         std::fs::write(&too_big, made_up(7, 0x1_0001)).unwrap();
         let known = [rom(crc32(&rom_bytes), 0x100, Is::Named("wanted.bin"))];
-        let paths = format!("{}\n{}\n{}\n{}/gone.bin\n", held.display(), not_rom.display(), too_big.display(), out.display());
+        let paths = format!(
+            "{}\n{}\n{}\n{}/gone.bin\n",
+            held.display(),
+            not_rom.display(),
+            too_big.display(),
+            out.display()
+        );
         let mut told = Vec::new();
         rom_set::sort_of(&known, paths.as_bytes(), &out, &mut told).unwrap();
         let told = String::from_utf8(told).unwrap();
-        assert_eq!(told, format!("held {}\nrom wanted.bin\nchips 0\n", held.display()));
+        assert_eq!(
+            told,
+            format!("held {}\nrom wanted.bin\nchips 0\n", held.display())
+        );
         assert_eq!(std::fs::read(out.join("wanted.bin")).unwrap(), rom_bytes);
         std::fs::remove_dir_all(&out).unwrap();
     }
@@ -76,7 +93,10 @@ mod tests {
     }
 
     fn known_of(pieces: &[(&[u8], Is)]) -> Vec<Rom> {
-        pieces.iter().map(|&(bytes, is)| rom(crc32(bytes), bytes.len(), is)).collect()
+        pieces
+            .iter()
+            .map(|&(bytes, is)| rom(crc32(bytes), bytes.len(), is))
+            .collect()
     }
 
     #[test]
@@ -94,7 +114,10 @@ mod tests {
         let cd = made_up(3, 0x2000);
         let known = known_of(&[(&cd, Is::Named(iie::ROMS[0]))]);
         let mut sorted = Sorted::new();
-        assert!(!sorted.add_of(&known, "Apple IIe.bin", &made_up(4, 0x2000)), "another ROM its size");
+        assert!(
+            !sorted.add_of(&known, "Apple IIe.bin", &made_up(4, 0x2000)),
+            "another ROM its size"
+        );
         assert!(sorted.names().is_empty());
         assert!(sorted.bytes(iie::ROMS[0]).is_none());
     }
@@ -102,7 +125,10 @@ mod tests {
     #[test]
     fn a_file_of_several_has_each_of_them_found() {
         let (cd, ef) = (made_up(3, 0x2000), made_up(5, 0x2000));
-        let known = known_of(&[(&cd, Is::Named(iie::ROMS[0])), (&ef, Is::Named(iie::ROMS[1]))]);
+        let known = known_of(&[
+            (&cd, Is::Named(iie::ROMS[0])),
+            (&ef, Is::Named(iie::ROMS[1])),
+        ]);
         let mut sorted = Sorted::new();
         assert!(sorted.add_of(&known, "Apple2e.rom", &[&cd[..], &ef[..]].concat()));
         assert_eq!(sorted.bytes(iie::ROMS[0]).unwrap(), cd);
@@ -124,7 +150,11 @@ mod tests {
         let (cd, p5) = (made_up(3, 0x2000), made_up(9, 0x100));
         let known = known_of(&[(&cd, Is::Named(iie::ROMS[0])), (&p5, Is::Named(DISK_II_P5))]);
         let mut sorted = Sorted::new();
-        let set = zip(&[("342-0135-a.e8", &cd), ("readme.txt", b"hello"), ("341-0027.p5", &p5)]);
+        let set = zip(&[
+            ("342-0135-a.e8", &cd),
+            ("readme.txt", b"hello"),
+            ("341-0027.p5", &p5),
+        ]);
         assert!(sorted.add_of(&known, "apple2e.zip", &set));
         assert_eq!(sorted.names().len(), 2);
 
@@ -137,8 +167,14 @@ mod tests {
 
     #[test]
     fn the_ii_pluss_chips_make_its_rom_in_their_order_whichever_comes_first() {
-        let chips: Vec<Vec<u8>> = (0..6).map(|chip| made_up(11 + 2 * chip as u8, 0x800)).collect();
-        let pieces: Vec<(&[u8], Is)> = chips.iter().enumerate().map(|(chip, bytes)| (&bytes[..], Is::PlusChip(chip))).collect();
+        let chips: Vec<Vec<u8>> = (0..6)
+            .map(|chip| made_up(11 + 2 * chip as u8, 0x800))
+            .collect();
+        let pieces: Vec<(&[u8], Is)> = chips
+            .iter()
+            .enumerate()
+            .map(|(chip, bytes)| (&bytes[..], Is::PlusChip(chip)))
+            .collect();
         let known = known_of(&pieces);
         let mut sorted = Sorted::new();
         for chip in [3, 0, 5, 1, 4] {
@@ -168,13 +204,20 @@ mod tests {
     #[test]
     fn mames_sets_of_each_are_found_with_all_else_in_them_left() {
         let read = |name: &str| std::fs::read(dir().join(name)).ok();
-        let (Some(plus), Some(old), Some(enhanced)) = (read("apple2.zip"), read("apple2e.zip"), read("apple2ee.zip")) else {
+        let (Some(plus), Some(old), Some(enhanced)) = (
+            read("apple2.zip"),
+            read("apple2e.zip"),
+            read("apple2ee.zip"),
+        ) else {
             eprintln!("rom set test: no MAME sets in roms/apple2/");
             return;
         };
         let mut sorted = Sorted::new();
         assert!(sorted.add("apple2.zip", &plus));
-        assert!(sorted.names().contains(&PLUS_ROM.to_string()), "a set of dozens of machines'");
+        assert!(
+            sorted.names().contains(&PLUS_ROM.to_string()),
+            "a set of dozens of machines'"
+        );
         assert_eq!(sorted.bytes(PLUS_ROM).unwrap(), real(PLUS_ROM).unwrap());
         // A clone's floppy card in it has the Disk II's boot ROM in its own.
         assert_eq!(sorted.bytes(DISK_II_P5).unwrap(), real(DISK_II_P5).unwrap());
@@ -199,7 +242,8 @@ mod tests {
 
     #[test]
     fn the_real_ones_are_known_rearranged_as_other_programs_have_them() {
-        let (Some(plus), Some(p5), Some(p6)) = (real(PLUS_ROM), real(DISK_II_P5), real(DISK_II_P6)) else {
+        let (Some(plus), Some(p5), Some(p6)) = (real(PLUS_ROM), real(DISK_II_P5), real(DISK_II_P6))
+        else {
             eprintln!("rom set test: no ROMs in roms/apple2/");
             return;
         };
@@ -217,13 +261,29 @@ mod tests {
         // As MAME keeps them: a zip of a board's chips.
         let mut sorted = Sorted::new();
         let chips: Vec<&[u8]> = plus.chunks(0x800).collect();
-        let names = ["341-0011.d0", "341-0012.d8", "341-0013.e0", "341-0014.e8", "341-0015.f0", "341-0020-00.f8"];
+        let names = [
+            "341-0011.d0",
+            "341-0012.d8",
+            "341-0013.e0",
+            "341-0014.e8",
+            "341-0015.f0",
+            "341-0020-00.f8",
+        ];
         let set: Vec<(&str, &[u8])> = names.iter().copied().zip(chips).collect();
         assert!(sorted.add("apple2p.zip", &zip(&set)));
         assert_eq!(sorted.bytes(PLUS_ROM).unwrap(), plus);
 
         let mut sorted = Sorted::new();
-        assert!(sorted.add("apple2e.zip", &zip(&[("a", &old_cd), ("b", &old_ef), ("c", &old_video), ("d", &p5), ("e", &p6)])));
+        assert!(sorted.add(
+            "apple2e.zip",
+            &zip(&[
+                ("a", &old_cd),
+                ("b", &old_ef),
+                ("c", &old_video),
+                ("d", &p5),
+                ("e", &p6)
+            ])
+        ));
         assert_eq!(sorted.names().len(), 5);
     }
 
@@ -238,26 +298,73 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
         let disk = folder.join("disk.dsk");
         std::fs::write(&disk, vec![0; 143_360]).unwrap();
-        for (name, bytes) in [("one", &cd), ("two.e10", &ef), ("three.chr", &video), ("four", &p5), ("five", &p6)] {
+        for (name, bytes) in [
+            ("one", &cd),
+            ("two.e10", &ef),
+            ("three.chr", &video),
+            ("four", &p5),
+            ("five", &p6),
+        ] {
             std::fs::write(folder.join(name), bytes).unwrap();
         }
         let disks = [disk.to_str().unwrap()];
-        let built = apple2::build(Model::IIeEnhanced, folder.to_str().unwrap(), &disks, 0, None, Monitor::Colour);
-        assert!(built.is_ok(), "from a folder of other names: {:?}", built.err());
+        let built = apple2::build(
+            Model::IIeEnhanced,
+            folder.to_str().unwrap(),
+            &disks,
+            0,
+            None,
+            Monitor::Colour,
+        );
+        assert!(
+            built.is_ok(),
+            "from a folder of other names: {:?}",
+            built.err()
+        );
 
         // The same in a zip, the disk beside it.
         for name in ["one", "two.e10", "three.chr", "four", "five"] {
             std::fs::remove_file(folder.join(name)).unwrap();
         }
         let set = folder.join("apple2ee.zip");
-        std::fs::write(&set, zip(&[("a", &cd), ("b", &ef), ("c", &video), ("d", &p5), ("e", &p6)])).unwrap();
-        let built = apple2::build(Model::IIeEnhanced, set.to_str().unwrap(), &disks, 0, None, Monitor::Colour);
+        std::fs::write(
+            &set,
+            zip(&[
+                ("a", &cd),
+                ("b", &ef),
+                ("c", &video),
+                ("d", &p5),
+                ("e", &p6),
+            ]),
+        )
+        .unwrap();
+        let built = apple2::build(
+            Model::IIeEnhanced,
+            set.to_str().unwrap(),
+            &disks,
+            0,
+            None,
+            Monitor::Colour,
+        );
         assert!(built.is_ok(), "from a zip: {:?}", built.err());
-        assert!(rom_set::scan(&set).names().contains(&DISK_II_P5.to_string()));
+        assert!(
+            rom_set::scan(&set)
+                .names()
+                .contains(&DISK_II_P5.to_string())
+        );
 
         // And no ROMs to be found, an error that says so.
         std::fs::remove_file(&set).unwrap();
-        let error = apple2::build(Model::IIeEnhanced, folder.to_str().unwrap(), &[], 0, None, Monitor::Colour).err().unwrap();
+        let error = apple2::build(
+            Model::IIeEnhanced,
+            folder.to_str().unwrap(),
+            &[],
+            0,
+            None,
+            Monitor::Colour,
+        )
+        .err()
+        .unwrap();
         assert!(error.starts_with("no Apple IIe"), "{error}");
         std::fs::remove_dir_all(&folder).unwrap();
     }

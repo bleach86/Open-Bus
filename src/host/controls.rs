@@ -61,7 +61,10 @@ pub fn name(action: Action) -> String {
 pub fn said(source: &str) -> String {
     match source.split_once(':') {
         Some(("key", key)) => key.to_uppercase(),
-        Some(("pad", button)) => format!("PAD {}", button.strip_prefix("dp").unwrap_or(button).to_uppercase()),
+        Some(("pad", button)) => format!(
+            "PAD {}",
+            button.strip_prefix("dp").unwrap_or(button).to_uppercase()
+        ),
         _ => source.to_uppercase(),
     }
 }
@@ -129,7 +132,11 @@ impl Controls {
     /// What's bound to `action` for `player`.
     pub fn of(&self, player: usize, action: Action) -> Vec<&str> {
         let this = |&&(who, what, _): &&(usize, Action, String)| who == player && what == action;
-        self.bindings.iter().filter(this).map(|(_, _, source)| source.as_str()).collect()
+        self.bindings
+            .iter()
+            .filter(this)
+            .map(|(_, _, source)| source.as_str())
+            .collect()
     }
 
     /// Whether `action`'s held for `player`, by what `held` says of each
@@ -154,12 +161,19 @@ impl Controls {
     /// All a player's put back as they were.
     pub fn reset(&mut self, player: usize) {
         self.bindings.retain(|(who, _, _)| *who != player);
-        self.bindings.extend(Controls::default().bindings.into_iter().filter(|(who, _, _)| *who == player));
+        self.bindings.extend(
+            Controls::default()
+                .bindings
+                .into_iter()
+                .filter(|(who, _, _)| *who == player),
+        );
     }
 
     /// As it's kept: a line each.
     pub fn text(&self) -> String {
-        let line = |(who, what, source): &(usize, Action, String)| format!("{} {} {source}\n", who + 1, word(*what));
+        let line = |(who, what, source): &(usize, Action, String)| {
+            format!("{} {} {source}\n", who + 1, word(*what))
+        };
         self.bindings.iter().map(line).collect()
     }
 
@@ -169,7 +183,10 @@ impl Controls {
         let mut bindings = Vec::new();
         for line in text.lines() {
             let mut parts = line.splitn(3, ' ');
-            let (Some(who), Some(what), Some(source)) = (parts.next(), parts.next(), parts.next()) else { continue };
+            let (Some(who), Some(what), Some(source)) = (parts.next(), parts.next(), parts.next())
+            else {
+                continue;
+            };
             let player = match who {
                 "1" => 0,
                 "2" => 1,
@@ -179,12 +196,19 @@ impl Controls {
                 bindings.push((player, action, source.to_string()));
             }
         }
-        if bindings.is_empty() { Controls::default() } else { Controls { bindings } }
+        if bindings.is_empty() {
+            Controls::default()
+        } else {
+            Controls { bindings }
+        }
     }
 
     /// What's kept, or the defaults.
     pub fn load() -> Controls {
-        files::read(&path()).map_or_else(|_| Controls::default(), |text| Controls::parse(&String::from_utf8_lossy(&text)))
+        files::read(&path()).map_or_else(
+            |_| Controls::default(),
+            |text| Controls::parse(&String::from_utf8_lossy(&text)),
+        )
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -204,7 +228,9 @@ pub fn path() -> PathBuf {
     } else if cfg!(target_os = "macos") {
         home("HOME").map(|home| home.join("Library/Application Support/Open Bus"))
     } else {
-        home("XDG_CONFIG_HOME").or_else(|| home("HOME").map(|home| home.join(".config"))).map(|config| config.join("open-bus"))
+        home("XDG_CONFIG_HOME")
+            .or_else(|| home("HOME").map(|home| home.join(".config")))
+            .map(|config| config.join("open-bus"))
     };
     folder.unwrap_or_default().join("controls.txt")
 }

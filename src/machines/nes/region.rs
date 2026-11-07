@@ -23,7 +23,19 @@ pub enum Region {
 pub const PAL_CLOCK_HZ: u32 = 1_662_607;
 
 /// A name's tags, in brackets, for each.
-const PAL_TAGS: [&str; 11] = ["Europe", "Australia", "Germany", "France", "Spain", "Italy", "Sweden", "Netherlands", "PAL", "E", "A"];
+const PAL_TAGS: [&str; 11] = [
+    "Europe",
+    "Australia",
+    "Germany",
+    "France",
+    "Spain",
+    "Italy",
+    "Sweden",
+    "Netherlands",
+    "PAL",
+    "E",
+    "A",
+];
 const NTSC_TAGS: [&str; 8] = ["USA", "Japan", "World", "Korea", "NTSC", "U", "J", "JU"];
 
 impl Region {
@@ -71,12 +83,20 @@ impl Region {
     /// The region a file's `name` says, if it says one: PAL's tags only if
     /// there's no NTSC's with them.
     pub fn from_name(name: &str) -> Option<Region> {
-        let groups = name.split('(').skip(1).filter_map(|group| group.split(')').next());
-        let tags: Vec<&str> = groups.flat_map(|group| group.split(',')).map(str::trim).collect();
+        let groups = name
+            .split('(')
+            .skip(1)
+            .filter_map(|group| group.split(')').next());
+        let tags: Vec<&str> = groups
+            .flat_map(|group| group.split(','))
+            .map(str::trim)
+            .collect();
         if tags.iter().any(|tag| NTSC_TAGS.contains(tag)) {
             return Some(Region::Ntsc);
         }
-        tags.iter().any(|tag| PAL_TAGS.contains(tag)).then_some(Region::Pal)
+        tags.iter()
+            .any(|tag| PAL_TAGS.contains(tag))
+            .then_some(Region::Pal)
     }
 
     /// As `--region=` names it.

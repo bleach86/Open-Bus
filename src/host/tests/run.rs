@@ -85,7 +85,10 @@ mod tests {
 
         fn closed(&self) -> bool {
             let seen = self.0.borrow();
-            seen.closed || seen.close_after.is_some_and(|pictures| seen.pictures >= pictures)
+            seen.closed
+                || seen
+                    .close_after
+                    .is_some_and(|pictures| seen.pictures >= pictures)
         }
 
         fn function_key(&mut self) -> Option<u8> {
@@ -115,8 +118,17 @@ mod tests {
         cpu.variant = Variant::Ricoh2A03;
         cpu.reset();
         let seen = Rc::new(RefCell::new(Seen::default()));
-        let state = std::env::temp_dir().join(format!("cpu_emu_{}_host_{name}.state", std::process::id()));
-        (Host::new(cpu, Box::new(Window(seen.clone(), Controls::default())), state.clone()), seen, state)
+        let state =
+            std::env::temp_dir().join(format!("cpu_emu_{}_host_{name}.state", std::process::id()));
+        (
+            Host::new(
+                cpu,
+                Box::new(Window(seen.clone(), Controls::default())),
+                state.clone(),
+            ),
+            seen,
+            state,
+        )
     }
 
     #[test]
@@ -126,10 +138,17 @@ mod tests {
         assert!(host.frame(), "closed");
         let seen = seen.borrow();
         assert_eq!(seen.pictures, 2, "a picture a frame");
-        assert_eq!(seen.size, (ppu::WIDTH - 16, ppu::HEIGHT - 16), "the picture not as big as it's seen");
+        assert_eq!(
+            seen.size,
+            (ppu::WIDTH - 16, ppu::HEIGHT - 16),
+            "the picture not as big as it's seen"
+        );
         assert!(seen.samples > 0, "no sound played");
         assert_eq!(seen.title, "NES   Test");
-        assert!(host.cpu.memory.sound().is_empty(), "the sound played not taken");
+        assert!(
+            host.cpu.memory.sound().is_empty(),
+            "the sound played not taken"
+        );
     }
 
     #[test]
@@ -141,7 +160,10 @@ mod tests {
         host.frame();
         let width = ppu::WIDTH - 16;
         let band = seen.borrow().last[(ppu::HEIGHT - 16 - 12) * width..].to_vec();
-        assert!(band.iter().any(|&dot| dot == 0xFFFFFF), "no notice on its picture");
+        assert!(
+            band.iter().any(|&dot| dot == 0xFFFFFF),
+            "no notice on its picture"
+        );
 
         host.cpu.memory.ram[0x123] = 0x5A;
         seen.borrow_mut().function_keys.push(2);
@@ -153,11 +175,26 @@ mod tests {
         seen.borrow_mut().function_keys.push(4);
         host.frame();
         assert_eq!(host.notice.as_ref().unwrap().0, "State loaded");
-        assert_eq!((host.cpu.memory.ram[0x123], host.cpu.clock), (0x5A, clock), "not as it was saved");
-        assert_eq!(host.cpu.memory.cartridge.prg_rom.len(), 0x4000, "its ROM not kept");
+        assert_eq!(
+            (host.cpu.memory.ram[0x123], host.cpu.clock),
+            (0x5A, clock),
+            "not as it was saved"
+        );
+        assert_eq!(
+            host.cpu.memory.cartridge.prg_rom.len(),
+            0x4000,
+            "its ROM not kept"
+        );
         host.frame();
-        assert_eq!(seen.borrow().size, (width, ppu::HEIGHT - 16), "its overscan not kept");
-        assert!(host.cpu.memory.title().ends_with("Test"), "its name not kept");
+        assert_eq!(
+            seen.borrow().size,
+            (width, ppu::HEIGHT - 16),
+            "its overscan not kept"
+        );
+        assert!(
+            host.cpu.memory.title().ends_with("Test"),
+            "its name not kept"
+        );
         std::fs::remove_file(&state).unwrap();
     }
 
@@ -194,7 +231,10 @@ mod tests {
         seen.borrow_mut().gamepad_2.a = true;
         host.frame();
         assert!(host.cpu.memory.gamepad.start, "the gamepad not given");
-        assert!(host.cpu.memory.gamepad_2.a && !host.cpu.memory.gamepad_2.start, "the second gamepad not given");
+        assert!(
+            host.cpu.memory.gamepad_2.a && !host.cpu.memory.gamepad_2.start,
+            "the second gamepad not given"
+        );
 
         seen.borrow_mut().reset = true;
         host.frame();
@@ -217,7 +257,11 @@ mod tests {
         assert!(!file.exists(), "saved before a second was up");
         seen.borrow_mut().closed = true;
         assert!(!host.frame(), "not stopped");
-        assert_eq!(std::fs::read(&file).unwrap()[0], 0x77, "its battery's RAM not saved");
+        assert_eq!(
+            std::fs::read(&file).unwrap()[0],
+            0x77,
+            "its battery's RAM not saved"
+        );
         std::fs::remove_file(&file).unwrap();
     }
 
@@ -235,7 +279,10 @@ mod tests {
         let (mut again, _, _) = host("resume");
         again.resume();
         assert_eq!(again.cpu.memory.ram[0x123], 0x45, "not where it was");
-        assert_eq!(again.notice.as_ref().map(|(text, _)| text.as_str()), Some("Resumed"));
+        assert_eq!(
+            again.notice.as_ref().map(|(text, _)| text.as_str()),
+            Some("Resumed")
+        );
         assert_eq!(seen.borrow().pictures, 1);
         std::fs::remove_file(&resume).unwrap();
     }
@@ -260,8 +307,26 @@ mod tests {
         }
     }
 
-    const SELECT_START: Gamepad = Gamepad { select: true, start: true, up: false, down: false, left: false, right: false, a: false, b: false };
-    const NONE: Gamepad = Gamepad { select: false, start: false, up: false, down: false, left: false, right: false, a: false, b: false };
+    const SELECT_START: Gamepad = Gamepad {
+        select: true,
+        start: true,
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        a: false,
+        b: false,
+    };
+    const NONE: Gamepad = Gamepad {
+        select: false,
+        start: false,
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        a: false,
+        b: false,
+    };
 
     #[test]
     fn select_and_start_tapped_together_open_the_menu_and_the_game_never_sees_them() {
@@ -288,14 +353,33 @@ mod tests {
         let running = host.cpu.clock;
         frames_with(&mut host, &seen, NONE, 1);
         assert!(host.cpu.clock > running, "a long hold opened the menu");
-        frames_with(&mut host, &seen, Gamepad { start: true, ..NONE }, 1);
+        frames_with(
+            &mut host,
+            &seen,
+            Gamepad {
+                start: true,
+                ..NONE
+            },
+            1,
+        );
         assert!(host.cpu.memory.gamepad.start, "Start alone held back");
         // Joined by Select, it's let go of, as far as the game knows, until
         // both are.
         frames_with(&mut host, &seen, SELECT_START, 1);
         assert_eq!(host.cpu.memory.gamepad, NONE, "the game saw them together");
-        frames_with(&mut host, &seen, Gamepad { start: true, ..NONE }, 1);
-        assert!(!host.cpu.memory.gamepad.start, "Start given again before it was let go");
+        frames_with(
+            &mut host,
+            &seen,
+            Gamepad {
+                start: true,
+                ..NONE
+            },
+            1,
+        );
+        assert!(
+            !host.cpu.memory.gamepad.start,
+            "Start given again before it was let go"
+        );
     }
 
     #[test]
@@ -311,7 +395,10 @@ mod tests {
             frames_with(&mut host, &seen, pad, 1);
         }
         assert!(state.exists(), "not saved");
-        assert_eq!(host.notice.as_ref().map(|(text, _)| text.as_str()), Some("State saved"));
+        assert_eq!(
+            host.notice.as_ref().map(|(text, _)| text.as_str()),
+            Some("State saved")
+        );
         // Up from Resume is the last, Quit.
         seen.borrow_mut().function_keys.push(1);
         frames_with(&mut host, &seen, NONE, 2);
@@ -328,12 +415,30 @@ mod tests {
         seen.borrow_mut().function_keys.push(6);
         host.frame();
         // Down the list to B, chosen, and the next press bound to it.
-        seen.borrow_mut().pressed.extend(["pad:dpdown", "pad:dpdown", "pad:dpdown", "pad:dpdown", "pad:dpdown", "pad:a", "pad:y"].map(String::from));
+        seen.borrow_mut().pressed.extend(
+            [
+                "pad:dpdown",
+                "pad:dpdown",
+                "pad:dpdown",
+                "pad:dpdown",
+                "pad:dpdown",
+                "pad:a",
+                "pad:y",
+            ]
+            .map(String::from),
+        );
         host.frame();
         host.frame();
         let bound = seen.borrow().controls.clone().unwrap();
-        assert!(bound.of(0, Action::B).contains(&"pad:y"), "not bound: {:?}", bound.of(0, Action::B));
-        assert!(!bound.of(0, Action::B).contains(&"pad:x"), "the button it had is still bound");
+        assert!(
+            bound.of(0, Action::B).contains(&"pad:y"),
+            "not bound: {:?}",
+            bound.of(0, Action::B)
+        );
+        assert!(
+            !bound.of(0, Action::B).contains(&"pad:x"),
+            "the button it had is still bound"
+        );
         // B cancels: as they were.
         seen.borrow_mut().pressed.push("pad:b".to_string());
         host.frame();

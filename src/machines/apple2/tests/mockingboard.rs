@@ -7,9 +7,9 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::host::machine::Machine;
-    use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
+    use crate::cpu::bus::Bus;
+    use crate::host::machine::Machine;
     use crate::machines::apple2::mockingboard::Mockingboard;
     use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME};
     use std::path::Path;
@@ -28,13 +28,21 @@ mod tests {
         apple.write(0xC482, 0x34); // the second's
         assert_eq!(apple.read(0xC402), 0x12, "the first 6522");
         assert_eq!(apple.read(0xC482), 0x34, "the second 6522");
-        assert_eq!(apple.read(0xC472), 0x12, "the first's registers, over again");
+        assert_eq!(
+            apple.read(0xC472),
+            0x12,
+            "the first's registers, over again"
+        );
         assert_eq!(apple.read(0xC4F2), 0x34, "the second's");
 
         let mut without = Apple2::new(vec![0xEA; 0x3000]);
         without.write(0xC402, 0x12);
         // No card: the floating bus, as an empty slot's I/O is, the same cycle.
-        assert_eq!(without.read(0xC402), without.read(0xC0F0), "no card: not the floating bus");
+        assert_eq!(
+            without.read(0xC402),
+            without.read(0xC0F0),
+            "no card: not the floating bus"
+        );
     }
 
     /// The first AY's register `reg` written, as software does it: the
@@ -68,13 +76,28 @@ mod tests {
         ay_write(&mut apple, 1, 0xF1);
         ay_write(&mut apple, 8, 15);
         let card = apple.mockingboards[0].as_ref().unwrap();
-        assert_eq!((card.ays[0].regs[0], card.ays[0].regs[1], card.ays[0].regs[8]), (0x23, 0x01, 15));
+        assert_eq!(
+            (
+                card.ays[0].regs[0],
+                card.ays[0].regs[1],
+                card.ays[0].regs[8]
+            ),
+            (0x23, 0x01, 15)
+        );
         assert_eq!(card.ays[1].regs[0], 0, "the second AY written");
         assert_eq!(ay_read(&mut apple, 0), 0x23, "register 0 read back");
-        assert_eq!(ay_read(&mut apple, 1), 0x01, "register 1 read back, its 4 bits");
+        assert_eq!(
+            ay_read(&mut apple, 1),
+            0x01,
+            "register 1 read back, its 4 bits"
+        );
         // /RESET low: the AY's registers cleared.
         apple.write(0xC400, 0x00);
-        assert_eq!(apple.mockingboards[0].as_ref().unwrap().ays[0].regs[0], 0, "not reset");
+        assert_eq!(
+            apple.mockingboards[0].as_ref().unwrap().ays[0].regs[0],
+            0,
+            "not reset"
+        );
     }
 
     #[test]
@@ -83,7 +106,11 @@ mod tests {
         apple.mockingboards[1] = Some(Mockingboard::new());
         apple.write(0xC402, 0x12);
         apple.write(0xC502, 0x34);
-        assert_eq!((apple.read(0xC402), apple.read(0xC502)), (0x12, 0x34), "slots 4 and 5 not each their own");
+        assert_eq!(
+            (apple.read(0xC402), apple.read(0xC502)),
+            (0x12, 0x34),
+            "slots 4 and 5 not each their own"
+        );
 
         // Its timer's interrupt, on the IRQ line.
         apple.write(0xC504, 0);
@@ -99,12 +126,25 @@ mod tests {
         // Its second AY, at $C580, on the right: a level, steady.
         apple.write(0xC582, 0x07);
         apple.write(0xC583, 0xFF);
-        for (bus, control) in [(7, 0x07), (7, 0x04), (0x3F, 0x06), (0x3F, 0x04), (8, 0x07), (8, 0x04), (15, 0x06), (15, 0x04)] {
+        for (bus, control) in [
+            (7, 0x07),
+            (7, 0x04),
+            (0x3F, 0x06),
+            (0x3F, 0x04),
+            (8, 0x07),
+            (8, 0x04),
+            (15, 0x06),
+            (15, 0x04),
+        ] {
             apple.write(0xC581, bus);
             apple.write(0xC580, control);
         }
         let card = apple.mockingboards[1].as_ref().unwrap();
-        assert_eq!(card.output(), (0.0, 1.0), "the second AY's voice not on the right alone");
+        assert_eq!(
+            card.output(),
+            (0.0, 1.0),
+            "the second AY's voice not on the right alone"
+        );
     }
 
     /// The test's program on an Apple with the card; None without it.
@@ -126,23 +166,36 @@ mod tests {
     }
 
     fn label(labels: &str, name: &str) -> u16 {
-        let line = labels.lines().find(|line| line.ends_with(&format!(" .{name}"))).unwrap();
+        let line = labels
+            .lines()
+            .find(|line| line.ends_with(&format!(" .{name}")))
+            .unwrap();
         u16::from_str_radix(&line[3..9], 16).unwrap()
     }
 
     #[test]
     fn the_cpu_finds_the_card_and_takes_its_interrupts() {
-        let Some((mut cpu, labels)) = program() else { return };
+        let Some((mut cpu, labels)) = program() else {
+            return;
+        };
         let looping = label(&labels, "loop");
         while cpu.pc != looping {
             cpu.execute(1);
         }
-        assert_eq!(cpu.memory.ram[0x02], 6, "timer 1 not counted down 6 between two reads, 6 cycles apart");
+        assert_eq!(
+            cpu.memory.ram[0x02], 6,
+            "timer 1 not counted down 6 between two reads, 6 cycles apart"
+        );
         let ay = &cpu.memory.mockingboards[0].as_ref().unwrap().ays[0];
-        assert_eq!((ay.regs[0], ay.regs[1], ay.regs[7], ay.regs[8]), (0x23, 0x01, 0x3E, 15), "the tone not written");
+        assert_eq!(
+            (ay.regs[0], ay.regs[1], ay.regs[7], ay.regs[8]),
+            (0x23, 0x01, 0x3E, 15),
+            "the tone not written"
+        );
 
         // Each interrupt counted: when, an instruction at a time.
-        let count = |cpu: &CPU<Apple2>| cpu.memory.ram[0x00] as u32 | (cpu.memory.ram[0x01] as u32) << 8;
+        let count =
+            |cpu: &CPU<Apple2>| cpu.memory.ram[0x00] as u32 | (cpu.memory.ram[0x01] as u32) << 8;
         let mut at = Vec::new();
         let until = cpu.clock + CLOCK_HZ;
         while at.len() < 101 && cpu.clock < until {
@@ -156,24 +209,44 @@ mod tests {
         // Every 1,002 cycles: each taken after the JMP it comes in, 0 to 2
         // cycles late, so 100 of them within 2 of 100,200.
         let span = at[100] - at[0];
-        assert!(span.abs_diff(100 * 1_002) <= 2, "100 interrupts in {span} cycles, not 100,200");
+        assert!(
+            span.abs_diff(100 * 1_002) <= 2,
+            "100 interrupts in {span} cycles, not 100,200"
+        );
         for pair in at.windows(2) {
-            assert!((pair[1] - pair[0]).abs_diff(1_002) <= 2, "interrupts {} cycles apart", pair[1] - pair[0]);
+            assert!(
+                (pair[1] - pair[0]).abs_diff(1_002) <= 2,
+                "interrupts {} cycles apart",
+                pair[1] - pair[0]
+            );
         }
     }
 
     #[test]
     fn its_tone_is_heard() {
-        let Some((mut cpu, _)) = program() else { return };
+        let Some((mut cpu, _)) = program() else {
+            return;
+        };
         cpu.memory.sound_on();
         cpu.execute(60 * CYCLES_PER_FRAME);
         // In stereo: the first AY's tone on the left, nothing on the right.
-        let (left, right): (Vec<f32>, Vec<f32>) = cpu.memory.sound().chunks(2).map(|frame| (frame[0], frame[1])).unzip();
-        assert!(right[800..].iter().all(|sample| sample.abs() < 0.001), "the first AY heard on the right");
+        let (left, right): (Vec<f32>, Vec<f32>) = cpu
+            .memory
+            .sound()
+            .chunks(2)
+            .map(|frame| (frame[0], frame[1]))
+            .unzip();
+        assert!(
+            right[800..].iter().all(|sample| sample.abs() < 0.001),
+            "the first AY heard on the right"
+        );
         // The tone, period $123: clock / (16 x 291), its level crossing the
         // middle twice a cycle (after the first frame's settling).
         let settled = &left[800..];
-        let crossings = settled.windows(2).filter(|pair| (pair[0] < 0.0) != (pair[1] < 0.0)).count();
+        let crossings = settled
+            .windows(2)
+            .filter(|pair| (pair[0] < 0.0) != (pair[1] < 0.0))
+            .count();
         let seconds = settled.len() as f32 / 48_000.0;
         let hz = crossings as f32 / 2.0 / seconds;
         let want = CLOCK_HZ as f32 / (16.0 * 0x123 as f32);

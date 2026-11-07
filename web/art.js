@@ -20,17 +20,36 @@ export const isMedia = (name) => isImage(name) || isGamelist(name) || /\.(mp4|mk
 export const keyOf = (stem) => stem.trim().toLowerCase();
 
 /// What a game's art is kept under: its file's name, without the ending.
-export const artKey = (name) => keyOf(name.split('/').pop().replace(/\.[^.]*$/, ''));
+export const artKey = (name) =>
+    keyOf(
+        name
+            .split('/')
+            .pop()
+            .replace(/\.[^.]*$/, ''),
+    );
 
 /// A game's name from its file, its brackets gone.
-export const plainTitle = (name) => name.split('/').pop().replace(/\.[^.]*$/, '').replace(/\s*[([][^)\]]*[)\]]/g, '')
-    .replace(/_ /g, ', ').replace(/[_\s]+/g, ' ').trim();
+export const plainTitle = (name) =>
+    name
+        .split('/')
+        .pop()
+        .replace(/\.[^.]*$/, '')
+        .replace(/\s*[([][^)\]]*[)\]]/g, '')
+        .replace(/_ /g, ', ')
+        .replace(/[_\s]+/g, ' ')
+        .trim();
 
 /// A title as nothing but its letters and digits, without its "the" and "a"
 /// and whatever's in brackets, for what's named a little differently: a
 /// download's "Zelda_ The" for "Zelda, The", or "The Zelda".
-export const titleWords = (title) => title.replace(/\([^)]*\)|\[[^\]]*\]/g, '').toLowerCase().replace(/['’]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ').replace(/\b(the|a)\b/g, '').replace(/ /g, '');
+export const titleWords = (title) =>
+    title
+        .replace(/\([^)]*\)|\[[^\]]*\]/g, '')
+        .toLowerCase()
+        .replace(/['’]/g, '')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .replace(/\b(the|a)\b/g, '')
+        .replace(/ /g, '');
 
 /// What's in a name's brackets, as what tells two of a title apart.
 export const tagsOf = (name) => [...name.matchAll(/[([]([^)\]]*)[)\]]/g)].map((tag) => tag[1]).join(', ');
@@ -72,7 +91,7 @@ export async function shrink(file) {
     const picture = await createImageBitmap(file);
     const canvas = document.createElement('canvas');
     canvas.width = Math.min(WIDTH, picture.width);
-    canvas.height = Math.round(picture.height * canvas.width / picture.width);
+    canvas.height = Math.round((picture.height * canvas.width) / picture.width);
     const drawing = canvas.getContext('2d');
     drawing.imageSmoothingQuality = 'high';
     drawing.drawImage(picture, 0, 0, canvas.width, canvas.height);

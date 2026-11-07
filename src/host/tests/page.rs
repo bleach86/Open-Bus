@@ -35,7 +35,10 @@ mod tests {
         for entry in std::fs::read_dir(&web).unwrap() {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
             if name.ends_with(".js") || name.ends_with(".css") {
-                assert!(page.contains(&format!("'{name}'")), "{name} isn't in the page's list");
+                assert!(
+                    page.contains(&format!("'{name}'")),
+                    "{name} isn't in the page's list"
+                );
             }
         }
     }
@@ -47,7 +50,10 @@ mod tests {
         let page = page.borrow();
         assert_eq!((page.width, page.height), (256, 240));
         assert_eq!(page.pixels.len(), 256 * 240 * 4);
-        assert!(page.pixels.chunks(4).all(|dot| dot[3] == 0xFF), "a dot not opaque");
+        assert!(
+            page.pixels.chunks(4).all(|dot| dot[3] == 0xFF),
+            "a dot not opaque"
+        );
         assert!(!page.samples.is_empty(), "no sound kept");
         assert_eq!(page.title, "NES   Test");
     }

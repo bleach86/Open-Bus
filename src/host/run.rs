@@ -11,9 +11,9 @@
 //! `Host::frame` is a frame, for whatever calls it a frame at a time;
 //! `Host::run` calls it, keeping the machine to its clock.
 
-use crate::host::controls::{ACTIONS, Action, Controls, is_stick, name, said};
 use crate::cpu::CPU;
 use crate::host::clock;
+use crate::host::controls::{ACTIONS, Action, Controls, is_stick, name, said};
 use crate::host::display::{Display, Gamepad, Key};
 use crate::host::files;
 use crate::host::machine::{Input, Machine};
@@ -49,9 +49,18 @@ enum Entry {
 impl Changing {
     /// What's on its list: the first player has the way back too.
     fn entries(&self) -> Vec<Entry> {
-        let actions = if self.player == 0 { &ACTIONS[..] } else { &ACTIONS[..ACTIONS.len() - 1] };
+        let actions = if self.player == 0 {
+            &ACTIONS[..]
+        } else {
+            &ACTIONS[..ACTIONS.len() - 1]
+        };
         let mut entries: Vec<Entry> = actions.iter().map(|&action| Entry::Bind(action)).collect();
-        entries.extend([Entry::OtherPlayer, Entry::Defaults, Entry::Done, Entry::Cancel]);
+        entries.extend([
+            Entry::OtherPlayer,
+            Entry::Defaults,
+            Entry::Done,
+            Entry::Cancel,
+        ]);
         entries
     }
 }
@@ -190,16 +199,26 @@ impl<M: Machine> Host<M> {
 
     /// F6: the machine paused, and the controls changed, a press each.
     fn change_controls(&mut self, alone: bool) {
-        let Some(controls) = self.display.controls() else { return };
+        let Some(controls) = self.display.controls() else {
+            return;
+        };
         let before = controls.clone();
         self.display.capture(true);
-        self.changing = Some(Changing { player: 0, at: 0, waiting: false, before, alone });
+        self.changing = Some(Changing {
+            player: 0,
+            at: 0,
+            waiting: false,
+            before,
+            alone,
+        });
     }
 
     /// The controls done with: kept, or put back as they were. Whether the
     /// window's to close.
     fn stop_changing(&mut self, keep: bool) -> bool {
-        let Some(changing) = self.changing.take() else { return false };
+        let Some(changing) = self.changing.take() else {
+            return false;
+        };
         self.display.capture(false);
         if let Some(controls) = self.display.controls() {
             if keep {
@@ -231,14 +250,18 @@ impl<M: Machine> Host<M> {
             }
         }
         while let Some(source) = self.display.pressed() {
-            let Some(changing) = &mut self.changing else { break };
+            let Some(changing) = &mut self.changing else {
+                break;
+            };
             let entries = changing.entries();
             if changing.waiting {
                 changing.waiting = false;
                 if source == CANCEL {
                     continue;
                 }
-                let (player, Entry::Bind(action)) = (changing.player, entries[changing.at]) else { continue };
+                let (player, Entry::Bind(action)) = (changing.player, entries[changing.at]) else {
+                    continue;
+                };
                 if matches!(entries[changing.at + 1], Entry::Bind(_)) {
                     changing.at += 1;
                 }
@@ -248,8 +271,12 @@ impl<M: Machine> Host<M> {
                 continue;
             }
             match source.as_str() {
-                "key:Up" | "pad:dpup" | "pad:lefty-" => changing.at = (changing.at + entries.len() - 1) % entries.len(),
-                "key:Down" | "pad:dpdown" | "pad:lefty+" => changing.at = (changing.at + 1) % entries.len(),
+                "key:Up" | "pad:dpup" | "pad:lefty-" => {
+                    changing.at = (changing.at + entries.len() - 1) % entries.len()
+                }
+                "key:Down" | "pad:dpdown" | "pad:lefty+" => {
+                    changing.at = (changing.at + 1) % entries.len()
+                }
                 "key:Return" | "pad:a" => match entries[changing.at] {
                     Entry::Done => done = Some(true),
                     Entry::Cancel => done = Some(false),
@@ -275,11 +302,15 @@ impl<M: Machine> Host<M> {
     /// An entry of the controls' list chosen: an action to wait for a press
     /// for, the other player's list, or this one's defaults.
     fn choose_entry(&mut self, entry: Entry) {
-        let Some(changing) = &mut self.changing else { return };
+        let Some(changing) = &mut self.changing else {
+            return;
+        };
         let player = changing.player;
         match entry {
             Entry::Bind(_) => changing.waiting = true,
-            Entry::OtherPlayer => (changing.player, changing.at, changing.waiting) = (1 - player, 0, false),
+            Entry::OtherPlayer => {
+                (changing.player, changing.at, changing.waiting) = (1 - player, 0, false)
+            }
             Entry::Defaults => {
                 if let Some(controls) = self.display.controls() {
                     controls.reset(player);
@@ -293,14 +324,24 @@ impl<M: Machine> Host<M> {
     /// else there is to do.
     fn changing_lines(&mut self) -> Option<Vec<String>> {
         let changing = self.changing.as_ref()?;
-        let (player, at, waiting, entries) = (changing.player, changing.at, changing.waiting, changing.entries());
+        let (player, at, waiting, entries) = (
+            changing.player,
+            changing.at,
+            changing.waiting,
+            changing.entries(),
+        );
         let controls = self.display.controls()?;
         let mut lines = vec![format!("PLAYER {} CONTROLS", player + 1)];
         for (place, &entry) in entries.iter().enumerate() {
             let marker = if place == at { ">" } else { " " };
             lines.push(match entry {
                 Entry::Bind(action) => {
-                    let bound: Vec<String> = controls.of(player, action).iter().filter(|source| !is_stick(source)).map(|source| said(source)).collect();
+                    let bound: Vec<String> = controls
+                        .of(player, action)
+                        .iter()
+                        .filter(|source| !is_stick(source))
+                        .map(|source| said(source))
+                        .collect();
                     format!("{marker}{:8}{}", name(action), bound.join(", "))
                 }
                 Entry::OtherPlayer => format!("{marker}PLAYER {}", 2 - player),
@@ -321,7 +362,13 @@ impl<M: Machine> Host<M> {
     /// have to offer.
     fn open_menu(&mut self) {
         let mut items = vec![Item::Resume, Item::Save, Item::Load];
-        items.extend(self.cpu.memory.menu().into_iter().map(|(name, key)| Item::Machine(name, key)));
+        items.extend(
+            self.cpu
+                .memory
+                .menu()
+                .into_iter()
+                .map(|(name, key)| Item::Machine(name, key)),
+        );
         items.push(Item::Reset);
         if self.display.controls().is_some() {
             items.push(Item::Controls);
@@ -330,7 +377,11 @@ impl<M: Machine> Host<M> {
             items.push(Item::Quit);
         }
         self.notice = None;
-        self.menu = Some(Menu { items, at: 0, before: self.display.gamepad() });
+        self.menu = Some(Menu {
+            items,
+            at: 0,
+            before: self.display.gamepad(),
+        });
     }
 
     /// Whether the menu's asked for by the gamepad: Select and Start tapped
@@ -353,11 +404,19 @@ impl<M: Machine> Host<M> {
     fn menu_frame(&mut self) -> bool {
         self.cycles += (self.cpu.clock_hz / FRAMES_A_SECOND) as u64;
         self.show();
-        let Some(menu) = &mut self.menu else { return true };
+        let Some(menu) = &mut self.menu else {
+            return true;
+        };
         let gamepad = self.display.gamepad();
         let newly = |now: bool, was: bool| now && !was;
-        let (mut up, mut down) = (newly(gamepad.up, menu.before.up), newly(gamepad.down, menu.before.down));
-        let (mut choose, mut back) = (newly(gamepad.a, menu.before.a), newly(gamepad.b, menu.before.b));
+        let (mut up, mut down) = (
+            newly(gamepad.up, menu.before.up),
+            newly(gamepad.down, menu.before.down),
+        );
+        let (mut choose, mut back) = (
+            newly(gamepad.a, menu.before.a),
+            newly(gamepad.b, menu.before.b),
+        );
         menu.before = gamepad;
         while let Some(key) = self.display.key() {
             match key {
@@ -408,7 +467,13 @@ impl<M: Machine> Host<M> {
     fn menu_lines(&self) -> Option<Vec<String>> {
         let menu = self.menu.as_ref()?;
         let mut lines = vec!["PAUSED".to_string()];
-        lines.extend(menu.items.iter().enumerate().map(|(place, item)| format!("{}{}", if place == menu.at { ">" } else { " " }, item.name())));
+        lines.extend(menu.items.iter().enumerate().map(|(place, item)| {
+            format!(
+                "{}{}",
+                if place == menu.at { ">" } else { " " },
+                item.name()
+            )
+        }));
         lines.push(String::new());
         lines.push("A: CHOOSE  B: BACK".to_string());
         Some(lines)
@@ -472,7 +537,9 @@ impl<M: Machine> Host<M> {
                 }
             }
         }
-        self.cpu.memory.reset_button(self.display.reset_held() || self.resetting > 0);
+        self.cpu
+            .memory
+            .reset_button(self.display.reset_held() || self.resetting > 0);
         self.resetting = self.resetting.saturating_sub(1);
         self.cpu.memory.keep_saved(false);
         let now = clock::seconds();
@@ -532,7 +599,8 @@ impl<M: Machine> Host<M> {
     /// Its state kept, as it's put away, to resume from.
     pub fn keep_for_resuming(&mut self) {
         let file = self.resume_file();
-        let kept = save_state::state(&self.cpu).and_then(|state| files::save(&file, &state).map_err(|e| e.to_string()));
+        let kept = save_state::state(&self.cpu)
+            .and_then(|state| files::save(&file, &state).map_err(|e| e.to_string()));
         if let Err(e) = kept {
             eprintln!("{}: not kept to resume: {e}", file.display());
         }
@@ -544,7 +612,12 @@ impl<M: Machine> Host<M> {
         let mut lines = self.stats.lines(cpu.clock_hz);
         lines.push(format!(
             "PC {:04X} A{:02X} X{:02X} Y{:02X} S{:02X} P{:02X}",
-            cpu.pc, cpu.a, cpu.x, cpu.y, cpu.sp, cpu.status.to_byte()
+            cpu.pc,
+            cpu.a,
+            cpu.x,
+            cpu.y,
+            cpu.sp,
+            cpu.status.to_byte()
         ));
         lines.extend(cpu.memory.debug());
         lines
@@ -560,10 +633,13 @@ impl<M: Machine> Host<M> {
             return;
         }
         let changing = self.changing_lines();
-        let lines = changing.or_else(|| self.menu_lines()).or_else(|| self.debug.then(|| self.debug_lines()));
+        let lines = changing
+            .or_else(|| self.menu_lines())
+            .or_else(|| self.debug.then(|| self.debug_lines()));
         let picture = self.cpu.memory.picture();
         if self.notice.is_none() && lines.is_none() {
-            self.display.show(picture.pixels, picture.width, picture.height);
+            self.display
+                .show(picture.pixels, picture.width, picture.height);
             return;
         }
         let (width, height) = (picture.width, picture.height);

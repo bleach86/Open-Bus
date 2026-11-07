@@ -19,7 +19,10 @@ thread_local! {
 pub const PART: usize = 64 * 1024;
 
 fn not_found(path: &Path) -> io::Error {
-    io::Error::new(ErrorKind::NotFound, format!("{}: no such file", path.display()))
+    io::Error::new(
+        ErrorKind::NotFound,
+        format!("{}: no such file", path.display()),
+    )
 }
 
 /// A file put in by the page.
@@ -94,7 +97,11 @@ pub fn size(path: &Path) -> Option<u64> {
 
 /// Nothing is: the page's files are all its own.
 pub fn read_only(path: &Path) -> io::Result<bool> {
-    if exists(path) { Ok(false) } else { Err(not_found(path)) }
+    if exists(path) {
+        Ok(false)
+    } else {
+        Err(not_found(path))
+    }
 }
 
 pub fn is_folder(path: &Path) -> bool {
@@ -103,7 +110,11 @@ pub fn is_folder(path: &Path) -> bool {
 
 pub fn list(path: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(FILES.with_borrow(|files| {
-        files.keys().filter(|file| file.parent() == Some(path)).cloned().collect()
+        files
+            .keys()
+            .filter(|file| file.parent() == Some(path))
+            .cloned()
+            .collect()
     }))
 }
 

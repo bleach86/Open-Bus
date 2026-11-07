@@ -110,13 +110,25 @@ impl Ppu {
                 }
                 break;
             }
-            let (tile, attributes, x) = (self.oam[at + 1], self.oam_byte(at as u8 + 2), self.oam[at + 3]);
+            let (tile, attributes, x) = (
+                self.oam[at + 1],
+                self.oam_byte(at as u8 + 2),
+                self.oam[at + 3],
+            );
             let (addr, _) = self.sprite_address(y, tile, attributes);
-            let (mut low, mut high) = (self.sprite_plane(addr, cart), self.sprite_plane(addr + 8, cart));
+            let (mut low, mut high) = (
+                self.sprite_plane(addr, cart),
+                self.sprite_plane(addr + 8, cart),
+            );
             if attributes & 0x40 != 0 {
                 (low, high) = (low.reverse_bits(), high.reverse_bits());
             }
-            self.sprites[found] = Sprite { x, low, high, attributes };
+            self.sprites[found] = Sprite {
+                x,
+                low,
+                high,
+                attributes,
+            };
             self.zero_on_line |= at == 0;
             found += 1;
         }
@@ -147,10 +159,16 @@ impl Ppu {
             let v = self.v;
             let attribute = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
             let (name, attribute) = if told {
-                (self.read(0x2000 | (v & 0x0FFF), cart), self.read(attribute, cart))
+                (
+                    self.read(0x2000 | (v & 0x0FFF), cart),
+                    self.read(attribute, cart),
+                )
             } else {
                 let table = pages[(v as usize >> 10) & 3];
-                (self.nametables[table + (v as usize & 0x3FF)], self.nametables[table + (attribute as usize & 0x3FF)])
+                (
+                    self.nametables[table + (v as usize & 0x3FF)],
+                    self.nametables[table + (attribute as usize & 0x3FF)],
+                )
             };
             self.tile = name;
             let palette = ((attribute >> (((v >> 4) & 4) | (v & 2))) & 3) << 2;
@@ -158,7 +176,10 @@ impl Ppu {
             let (low, high) = if told {
                 (self.read(addr, cart), self.read(addr + 8, cart))
             } else {
-                (cart.chr_read(addr & 0x1FFF), cart.chr_read((addr + 8) & 0x1FFF))
+                (
+                    cart.chr_read(addr & 0x1FFF),
+                    cart.chr_read((addr + 8) & 0x1FFF),
+                )
             };
             let colours = SPREAD[low as usize] | SPREAD[high as usize] << 1;
             let drawn = (colours | colours >> 1) & 0x0101_0101_0101_0101;
@@ -204,20 +225,42 @@ impl Ppu {
             let colours: [u16; 32] = std::array::from_fn(|index| {
                 (self.palette[palette_index(0x3F00 | index as u16)] & grey) as u16 | emphasis
             });
-            let (backgrounds_from, background_on) = (if self.mask & 0x02 != 0 { 0 } else { 8 }, self.mask & 0x08 != 0);
-            let (sprites_from, sprites_on) = (if self.mask & 0x04 != 0 { 0 } else { 8 }, self.mask & 0x10 != 0);
+            let (backgrounds_from, background_on) = (
+                if self.mask & 0x02 != 0 { 0 } else { 8 },
+                self.mask & 0x08 != 0,
+            );
+            let (sprites_from, sprites_on) = (
+                if self.mask & 0x04 != 0 { 0 } else { 8 },
+                self.mask & 0x10 != 0,
+            );
             for x in 0..WIDTH {
-                let back = if background_on && x >= backgrounds_from { background[x] } else { 0 };
-                let sprite = if sprites_on && x >= sprites_from { self.sprite_dots[x] } else { 0 };
+                let back = if background_on && x >= backgrounds_from {
+                    background[x]
+                } else {
+                    0
+                };
+                let sprite = if sprites_on && x >= sprites_from {
+                    self.sprite_dots[x]
+                } else {
+                    0
+                };
                 if sprite & 0x20 != 0 && back != 0 && x != 255 && !self.sprite_zero_hit {
                     self.sprite_zero_hit = true;
                     self.hit_at = self.dots + x as u64 + 1;
                 }
-                let index = if sprite != 0 && (back == 0 || sprite & 0x10 == 0) { 0x10 | sprite & 0x0F } else { back };
+                let index = if sprite != 0 && (back == 0 || sprite & 0x10 == 0) {
+                    0x10 | sprite & 0x0F
+                } else {
+                    back
+                };
                 self.frame[start + x] = colours[index as usize];
             }
         } else {
-            let addr = if self.v & 0x3F00 == 0x3F00 { self.v } else { 0x3F00 };
+            let addr = if self.v & 0x3F00 == 0x3F00 {
+                self.v
+            } else {
+                0x3F00
+            };
             let colour = (self.palette[palette_index(addr)] & grey) as u16 | emphasis;
             self.frame[start..start + WIDTH].fill(colour);
         }

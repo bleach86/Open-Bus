@@ -1,5 +1,5 @@
-use crate::cpu::bus::Bus;
 use crate::cpu::CPU;
+use crate::cpu::bus::Bus;
 
 impl<B: Bus> CPU<B> {
     fn rol_set_flags(&mut self, original: u8, result: u8) {

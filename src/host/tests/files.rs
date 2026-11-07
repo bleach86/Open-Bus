@@ -22,7 +22,11 @@ mod tests {
         assert_eq!(files::size(&file), Some(4));
         assert!(files::exists(&file) && !files::read_only(&file).unwrap());
         assert!(files::is_folder(&folder) && !files::is_folder(&file));
-        assert_eq!(files::list(&folder).unwrap(), [file.clone()], "a file left beside it");
+        assert_eq!(
+            files::list(&folder).unwrap(),
+            [file.clone()],
+            "a file left beside it"
+        );
         std::fs::remove_dir_all(&folder).unwrap();
         assert!(!files::exists(&file) && files::size(&file).is_none());
         assert!(files::read(&file).is_err() && files::read_only(&file).is_err());
@@ -33,10 +37,16 @@ mod tests {
         let (folder, file) = (Path::new("disks"), Path::new("disks/a"));
         assert!(web::read(file).is_err() && !web::exists(file) && web::read_only(file).is_err());
         web::put(file, vec![1, 2, 3, 4]);
-        assert!(web::written().is_empty(), "what the page put in called written");
+        assert!(
+            web::written().is_empty(),
+            "what the page put in called written"
+        );
         web::write_at(file, 1, &[9, 8]).unwrap();
         assert_eq!(web::read(file).unwrap(), [1, 9, 8, 4]);
-        assert_eq!((web::size(file), web::read_only(file).unwrap()), (Some(4), false));
+        assert_eq!(
+            (web::size(file), web::read_only(file).unwrap()),
+            (Some(4), false)
+        );
         assert!(web::is_folder(folder) && !web::is_folder(file));
         assert_eq!(web::list(folder).unwrap(), [file.to_path_buf()]);
         assert_eq!(web::canonical(file), file);
@@ -48,7 +58,11 @@ mod tests {
         let file = Path::new("game.srm");
         web::save(file, &[5]).unwrap();
         web::save(file, &[6]).unwrap();
-        assert_eq!(web::written(), [file.to_path_buf()], "saved twice, told once");
+        assert_eq!(
+            web::written(),
+            [file.to_path_buf()],
+            "saved twice, told once"
+        );
         assert!(web::written().is_empty(), "told again");
         assert_eq!(web::read(file).unwrap(), [6]);
     }
@@ -61,17 +75,29 @@ mod tests {
         // A write across the first two parts, and one in the short last.
         web::write_at(file, web::PART as u64 - 2, &[1, 2, 3, 4]).unwrap();
         web::write_at(file, 2 * web::PART as u64 + 10, &[5]).unwrap();
-        assert!(web::written().is_empty(), "the whole file told, for parts of it");
+        assert!(
+            web::written().is_empty(),
+            "the whole file told, for parts of it"
+        );
         assert_eq!(web::changed(), [file.to_path_buf()]);
         let offsets = [0, web::PART as u32, 2 * web::PART as u32];
         assert_eq!(web::take_changed_parts(file), offsets);
-        assert!(web::changed().is_empty() && web::take_changed_parts(file).is_empty(), "told again");
+        assert!(
+            web::changed().is_empty() && web::take_changed_parts(file).is_empty(),
+            "told again"
+        );
 
         let first = web::read_part(file, 0).unwrap();
         let second = web::read_part(file, web::PART as u32).unwrap();
         let last = web::read_part(file, 2 * web::PART as u32).unwrap();
-        assert_eq!((first.len(), second.len(), last.len()), (web::PART, web::PART, 100));
-        assert_eq!((&first[web::PART - 2..], &second[..2], last[10]), (&[1, 2][..], &[3, 4][..], 5));
+        assert_eq!(
+            (first.len(), second.len(), last.len()),
+            (web::PART, web::PART, 100)
+        );
+        assert_eq!(
+            (&first[web::PART - 2..], &second[..2], last[10]),
+            (&[1, 2][..], &[3, 4][..], 5)
+        );
         assert!(web::read_part(Path::new("no/such"), 0).is_none());
     }
 
@@ -85,7 +111,10 @@ mod tests {
 
         web::save(other, &[0; 4]).unwrap();
         web::write_at(other, 1, &[1]).unwrap();
-        assert!(web::changed().is_empty(), "parts of what's already to be saved whole");
+        assert!(
+            web::changed().is_empty(),
+            "parts of what's already to be saved whole"
+        );
         assert_eq!(web::written(), [file.to_path_buf(), other.to_path_buf()]);
         assert_eq!(web::read(other).unwrap(), [0, 1, 0, 0]);
     }

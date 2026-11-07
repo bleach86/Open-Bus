@@ -21,18 +21,20 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use notify::{RecommendedWatcher, RecursiveMode};
+use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 use serde_json::{Value, json};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use tauri::ipc::{InvokeBody, Request, Response};
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewWindow,
+};
 use tauri_plugin_dialog::DialogExt;
 
 /// How long the library stays up after a game starts, for its window to be
@@ -44,7 +46,11 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// A folder of the app's, made if it isn't there yet.
 fn folder(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
-    let folder = app.path().app_data_dir().map_err(|e| e.to_string())?.join(name);
+    let folder = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join(name);
     fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     Ok(folder)
 }
@@ -52,7 +58,9 @@ fn folder(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
 /// Where the page's `name` is: only ever under `library`.
 fn place(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     let path = Path::new(name);
-    let plain = path.components().all(|part| matches!(part, Component::Normal(_)));
+    let plain = path
+        .components()
+        .all(|part| matches!(part, Component::Normal(_)));
     if name.is_empty() || !plain || name.contains('\\') {
         return Err(format!("not a file's name: {name}"));
     }
@@ -123,7 +131,11 @@ struct Dropped(Mutex<Vec<PathBuf>>);
 
 /// The folders added, and the files hidden: from `settings.json`.
 fn settings(app: &AppHandle) -> Result<Value, String> {
-    let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("settings.json");
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("settings.json");
     Ok(match fs::read(path) {
         Ok(text) => serde_json::from_slice(&text).map_err(|e| e.to_string())?,
         Err(_) => json!({ "folders": [], "hidden": [] }),
@@ -131,28 +143,51 @@ fn settings(app: &AppHandle) -> Result<Value, String> {
 }
 
 fn save_settings(app: &AppHandle, settings: &Value) -> Result<(), String> {
-    let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("settings.json");
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("settings.json");
     write(&path, settings.to_string().as_bytes())
 }
 
 fn listed(settings: &Value, field: &str) -> Vec<String> {
-    settings[field].as_array().map_or(Vec::new(), |list| list.iter().filter_map(|item| item.as_str().map(String::from)).collect())
+    settings[field].as_array().map_or(Vec::new(), |list| {
+        list.iter()
+            .filter_map(|item| item.as_str().map(String::from))
+            .collect()
+    })
 }
 
 /// `path`, if it's somewhere the page may go: `library`, or a folder added.
 fn allowed(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
     let real = fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
-    let mut places = listed(&settings(app)?, "folders").into_iter().map(PathBuf::from).collect::<Vec<_>>();
+    let mut places = listed(&settings(app)?, "folders")
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
     places.push(folder(app, "library")?);
-    let inside = |place: &PathBuf| fs::canonicalize(place).is_ok_and(|place| real.starts_with(place));
-    let dropped = app.state::<Dropped>().0.lock().map_err(|e| e.to_string())?.contains(&real);
-    if dropped || places.iter().any(inside) { Ok(real) } else { Err(format!("not in the library: {path}")) }
+    let inside =
+        |place: &PathBuf| fs::canonicalize(place).is_ok_and(|place| real.starts_with(place));
+    let dropped = app
+        .state::<Dropped>()
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .contains(&real);
+    if dropped || places.iter().any(inside) {
+        Ok(real)
+    } else {
+        Err(format!("not in the library: {path}"))
+    }
 }
 
 /// All the files under `folder`, with their sizes; not those in folders
 /// that aren't anyone's games: a hidden one, or a NAS's own, as @eaDir is.
 fn walk(folder: &Path, found: &mut Vec<Value>) {
-    let Ok(entries) = fs::read_dir(folder) else { return };
+    let Ok(entries) = fs::read_dir(folder) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -172,7 +207,10 @@ fn walk(folder: &Path, found: &mut Vec<Value>) {
 fn remember(app: &AppHandle, folder: &str) -> Result<(), String> {
     let mut kept = settings(app)?;
     if !listed(&kept, "folders").iter().any(|known| known == folder) {
-        kept["folders"].as_array_mut().ok_or("bad settings")?.push(json!(folder));
+        kept["folders"]
+            .as_array_mut()
+            .ok_or("bad settings")?
+            .push(json!(folder));
         save_settings(app, &kept)?;
         watch_folders(app);
     }
@@ -184,20 +222,27 @@ fn remember(app: &AppHandle, folder: &str) -> Result<(), String> {
 fn library_settings(app: AppHandle) -> Result<Value, String> {
     let kept = settings(&app)?;
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(json!({ "folders": listed(&kept, "folders"), "hidden": listed(&kept, "hidden"), "data": data.to_string_lossy() }))
+    Ok(
+        json!({ "folders": listed(&kept, "folders"), "hidden": listed(&kept, "hidden"), "data": data.to_string_lossy() }),
+    )
 }
 
 /// `path` gone from `field` of the settings.
 fn take_out(app: &AppHandle, field: &str, path: &str) -> Result<(), String> {
     let mut kept = settings(app)?;
-    kept[field].as_array_mut().ok_or("bad settings")?.retain(|item| item != path);
+    kept[field]
+        .as_array_mut()
+        .ok_or("bad settings")?
+        .retain(|item| item != path);
     save_settings(app, &kept)
 }
 
 /// The kinds of file the library has, a game's or a disk's: what's worth a
 /// watcher's noticing. Saves and states beside them change as games are
 /// played, and don't matter to it.
-const GAMES: [&str; 10] = ["nes", "fds", "zip", "dsk", "do", "po", "nib", "woz", "hdv", "2mg"];
+const GAMES: [&str; 10] = [
+    "nes", "fds", "zip", "dsk", "do", "po", "nib", "woz", "hdv", "2mg",
+];
 
 /// The folders added, watched for games coming and going, and the watcher.
 #[derive(Default)]
@@ -206,16 +251,26 @@ struct Watching(Mutex<Option<Debouncer<RecommendedWatcher>>>);
 /// The folders added watched, as they are now: what was watching them before
 /// stopped.
 fn watch_folders(app: &AppHandle) {
-    let folders = settings(app).map(|kept| listed(&kept, "folders")).unwrap_or_default();
+    let folders = settings(app)
+        .map(|kept| listed(&kept, "folders"))
+        .unwrap_or_default();
     let seeing = app.clone();
-    let watching = new_debouncer(Duration::from_millis(800), move |events: DebounceEventResult| {
-        if let Ok(events) = events {
-            seen(&seeing, events.into_iter().map(|event| event.path).collect());
-        }
-    });
+    let watching = new_debouncer(
+        Duration::from_millis(800),
+        move |events: DebounceEventResult| {
+            if let Ok(events) = events {
+                seen(
+                    &seeing,
+                    events.into_iter().map(|event| event.path).collect(),
+                );
+            }
+        },
+    );
     let Ok(mut watcher) = watching else { return };
     for folder in &folders {
-        let _ = watcher.watcher().watch(Path::new(folder), RecursiveMode::Recursive);
+        let _ = watcher
+            .watcher()
+            .watch(Path::new(folder), RecursiveMode::Recursive);
     }
     if let Ok(mut watched) = app.state::<Watching>().0.lock() {
         *watched = Some(watcher);
@@ -225,7 +280,12 @@ fn watch_folders(app: &AppHandle) {
 /// Whether `path`, under one of `folders`, is somewhere `walk` doesn't go: a
 /// hidden folder, a NAS's own, a download not finished.
 fn passed_over(path: &Path, folders: &[String]) -> bool {
-    let Some(within) = folders.iter().find_map(|folder| path.strip_prefix(folder).ok()) else { return true };
+    let Some(within) = folders
+        .iter()
+        .find_map(|folder| path.strip_prefix(folder).ok())
+    else {
+        return true;
+    };
     let hidden = within.components().any(|part| {
         let part = part.as_os_str().to_string_lossy();
         part.starts_with('.') || part.starts_with('@')
@@ -239,10 +299,15 @@ fn passed_over(path: &Path, folders: &[String]) -> bool {
 fn seen(app: &AppHandle, paths: Vec<PathBuf>) {
     let Ok(kept) = settings(app) else { return };
     let (folders, hidden) = (listed(&kept, "folders"), listed(&kept, "hidden"));
-    let game = |path: &Path| path.extension().is_some_and(|kind| GAMES.contains(&kind.to_string_lossy().to_lowercase().as_str()));
+    let game = |path: &Path| {
+        path.extension()
+            .is_some_and(|kind| GAMES.contains(&kind.to_string_lossy().to_lowercase().as_str()))
+    };
     let mut changed = false;
     let _ = change_found(app, |found| {
-        let Some(list) = found["folders"].as_array_mut() else { return };
+        let Some(list) = found["folders"].as_array_mut() else {
+            return;
+        };
         for path in paths.iter().filter(|path| !passed_over(path, &folders)) {
             let mut came = Vec::new();
             if path.is_dir() {
@@ -254,7 +319,11 @@ fn seen(app: &AppHandle, paths: Vec<PathBuf>) {
                 }
             } else {
                 let before = list.len();
-                list.retain(|entry| !entry["path"].as_str().is_some_and(|file| Path::new(file).starts_with(path)));
+                list.retain(|entry| {
+                    !entry["path"]
+                        .as_str()
+                        .is_some_and(|file| Path::new(file).starts_with(path))
+                });
                 changed |= list.len() != before;
                 continue;
             }
@@ -278,16 +347,26 @@ fn seen(app: &AppHandle, paths: Vec<PathBuf>) {
 /// as /proc/mounts has them. Windows asks an SMB server to tell it of changes
 /// there, by anyone, so its shares are watched as well as its own folders.
 fn on_network(folder: &str) -> bool {
-    let Ok(mounts) = fs::read_to_string("/proc/mounts") else { return false };
+    let Ok(mounts) = fs::read_to_string("/proc/mounts") else {
+        return false;
+    };
     let mount = mounts
         .lines()
         .filter_map(|line| {
             let mut parts = line.split(' ');
-            let (_, place, kind) = (parts.next()?, parts.next()?.replace("\\040", " "), parts.next()?);
-            Path::new(folder).starts_with(&place).then(|| (place.len(), kind.to_string()))
+            let (_, place, kind) = (
+                parts.next()?,
+                parts.next()?.replace("\\040", " "),
+                parts.next()?,
+            );
+            Path::new(folder)
+                .starts_with(&place)
+                .then(|| (place.len(), kind.to_string()))
         })
         .max();
-    mount.is_some_and(|(_, kind)| ["nfs", "nfs4", "cifs", "smb3", "smbfs", "fuse.sshfs"].contains(&kind.as_str()))
+    mount.is_some_and(|(_, kind)| {
+        ["nfs", "nfs4", "cifs", "smb3", "smbfs", "fuse.sshfs"].contains(&kind.as_str())
+    })
 }
 
 /// How often the folders on other computers are looked through again.
@@ -296,15 +375,19 @@ const NETWORK_LOOK: Duration = Duration::from_secs(300);
 /// The folders looked through again, if any of them are on another computer,
 /// each NETWORK_LOOK: the page told if what's there has changed.
 fn look_over_network(app: AppHandle) {
-    thread::spawn(move || loop {
-        thread::sleep(NETWORK_LOOK);
-        let folders = settings(&app).map(|kept| listed(&kept, "folders")).unwrap_or_default();
-        if !folders.iter().any(|folder| on_network(folder)) {
-            continue;
-        }
-        let before = known_files(app.clone()).unwrap_or(Value::Null);
-        if all_files(app.clone()).is_ok_and(|now| now != before) {
-            let _ = app.emit("files-changed", ());
+    thread::spawn(move || {
+        loop {
+            thread::sleep(NETWORK_LOOK);
+            let folders = settings(&app)
+                .map(|kept| listed(&kept, "folders"))
+                .unwrap_or_default();
+            if !folders.iter().any(|folder| on_network(folder)) {
+                continue;
+            }
+            let before = known_files(app.clone()).unwrap_or(Value::Null);
+            if all_files(app.clone()).is_ok_and(|now| now != before) {
+                let _ = app.emit("files-changed", ());
+            }
         }
     });
 }
@@ -327,10 +410,14 @@ fn add_found(app: &AppHandle, section: &str, entries: Vec<Value>) -> Result<Vec<
     let hidden = listed(&settings(app)?, "hidden");
     let mut added = Vec::new();
     change_found(app, |found| {
-        let Some(list) = found[section].as_array_mut() else { return };
+        let Some(list) = found[section].as_array_mut() else {
+            return;
+        };
         for entry in entries {
             let path = entry["path"].as_str().unwrap_or_default();
-            if !hidden.iter().any(|hidden| hidden == path) && !list.iter().any(|known| known["path"] == entry["path"]) {
+            if !hidden.iter().any(|hidden| hidden == path)
+                && !list.iter().any(|known| known["path"] == entry["path"])
+            {
                 list.push(entry.clone());
                 added.push(entry);
             }
@@ -343,7 +430,14 @@ fn add_found(app: &AppHandle, section: &str, entries: Vec<Value>) -> Result<Vec<
 /// the rest: the folder isn't looked through again for them.
 #[tauri::command(async)]
 fn add_folder_files(app: AppHandle, entries: Vec<Value>) -> Result<Vec<Value>, String> {
-    let allowed_entries = entries.into_iter().filter(|entry| entry["path"].as_str().is_some_and(|path| allowed(&app, path).is_ok())).collect();
+    let allowed_entries = entries
+        .into_iter()
+        .filter(|entry| {
+            entry["path"]
+                .as_str()
+                .is_some_and(|path| allowed(&app, path).is_ok())
+        })
+        .collect();
     add_found(&app, "folders", allowed_entries)
 }
 
@@ -356,7 +450,11 @@ fn remove_folder(app: AppHandle, path: String) -> Result<(), String> {
     let inside = Path::new(&path).to_path_buf();
     change_found(&app, |found| {
         if let Some(list) = found["folders"].as_array_mut() {
-            list.retain(|entry| !entry["path"].as_str().is_some_and(|file| Path::new(file).starts_with(&inside)));
+            list.retain(|entry| {
+                !entry["path"]
+                    .as_str()
+                    .is_some_and(|file| Path::new(file).starts_with(&inside))
+            });
         }
     })
 }
@@ -368,11 +466,18 @@ fn remove_folder(app: AppHandle, path: String) -> Result<(), String> {
 #[tauri::command(async)]
 fn restore_hidden(app: AppHandle, paths: Vec<String>) -> Result<Vec<Value>, String> {
     let mut kept = settings(&app)?;
-    kept["hidden"].as_array_mut().ok_or("bad settings")?.retain(|item| !paths.iter().any(|path| item == path));
+    kept["hidden"]
+        .as_array_mut()
+        .ok_or("bad settings")?
+        .retain(|item| !paths.iter().any(|path| item == path));
     save_settings(&app, &kept)?;
     let back: Vec<Value> = paths
         .iter()
-        .filter_map(|path| fs::metadata(path).ok().map(|file| json!({ "path": path, "size": file.len() })))
+        .filter_map(|path| {
+            fs::metadata(path)
+                .ok()
+                .map(|file| json!({ "path": path, "size": file.len() }))
+        })
         .collect();
     add_found(&app, "folders", back)
 }
@@ -380,8 +485,14 @@ fn restore_hidden(app: AppHandle, paths: Vec<String>) -> Result<Vec<Value>, Stri
 /// A folder chosen, and remembered: its path, if one was.
 #[tauri::command(async)]
 fn pick_folder(app: AppHandle) -> Result<Option<String>, String> {
-    let Some(chosen) = app.dialog().file().blocking_pick_folder() else { return Ok(None) };
-    let chosen = chosen.into_path().map_err(|e| e.to_string())?.to_string_lossy().into_owned();
+    let Some(chosen) = app.dialog().file().blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let chosen = chosen
+        .into_path()
+        .map_err(|e| e.to_string())?
+        .to_string_lossy()
+        .into_owned();
     remember(&app, &chosen)?;
     Ok(Some(chosen))
 }
@@ -397,7 +508,11 @@ fn take_dropped(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
             folders.push(path);
         } else {
             let real = fs::canonicalize(&path).map_err(|e| e.to_string())?;
-            app.state::<Dropped>().0.lock().map_err(|e| e.to_string())?.push(real);
+            app.state::<Dropped>()
+                .0
+                .lock()
+                .map_err(|e| e.to_string())?
+                .push(real);
             files.push(path);
         }
     }
@@ -431,13 +546,20 @@ fn all_files(app: AppHandle) -> Result<Value, String> {
 }
 
 fn found_files(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("files.json"))
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("files.json"))
 }
 
 /// What `all_files` last found, if it's looked yet.
 #[tauri::command(async)]
 fn known_files(app: AppHandle) -> Result<Value, String> {
-    Ok(fs::read(found_files(&app)?).ok().and_then(|text| serde_json::from_slice(&text).ok()).unwrap_or(Value::Null))
+    Ok(fs::read(found_files(&app)?)
+        .ok()
+        .and_then(|text| serde_json::from_slice(&text).ok())
+        .unwrap_or(Value::Null))
 }
 
 /// A file of `library` deleted; one of a folder's, only hidden: it's yours.
@@ -452,13 +574,18 @@ fn forget_path(app: AppHandle, path: String) -> Result<(), String> {
         return Ok(());
     }
     let mut kept = settings(&app)?;
-    kept["hidden"].as_array_mut().ok_or("bad settings")?.push(json!(path));
+    kept["hidden"]
+        .as_array_mut()
+        .ok_or("bad settings")?
+        .push(json!(path));
     save_settings(&app, &kept)
 }
 
 /// A game's art's file, by a hash of its key, which can be any text.
 fn art_file(app: &AppHandle, key: &str) -> Result<PathBuf, String> {
-    let hash = key.bytes().fold(0xCBF2_9CE4_8422_2325u64, |hash, byte| (hash ^ byte as u64).wrapping_mul(0x100_0000_01B3));
+    let hash = key.bytes().fold(0xCBF2_9CE4_8422_2325u64, |hash, byte| {
+        (hash ^ byte as u64).wrapping_mul(0x100_0000_01B3)
+    });
     Ok(folder(app, "art")?.join(format!("{hash:016x}")))
 }
 
@@ -494,9 +621,16 @@ fn all_art(app: AppHandle) -> Result<Response, String> {
 /// repository, in development.
 fn emulator() -> Result<PathBuf, String> {
     let name = format!("cpu_emu{}", std::env::consts::EXE_SUFFIX);
-    let beside = std::env::current_exe().map_err(|e| e.to_string())?.with_file_name(&name);
-    let built = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/release").join(&name);
-    [beside, built].into_iter().find(|path| path.exists()).ok_or("the emulator, cpu_emu, isn't here".to_string())
+    let beside = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .with_file_name(&name);
+    let built = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../target/release")
+        .join(&name);
+    [beside, built]
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or("the emulator, cpu_emu, isn't here".to_string())
 }
 
 /// The gamepads, for the library: a webview's own miss what its gamepad
@@ -507,10 +641,20 @@ fn emulator() -> Result<PathBuf, String> {
 struct Pads(Mutex<Option<Child>>);
 
 fn start_pads(app: &AppHandle) {
-    let Ok(mut command) = emulator_command() else { return };
-    command.arg("pads").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
-    let Ok(mut pads) = command.spawn() else { return };
-    let Some(said) = pads.stdout.take() else { return };
+    let Ok(mut command) = emulator_command() else {
+        return;
+    };
+    command
+        .arg("pads")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let Ok(mut pads) = command.spawn() else {
+        return;
+    };
+    let Some(said) = pads.stdout.take() else {
+        return;
+    };
     *app.state::<Pads>().0.lock().unwrap() = Some(pads);
     let app = app.clone();
     thread::spawn(move || {
@@ -522,7 +666,9 @@ fn start_pads(app: &AppHandle) {
 
 /// Told to go, by its input closing, and made to if it doesn't.
 fn stop_pads(app: &AppHandle) {
-    let Some(mut pads) = app.state::<Pads>().0.lock().unwrap().take() else { return };
+    let Some(mut pads) = app.state::<Pads>().0.lock().unwrap().take() else {
+        return;
+    };
     drop(pads.stdin.take());
     for _ in 0..50 {
         if !matches!(pads.try_wait(), Ok(None)) {
@@ -551,8 +697,14 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
         return Ok(vec!["controls".to_string()]);
     }
     if text("kind")? == "nes" {
-        let fast = machine["fast"].as_bool().unwrap_or(false).then(|| "--fast".to_string());
-        return Ok(["nes".to_string(), file(text("game")?)?].into_iter().chain(fast).collect());
+        let fast = machine["fast"]
+            .as_bool()
+            .unwrap_or(false)
+            .then(|| "--fast".to_string());
+        return Ok(["nes".to_string(), file(text("game")?)?]
+            .into_iter()
+            .chain(fast)
+            .collect());
     }
     let library = folder(app, "library")?.to_string_lossy().into_owned();
     let mut line = match text("model")? {
@@ -563,24 +715,40 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
     for disk in machine["disks"].as_array().ok_or("no disks")? {
         line.push(file(disk.as_str().ok_or("a bad disk")?)?);
     }
-    line.push(format!("--mockingboards={}", machine["mockingboards"].as_u64().unwrap_or(1)));
+    line.push(format!(
+        "--mockingboards={}",
+        machine["mockingboards"].as_u64().unwrap_or(1)
+    ));
     Ok(line)
 }
 
 /// `--window=`, for the emulator to open where the library is.
 fn window_place(window: &WebviewWindow) -> Result<String, String> {
     let scale = window.scale_factor().map_err(|e| e.to_string())?;
-    let at = window.inner_position().map_err(|e| e.to_string())?.to_logical::<i32>(scale);
-    let size = window.inner_size().map_err(|e| e.to_string())?.to_logical::<u32>(scale);
-    Ok(format!("--window={},{},{},{}", at.x, at.y, size.width, size.height))
+    let at = window
+        .inner_position()
+        .map_err(|e| e.to_string())?
+        .to_logical::<i32>(scale);
+    let size = window
+        .inner_size()
+        .map_err(|e| e.to_string())?
+        .to_logical::<u32>(scale);
+    Ok(format!(
+        "--window={},{},{},{}",
+        at.x, at.y, size.width, size.height
+    ))
 }
 
 /// What a failed game had to say: a panic's message, without its place in
 /// the code, or the folders of the game it names.
 fn complaint(said: &str, game: &str) -> String {
-    let useful = |line: &&str| !line.starts_with("thread ") && !line.starts_with("note:") && !line.is_empty();
+    let useful = |line: &&str| {
+        !line.starts_with("thread ") && !line.starts_with("note:") && !line.is_empty()
+    };
     let line = said.lines().find(useful).unwrap_or("the game stopped");
-    let name = Path::new(game).file_name().map_or(game.into(), |name| name.to_string_lossy());
+    let name = Path::new(game)
+        .file_name()
+        .map_or(game.into(), |name| name.to_string_lossy());
     line.replace(game, &name)
 }
 
@@ -593,8 +761,18 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
     let mut command = emulator_command()?;
     command
         .args(line)
-        .args(machine["fullscreen"].as_bool().unwrap_or(false).then_some("--fullscreen"))
-        .args(machine["resume"].as_bool().unwrap_or(false).then_some("--resume"))
+        .args(
+            machine["fullscreen"]
+                .as_bool()
+                .unwrap_or(false)
+                .then_some("--fullscreen"),
+        )
+        .args(
+            machine["resume"]
+                .as_bool()
+                .unwrap_or(false)
+                .then_some("--resume"),
+        )
         .arg(window_place(&window)?)
         .current_dir(&library)
         .stderr(Stdio::piped());
@@ -626,11 +804,20 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
 /// II+'s chips.
 #[tauri::command(async)]
 fn sort_roms(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
-    let wanted = paths.iter().filter(|path| !path.contains('\n') && allowed(&app, path).is_ok());
+    let wanted = paths
+        .iter()
+        .filter(|path| !path.contains('\n') && allowed(&app, path).is_ok());
     let list: String = wanted.map(|path| format!("{path}\n")).collect();
     let mut command = emulator_command()?;
     let library = folder(&app, "library")?;
-    let mut sorter = command.arg("roms").arg(library).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+    let mut sorter = command
+        .arg("roms")
+        .arg(library)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
     let mut input = sorter.stdin.take().ok_or("no input")?;
     thread::spawn(move || input.write_all(list.as_bytes()));
     let finished = sorter.wait_with_output().map_err(|e| e.to_string())?;
@@ -638,8 +825,15 @@ fn sort_roms(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
         return Err(String::from_utf8_lossy(&finished.stderr).into_owned());
     }
     let said = String::from_utf8_lossy(&finished.stdout);
-    let of = |word: &str| said.lines().filter_map(|line| line.strip_prefix(word).map(str::to_string)).collect::<Vec<_>>();
-    let chips: usize = of("chips ").first().and_then(|count| count.parse().ok()).unwrap_or(0);
+    let of = |word: &str| {
+        said.lines()
+            .filter_map(|line| line.strip_prefix(word).map(str::to_string))
+            .collect::<Vec<_>>()
+    };
+    let chips: usize = of("chips ")
+        .first()
+        .and_then(|count| count.parse().ok())
+        .unwrap_or(0);
     // The ROMs written into the library, with what was found there, for it
     // not to be looked through again for them.
     let library = folder(&app, "library")?;
@@ -647,7 +841,9 @@ fn sort_roms(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
         .iter()
         .filter_map(|name| {
             let path = library.join(name);
-            fs::metadata(&path).ok().map(|file| json!({ "path": path.to_string_lossy(), "size": file.len() }))
+            fs::metadata(&path)
+                .ok()
+                .map(|file| json!({ "path": path.to_string_lossy(), "size": file.len() }))
         })
         .collect();
     let kept = add_found(&app, "library", written)?;
@@ -659,12 +855,26 @@ fn sort_roms(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
 /// size no more than leaves it all there, and the place that centres it. Its
 /// frame's not known yet, on Linux, its `outer` size being a stand-in, less
 /// than `inner`: it's taken as having none.
-fn fitted(inner: (u32, u32), outer: (u32, u32), at: (i32, i32), area: (u32, u32)) -> ((u32, u32), (i32, i32)) {
+fn fitted(
+    inner: (u32, u32),
+    outer: (u32, u32),
+    at: (i32, i32),
+    area: (u32, u32),
+) -> ((u32, u32), (i32, i32)) {
     let outer = (outer.0.max(inner.0), outer.1.max(inner.1));
     let frame = (outer.0 - inner.0, outer.1 - inner.1);
     let (width, height) = (outer.0.min(area.0), outer.1.min(area.1));
-    let size = (width.saturating_sub(frame.0), height.saturating_sub(frame.1));
-    (size, (at.0 + (area.0 - width) as i32 / 2, at.1 + (area.1 - height) as i32 / 2))
+    let size = (
+        width.saturating_sub(frame.0),
+        height.saturating_sub(frame.1),
+    );
+    (
+        size,
+        (
+            at.0 + (area.0 - width) as i32 / 2,
+            at.1 + (area.1 - height) as i32 / 2,
+        ),
+    )
 }
 
 /// The window's place and size as it was before it went fullscreen, to go
@@ -683,7 +893,10 @@ fn fullscreen(app: AppHandle, window: WebviewWindow, on: bool) -> Result<(), Str
     let mut kept = kept.0.lock().map_err(|e| e.to_string())?;
     if on {
         if kept.is_none() && !window.is_fullscreen().map_err(|e| e.to_string())? {
-            *kept = Some((window.outer_position().map_err(|e| e.to_string())?, window.inner_size().map_err(|e| e.to_string())?));
+            *kept = Some((
+                window.outer_position().map_err(|e| e.to_string())?,
+                window.inner_size().map_err(|e| e.to_string())?,
+            ));
         }
         return window.set_fullscreen(true).map_err(|e| e.to_string());
     }
@@ -715,7 +928,9 @@ fn quit(app: AppHandle) {
 /// The window all on the screen it's opening on, however big that is, and
 /// whatever a system's scaling makes of the size it asks for.
 fn fit_to_screen(window: &WebviewWindow) -> tauri::Result<()> {
-    let Some(monitor) = window.current_monitor()? else { return Ok(()) };
+    let Some(monitor) = window.current_monitor()? else {
+        return Ok(());
+    };
     let area = monitor.work_area();
     let (inner, outer) = (window.inner_size()?, window.outer_size()?);
     let (size, place) = fitted(
@@ -737,12 +952,14 @@ fn main() {
             // smooth scrolling runs ahead of drawing, and the sidebar and
             // toolbar jump about.
             #[cfg(target_os = "linux")]
-            app.get_webview_window("main").ok_or("no window")?.with_webview(|webview| {
-                use webkit2gtk::{SettingsExt, WebViewExt};
-                if let Some(settings) = WebViewExt::settings(&webview.inner()) {
-                    settings.set_enable_smooth_scrolling(false);
-                }
-            })?;
+            app.get_webview_window("main")
+                .ok_or("no window")?
+                .with_webview(|webview| {
+                    use webkit2gtk::{SettingsExt, WebViewExt};
+                    if let Some(settings) = WebViewExt::settings(&webview.inner()) {
+                        settings.set_enable_smooth_scrolling(false);
+                    }
+                })?;
             start_pads(app.handle());
             watch_folders(app.handle());
             look_over_network(app.handle().clone());
@@ -755,8 +972,24 @@ fn main() {
         .manage(Watching::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            all_files, known_files, file_bytes, keep_file, forget_path, keep_art, all_art, pick_folder, take_dropped, folder_files, play,
-            library_settings, remove_folder, restore_hidden, sort_roms, fullscreen, quit, add_folder_files
+            all_files,
+            known_files,
+            file_bytes,
+            keep_file,
+            forget_path,
+            keep_art,
+            all_art,
+            pick_folder,
+            take_dropped,
+            folder_files,
+            play,
+            library_settings,
+            remove_folder,
+            restore_hidden,
+            sort_roms,
+            fullscreen,
+            quit,
+            add_folder_files
         ])
         .run(tauri::generate_context!())
         .expect("couldn't open the window");
@@ -770,23 +1003,35 @@ mod tests {
     /// its title bar and menu, as much taken off the page.
     #[test]
     fn a_window_too_big_for_the_screen_is_made_to_fit_it() {
-        assert_eq!(fitted((1600, 1000), (1616, 1079), (0, 0), (1920, 1032)), ((1600, 953), (152, 0)));
+        assert_eq!(
+            fitted((1600, 1000), (1616, 1079), (0, 0), (1920, 1032)),
+            ((1600, 953), (152, 0))
+        );
     }
 
     #[test]
     fn a_window_that_fits_stays_its_size_and_is_centred_in_whats_free() {
-        assert_eq!(fitted((1280, 800), (1296, 860), (0, 0), (1920, 1040)), ((1280, 800), (312, 90)));
+        assert_eq!(
+            fitted((1280, 800), (1296, 860), (0, 0), (1920, 1040)),
+            ((1280, 800), (312, 90))
+        );
     }
 
     /// As Linux has it, before the window's first drawn.
     #[test]
     fn an_outer_size_less_than_the_inner_isnt_believed() {
-        assert_eq!(fitted((1280, 800), (320, 158), (0, 36), (1920, 1044)), ((1280, 800), (320, 158)));
+        assert_eq!(
+            fitted((1280, 800), (320, 158), (0, 36), (1920, 1044)),
+            ((1280, 800), (320, 158))
+        );
     }
 
     /// On a second screen, the place is that screen's.
     #[test]
     fn its_place_is_on_the_screen_its_opening_on() {
-        assert_eq!(fitted((800, 600), (800, 600), (1920, 100), (1600, 900)), ((800, 600), (2320, 250)));
+        assert_eq!(
+            fitted((800, 600), (800, 600), (1920, 100), (1600, 900)),
+            ((800, 600), (2320, 250))
+        );
     }
 }

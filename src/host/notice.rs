@@ -35,7 +35,11 @@ pub fn draw(picture: &mut [u32], width: usize, height: usize, text: &str) {
 /// them dimmed; as many of them as fit, and as much of each.
 pub fn panel(picture: &mut [u32], width: usize, height: usize, lines: &[String]) {
     let (scale, columns) = fit(width);
-    let lines: Vec<Vec<u8>> = lines.iter().take((height - 2) / LINE).map(|line| characters(line, columns.saturating_sub(1))).collect();
+    let lines: Vec<Vec<u8>> = lines
+        .iter()
+        .take((height - 2) / LINE)
+        .map(|line| characters(line, columns.saturating_sub(1)))
+        .collect();
     let longest = lines.iter().map(Vec::len).max().unwrap_or(0);
     let across = ((longest * CHARACTER + 2) * scale).min(width);
     for row in picture.chunks_mut(width).take(lines.len() * LINE + 2) {

@@ -236,7 +236,11 @@ pub struct Banks {
 
 impl Banks {
     fn new(conflicts: Conflicts) -> Banks {
-        Banks { prg: 0, chr: 0, conflicts }
+        Banks {
+            prg: 0,
+            chr: 0,
+            conflicts,
+        }
     }
 }
 
@@ -270,7 +274,11 @@ impl Rambo1 {
     /// The 1K bank that CHR address `addr` is in, by the banks, the mode
     /// and their inversion.
     fn chr_bank(&self, addr: usize) -> usize {
-        let addr = if self.select & 0x80 != 0 { addr ^ 0x1000 } else { addr };
+        let addr = if self.select & 0x80 != 0 {
+            addr ^ 0x1000
+        } else {
+            addr
+        };
         let full = self.select & 0x20 != 0;
         let bank = |register: usize| self.banks[register] as usize;
         match addr >> 10 {
@@ -287,7 +295,11 @@ impl Rambo1 {
     /// A count of the IRQ's, the line held `delay` cycles on if it's due.
     fn count(&mut self, delay: u8) {
         if self.irq_reload {
-            self.irq_counter = if self.irq_latch == 0 { 0 } else { self.irq_latch | 1 };
+            self.irq_counter = if self.irq_latch == 0 {
+                0
+            } else {
+                self.irq_latch | 1
+            };
             self.irq_reload = false;
         } else if self.irq_counter == 0 {
             self.irq_counter = self.irq_latch;
@@ -357,7 +369,11 @@ impl Mmc3 {
     /// The 1K bank that CHR address `addr` is in, by the banks and their
     /// inversion: R0 and R1 2K each, R2 to R5 1K.
     fn chr_bank(&self, addr: usize) -> usize {
-        let addr = if self.select & 0x80 != 0 { addr ^ 0x1000 } else { addr };
+        let addr = if self.select & 0x80 != 0 {
+            addr ^ 0x1000
+        } else {
+            addr
+        };
         match addr >> 10 {
             slot @ (0 | 1) => (self.banks[0] as usize & 0xFE) | slot,
             slot @ (2 | 3) => (self.banks[1] as usize & 0xFE) | (slot & 1),
@@ -463,16 +479,25 @@ const CHR_BANK: usize = 0x2000;
 impl Cartridge {
     /// The cartridge in the iNES image `image`.
     pub fn new(image: &[u8]) -> Result<Cartridge, String> {
-        let header = image.get(..HEADER).filter(|header| header.starts_with(b"NES\x1A")).ok_or("not an iNES image")?;
+        let header = image
+            .get(..HEADER)
+            .filter(|header| header.starts_with(b"NES\x1A"))
+            .ok_or("not an iNES image")?;
         let nes2 = header[7] & 0x0C == 0x08;
         let junk = !nes2 && header[12..16].iter().any(|&byte| byte != 0);
         let high = if junk { 0 } else { header[7] & 0xF0 };
         let mut number = (header[6] >> 4) as u16 | high as u16;
-        let (mut prg_size, mut chr_size) = (header[4] as usize * PRG_BANK, header[5] as usize * CHR_BANK);
+        let (mut prg_size, mut chr_size) =
+            (header[4] as usize * PRG_BANK, header[5] as usize * CHR_BANK);
         let mut prg_ram_size = 0x2000;
         let mut chr_ram_size = CHR_BANK;
         // RAM, and NVRAM, each 64 << its shift, if there's any.
-        let sizes = |byte: u8| [byte & 0x0F, byte >> 4].iter().map(|&shift| if shift == 0 { 0 } else { 64 << shift }).sum::<usize>();
+        let sizes = |byte: u8| {
+            [byte & 0x0F, byte >> 4]
+                .iter()
+                .map(|&shift| if shift == 0 { 0 } else { 64 << shift })
+                .sum::<usize>()
+        };
         if nes2 {
             number |= ((header[8] & 0x0F) as u16) << 8;
             prg_size += ((header[9] & 0x0F) as usize) << 8 << 14;
@@ -482,8 +507,14 @@ impl Cartridge {
         }
         let submapper = if nes2 { header[8] >> 4 } else { 0 };
         let start = HEADER + if header[6] & 0x04 != 0 { TRAINER } else { 0 };
-        let prg_rom = image.get(start..start + prg_size).ok_or("its PRG ROM cut short")?.to_vec();
-        let chr_rom = image.get(start + prg_size..start + prg_size + chr_size).ok_or("its CHR ROM cut short")?.to_vec();
+        let prg_rom = image
+            .get(start..start + prg_size)
+            .ok_or("its PRG ROM cut short")?
+            .to_vec();
+        let chr_rom = image
+            .get(start + prg_size..start + prg_size + chr_size)
+            .ok_or("its CHR ROM cut short")?
+            .to_vec();
         if prg_rom.is_empty() {
             return Err("no PRG ROM".to_string());
         }
@@ -513,7 +544,14 @@ impl Cartridge {
         };
         let mapper = match number {
             0 => Mapper::Nrom,
-            1 => Mapper::Mmc1(Mmc1 { shift: 0, bits: 0, control: 0x0C, chr: [0; 2], prg: 0, written: None }),
+            1 => Mapper::Mmc1(Mmc1 {
+                shift: 0,
+                bits: 0,
+                control: 0x0C,
+                chr: [0; 2],
+                prg: 0,
+                written: None,
+            }),
             2 => Mapper::Uxrom(0),
             3 => Mapper::Cnrom(0),
             4 | 37 | 47 | 118 | 119 => Mapper::Mmc3(Mmc3 {
@@ -532,19 +570,30 @@ impl Cartridge {
             }),
             5 => Mapper::Mmc5(Box::new(Mmc5::new())),
             7 => Mapper::Axrom(0),
-            9 => Mapper::Mmc2(Mmc2 { prg: 0, chr: [[0; 2]; 2], latch: [1; 2] }),
-            11 if MAPPER_144_GAMES.contains(&rom_crc) => Mapper::ColorDreams(Banks::new(Conflicts::RomD0)),
+            9 => Mapper::Mmc2(Mmc2 {
+                prg: 0,
+                chr: [[0; 2]; 2],
+                latch: [1; 2],
+            }),
+            11 if MAPPER_144_GAMES.contains(&rom_crc) => {
+                Mapper::ColorDreams(Banks::new(Conflicts::RomD0))
+            }
             11 if nes2 && submapper == 2 => Mapper::ColorDreams(Banks::new(Conflicts::And)),
             11 => Mapper::ColorDreams(Banks::new(Conflicts::None)),
             144 => Mapper::ColorDreams(Banks::new(Conflicts::RomD0)),
-            34 if submapper == 1 || (submapper != 2 && chr_size > CHR_BANK) => Mapper::Nina001(Nina001::default()),
+            34 if submapper == 1 || (submapper != 2 && chr_size > CHR_BANK) => {
+                Mapper::Nina001(Nina001::default())
+            }
             34 => Mapper::Bnrom(0),
             64 => Mapper::Rambo1(Rambo1::default()),
             69 => Mapper::Fme7(Fme7::default()),
             66 => Mapper::Gxrom(Banks::new(Conflicts::And)),
             71 => Mapper::Camerica(0),
             228 => Mapper::Active(Active::default()),
-            232 => Mapper::Quattro(Quattro { aladdin: submapper == 1, ..Quattro::default() }),
+            232 => Mapper::Quattro(Quattro {
+                aladdin: submapper == 1,
+                ..Quattro::default()
+            }),
             79 => Mapper::Nina03(Banks::new(Conflicts::None)),
             _ => return Err(format!("mapper {number}, which isn't here yet")),
         };
@@ -556,13 +605,24 @@ impl Cartridge {
             _ => Board::Plain,
         };
         let has_ram = chr_rom.is_empty() || board == Board::Tqrom;
-        let chr_ram = if has_ram { vec![0; chr_ram_size.max(CHR_BANK)] } else { Vec::new() };
+        let chr_ram = if has_ram {
+            vec![0; chr_ram_size.max(CHR_BANK)]
+        } else {
+            Vec::new()
+        };
         Ok(Cartridge {
             prg_rom,
             chr_rom,
             chr_ram,
             // A multicart's outer register, in place of its RAM.
-            prg_ram: vec![0; if board.is_multicart() { 1 } else { prg_ram_size }],
+            prg_ram: vec![
+                0;
+                if board.is_multicart() {
+                    1
+                } else {
+                    prg_ram_size
+                }
+            ],
             battery: header[6] & 0x02 != 0,
             written: false,
             mirroring,
@@ -643,7 +703,11 @@ impl Cartridge {
             Board::Multicart37 => {
                 let register = self.prg_ram[0] as usize;
                 let (block, low_bits) = ((register >> 2) & 1, register & 3);
-                let a16 = if low_bits == 3 { 1 } else { block & (bank >> 3) };
+                let a16 = if low_bits == 3 {
+                    1
+                } else {
+                    block & (bank >> 3)
+                };
                 (bank & 7) | a16 << 3 | block << 4
             }
             Board::Multicart47 => (bank & 0x0F) | (self.prg_ram[0] as usize & 1) << 4,
@@ -675,9 +739,17 @@ impl Cartridge {
         let in_16k = |bank: usize| bank * PRG_BANK + (addr & 0x3FFF);
         let offset = match &self.mapper {
             Mapper::Nrom | Mapper::Cnrom(_) => addr - 0x8000,
-            Mapper::Uxrom(bank) | Mapper::Camerica(bank) => in_16k(if addr < 0xC000 { *bank as usize } else { last_16k }),
-            Mapper::Axrom(bank) | Mapper::Bnrom(bank) => (*bank as usize) * 0x8000 + (addr & 0x7FFF),
-            Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.prg as usize * 0x8000 + (addr & 0x7FFF),
+            Mapper::Uxrom(bank) | Mapper::Camerica(bank) => in_16k(if addr < 0xC000 {
+                *bank as usize
+            } else {
+                last_16k
+            }),
+            Mapper::Axrom(bank) | Mapper::Bnrom(bank) => {
+                (*bank as usize) * 0x8000 + (addr & 0x7FFF)
+            }
+            Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => {
+                banks.prg as usize * 0x8000 + (addr & 0x7FFF)
+            }
             Mapper::Nina001(nina) => nina.prg as usize * 0x8000 + (addr & 0x7FFF),
             Mapper::Rambo1(rambo) => {
                 let last_8k = len / 0x2000 - 1;
@@ -694,23 +766,41 @@ impl Cartridge {
             Mapper::Active(active) => {
                 let chip = [0, 1, 0, 2][active.chip as usize] * 0x80000;
                 let high = (addr >= 0xC000) as usize;
-                let bank = if active.one_bank { active.bank as usize } else { (active.bank as usize & !1) | high };
+                let bank = if active.one_bank {
+                    active.bank as usize
+                } else {
+                    (active.bank as usize & !1) | high
+                };
                 chip + in_16k(bank)
             }
             Mapper::Quattro(quattro) => {
                 let block = quattro.block as usize * 4;
-                in_16k(block + if addr < 0xC000 { quattro.bank as usize } else { 3 })
+                in_16k(
+                    block
+                        + if addr < 0xC000 {
+                            quattro.bank as usize
+                        } else {
+                            3
+                        },
+                )
             }
             Mapper::Fme7(fme7) => {
                 let last_8k = len / 0x2000 - 1;
-                let bank = fme7.prg.get((addr - 0x8000) / 0x2000).map_or(last_8k, |&bank| bank as usize & 0x3F);
+                let bank = fme7
+                    .prg
+                    .get((addr - 0x8000) / 0x2000)
+                    .map_or(last_8k, |&bank| bank as usize & 0x3F);
                 bank * 0x2000 + (addr & 0x1FFF)
             }
             Mapper::Mmc2(mmc2) if addr < 0xA000 => mmc2.prg as usize * 0x2000 + (addr & 0x1FFF),
             Mapper::Mmc2(_) => len - 0x6000 + (addr - 0xA000),
             Mapper::Mmc1(mmc1) => {
                 // On 512K boards, CHR bank 0's bit 4 picks which 256K.
-                let outer = if len > 0x40000 { mmc1.chr[0] as usize & 0x10 } else { 0 };
+                let outer = if len > 0x40000 {
+                    mmc1.chr[0] as usize & 0x10
+                } else {
+                    0
+                };
                 let bank = (mmc1.prg as usize & 0x0F) | outer;
                 match (mmc1.control >> 2) & 3 {
                     0 | 1 => (bank & !1) * PRG_BANK + (addr & 0x7FFF),
@@ -738,14 +828,27 @@ impl Cartridge {
     fn chr_offset(&mut self, addr: u16) -> usize {
         let addr = addr as usize;
         if let Mapper::Mmc5(mmc5) = &mut self.mapper {
-            let chr = if self.chr_rom.is_empty() { self.chr_ram.len() } else { self.chr_rom.len() };
+            let chr = if self.chr_rom.is_empty() {
+                self.chr_ram.len()
+            } else {
+                self.chr_rom.len()
+            };
             return mmc5.chr_offset(addr, self.sprite_fetch) % chr;
         }
         let offset = match &self.mapper {
-            Mapper::Nrom | Mapper::Uxrom(_) | Mapper::Axrom(_) | Mapper::Camerica(_) | Mapper::Bnrom(_) | Mapper::Quattro(_) | Mapper::Mmc5(_) | Mapper::Fds(_) => addr,
+            Mapper::Nrom
+            | Mapper::Uxrom(_)
+            | Mapper::Axrom(_)
+            | Mapper::Camerica(_)
+            | Mapper::Bnrom(_)
+            | Mapper::Quattro(_)
+            | Mapper::Mmc5(_)
+            | Mapper::Fds(_) => addr,
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
             Mapper::Active(active) => active.chr as usize * CHR_BANK + addr,
-            Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => banks.chr as usize * CHR_BANK + addr,
+            Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => {
+                banks.chr as usize * CHR_BANK + addr
+            }
             Mapper::Nina001(nina) => nina.chr[addr >> 12] as usize * 0x1000 + (addr & 0x0FFF),
             Mapper::Rambo1(rambo) => rambo.chr_bank(addr) * 0x400 + (addr & 0x3FF),
             Mapper::Fme7(fme7) => fme7.chr[addr >> 10] as usize * 0x400 + (addr & 0x3FF),
@@ -768,7 +871,11 @@ impl Cartridge {
                 bank * 0x400 + (addr & 0x3FF)
             }
         };
-        let chr = if self.chr_in_ram(addr as u16) { &self.chr_ram } else { &self.chr_rom };
+        let chr = if self.chr_in_ram(addr as u16) {
+            &self.chr_ram
+        } else {
+            &self.chr_rom
+        };
         offset % chr.len()
     }
 
@@ -776,7 +883,9 @@ impl Cartridge {
     fn chr_in_ram(&self, addr: u16) -> bool {
         match &self.mapper {
             _ if self.chr_rom.is_empty() => true,
-            Mapper::Mmc3(mmc3) if self.board == Board::Tqrom => mmc3.chr_bank(addr as usize) & 0x40 != 0,
+            Mapper::Mmc3(mmc3) if self.board == Board::Tqrom => {
+                mmc3.chr_bank(addr as usize) & 0x40 != 0
+            }
             _ => false,
         }
     }
@@ -790,7 +899,9 @@ impl Cartridge {
         let addr = addr as usize - 0x6000;
         match &self.mapper {
             Mapper::Mmc1(mmc1) if mmc1.prg & 0x10 != 0 => None,
-            Mapper::Mmc1(mmc1) if self.prg_ram.len() == 0x8000 => Some(((mmc1.chr[0] as usize >> 2) & 3) * 0x2000 + addr),
+            Mapper::Mmc1(mmc1) if self.prg_ram.len() == 0x8000 => {
+                Some(((mmc1.chr[0] as usize >> 2) & 3) * 0x2000 + addr)
+            }
             Mapper::Mmc3(mmc3) if !mmc3.ram_enabled || (writing && mmc3.ram_protected) => None,
             Mapper::Fme7(fme7) if fme7.window & 0xC0 != 0xC0 => None,
             _ => Some(addr % self.prg_ram.len()),
@@ -804,7 +915,10 @@ impl Cartridge {
             return None;
         }
         let half = (addr >> 9) & 1;
-        let (read, write) = (mmc3.halves & (0x20 << (2 * half)) != 0, mmc3.halves & (0x10 << (2 * half)) != 0);
+        let (read, write) = (
+            mmc3.halves & (0x20 << (2 * half)) != 0,
+            mmc3.halves & (0x10 << (2 * half)) != 0,
+        );
         let at = addr as usize & 0x3FF;
         Some((read && (write || !writing)).then_some(at))
     }
@@ -814,7 +928,9 @@ impl Cartridge {
     pub fn cpu_read(&mut self, addr: u16) -> Option<u8> {
         // Not the vectors: for the MMC5, reading those is an event.
         if let (0x8000..0xFFFA, Some(pages)) = (addr, &self.prg_pages) {
-            return Some(self.prg_rom[pages[addr as usize >> 12 & 7] as usize + (addr as usize & 0xFFF)]);
+            return Some(
+                self.prg_rom[pages[addr as usize >> 12 & 7] as usize + (addr as usize & 0xFFF)],
+            );
         }
         if let Mapper::Mmc5(mmc5) = &mut self.mapper {
             let value = mmc5.cpu_read(addr, &self.prg_rom, &self.prg_ram);
@@ -831,7 +947,9 @@ impl Cartridge {
         match addr {
             0x6000..=0x7FFF => match &self.mapper {
                 _ if self.board.is_multicart() => None,
-                Mapper::Mmc3(mmc3) if mmc3.mmc6 => self.mmc6_ram(mmc3, addr, false).map(|at| at.map_or(0, |at| self.prg_ram[at])),
+                Mapper::Mmc3(mmc3) if mmc3.mmc6 => self
+                    .mmc6_ram(mmc3, addr, false)
+                    .map(|at| at.map_or(0, |at| self.prg_ram[at])),
                 Mapper::Fme7(fme7) if fme7.window & 0x40 == 0 => {
                     let at = (fme7.window as usize & 0x3F) * 0x2000 + (addr as usize & 0x1FFF);
                     Some(self.prg_rom[at % self.prg_rom.len()])
@@ -842,7 +960,9 @@ impl Cartridge {
                 Mapper::Active(active) if active.chip == ACTIVE_NO_CHIP => None,
                 _ => {
                     if self.prg_rom.len() % 0x1000 == 0 {
-                        self.prg_pages = Some(std::array::from_fn(|page| self.prg_offset(0x8000 + page as u16 * 0x1000) as u32));
+                        self.prg_pages = Some(std::array::from_fn(|page| {
+                            self.prg_offset(0x8000 + page as u16 * 0x1000) as u32
+                        }));
                     }
                     Some(self.prg_rom[self.prg_offset(addr)])
                 }
@@ -901,11 +1021,19 @@ impl Cartridge {
         let four_screen = self.mirroring == Mirroring::FourScreen;
         let rom = self.prg_rom[self.prg_offset(addr)];
         match &mut self.mapper {
-            Mapper::Nrom | Mapper::Nina03(_) | Mapper::Nina001(_) | Mapper::Mmc5(_) | Mapper::Fds(_) => {}
+            Mapper::Nrom
+            | Mapper::Nina03(_)
+            | Mapper::Nina001(_)
+            | Mapper::Mmc5(_)
+            | Mapper::Fds(_) => {}
             Mapper::Uxrom(bank) | Mapper::Cnrom(bank) => *bank = value,
             Mapper::Axrom(bank) => {
                 *bank = value & 7;
-                self.mirroring = if value & 0x10 != 0 { Mirroring::SingleUpper } else { Mirroring::SingleLower };
+                self.mirroring = if value & 0x10 != 0 {
+                    Mirroring::SingleUpper
+                } else {
+                    Mirroring::SingleLower
+                };
             }
             Mapper::ColorDreams(banks) => {
                 let value = banks.conflicts.on(value, rom);
@@ -920,7 +1048,11 @@ impl Cartridge {
                 0x8000 => rambo.select = value,
                 0x8001 => rambo.banks[rambo.select as usize & 0x0F] = value,
                 0xA000 if !four_screen => {
-                    self.mirroring = if value & 1 == 0 { Mirroring::Vertical } else { Mirroring::Horizontal };
+                    self.mirroring = if value & 1 == 0 {
+                        Mirroring::Vertical
+                    } else {
+                        Mirroring::Horizontal
+                    };
                 }
                 0xC000 => rambo.irq_latch = value,
                 0xC001 => {
@@ -933,14 +1065,23 @@ impl Cartridge {
             },
             Mapper::Active(active) => {
                 let bits = |shift: u16, mask: u16| ((addr >> shift) & mask) as u8;
-                (active.chip, active.bank, active.one_bank) = (bits(11, 3), bits(6, 0x1F), bits(5, 1) != 0);
+                (active.chip, active.bank, active.one_bank) =
+                    (bits(11, 3), bits(6, 0x1F), bits(5, 1) != 0);
                 active.chr = bits(0, 0x0F) << 2 | value & 3;
-                self.mirroring = if bits(13, 1) == 0 { Mirroring::Vertical } else { Mirroring::Horizontal };
+                self.mirroring = if bits(13, 1) == 0 {
+                    Mirroring::Vertical
+                } else {
+                    Mirroring::Horizontal
+                };
             }
             Mapper::Quattro(quattro) => match addr {
                 0x8000..=0xBFFF => {
                     let block = (value >> 3) & 3;
-                    quattro.block = if quattro.aladdin { (block & 1) << 1 | block >> 1 } else { block };
+                    quattro.block = if quattro.aladdin {
+                        (block & 1) << 1 | block >> 1
+                    } else {
+                        block
+                    };
                 }
                 _ => quattro.bank = value & 3,
             },
@@ -951,8 +1092,12 @@ impl Cartridge {
                     8 => fme7.window = value,
                     command @ 9..=0xB => fme7.prg[command as usize - 9] = value,
                     0xC => {
-                        self.mirroring = [Mirroring::Vertical, Mirroring::Horizontal, Mirroring::SingleLower, Mirroring::SingleUpper]
-                            [value as usize & 3];
+                        self.mirroring = [
+                            Mirroring::Vertical,
+                            Mirroring::Horizontal,
+                            Mirroring::SingleLower,
+                            Mirroring::SingleUpper,
+                        ][value as usize & 3];
                     }
                     0xD => {
                         (fme7.counting, fme7.irq_enabled) = (value & 0x80 != 0, value & 1 != 0);
@@ -970,13 +1115,21 @@ impl Cartridge {
                     mmc2.chr[register / 2][register % 2] = value & 0x1F;
                 }
                 0xF if !four_screen => {
-                    self.mirroring = if value & 1 == 0 { Mirroring::Vertical } else { Mirroring::Horizontal };
+                    self.mirroring = if value & 1 == 0 {
+                        Mirroring::Vertical
+                    } else {
+                        Mirroring::Horizontal
+                    };
                 }
                 _ => {}
             },
             Mapper::Camerica(bank) => match addr {
                 0x9000..=0x9FFF => {
-                    self.mirroring = if value & 0x10 != 0 { Mirroring::SingleUpper } else { Mirroring::SingleLower };
+                    self.mirroring = if value & 0x10 != 0 {
+                        Mirroring::SingleUpper
+                    } else {
+                        Mirroring::SingleLower
+                    };
                 }
                 0xC000.. => *bank = value & 0x0F,
                 _ => {}
@@ -1002,8 +1155,12 @@ impl Cartridge {
                 match addr {
                     0x8000..=0x9FFF => {
                         mmc1.control = register;
-                        self.mirroring = [Mirroring::SingleLower, Mirroring::SingleUpper, Mirroring::Vertical, Mirroring::Horizontal]
-                            [register as usize & 3];
+                        self.mirroring = [
+                            Mirroring::SingleLower,
+                            Mirroring::SingleUpper,
+                            Mirroring::Vertical,
+                            Mirroring::Horizontal,
+                        ][register as usize & 3];
                     }
                     0xA000..=0xBFFF => mmc1.chr[0] = register,
                     0xC000..=0xDFFF => mmc1.chr[1] = register,
@@ -1014,7 +1171,11 @@ impl Cartridge {
                 0x8000 => mmc3.select = value,
                 0x8001 => mmc3.banks[mmc3.select as usize & 7] = value,
                 0xA000 if !four_screen => {
-                    self.mirroring = if value & 1 == 0 { Mirroring::Vertical } else { Mirroring::Horizontal };
+                    self.mirroring = if value & 1 == 0 {
+                        Mirroring::Vertical
+                    } else {
+                        Mirroring::Horizontal
+                    };
                 }
                 0xA001 if mmc3.mmc6 => {
                     if mmc3.select & 0x20 != 0 {
@@ -1045,7 +1206,9 @@ impl Cartridge {
     /// the CHR bank that address falls in.
     pub fn nametable_page(&self, addr: u16) -> usize {
         match &self.mapper {
-            Mapper::Mmc3(mmc3) if self.board == Board::Txsrom => mmc3.chr_bank(addr as usize & 0x0FFF) >> 7,
+            Mapper::Mmc3(mmc3) if self.board == Board::Txsrom => {
+                mmc3.chr_bank(addr as usize & 0x0FFF) >> 7
+            }
             Mapper::Mmc5(mmc5) => mmc5.nametable_page(addr),
             _ => self.mirroring.page(addr),
         }
@@ -1109,11 +1272,19 @@ impl Cartridge {
     pub fn chr_read(&mut self, addr: u16) -> u8 {
         if let Some(pages) = &self.chr_pages {
             let at = pages[addr as usize >> 10 & 7] as usize + (addr as usize & 0x3FF);
-            return if self.chr_rom.is_empty() { self.chr_ram[at] } else { self.chr_rom[at] };
+            return if self.chr_rom.is_empty() {
+                self.chr_ram[at]
+            } else {
+                self.chr_rom[at]
+            };
         }
         self.chr_pages = self.chr_pages_now();
         let at = self.chr_offset(addr);
-        let value = if self.chr_in_ram(addr) { self.chr_ram[at] } else { self.chr_rom[at] };
+        let value = if self.chr_in_ram(addr) {
+            self.chr_ram[at]
+        } else {
+            self.chr_rom[at]
+        };
         if let Mapper::Mmc2(mmc2) = &mut self.mapper {
             match addr {
                 0x0FD8 => mmc2.latch[0] = 0,
@@ -1129,9 +1300,17 @@ impl Cartridge {
     /// Where its pages are, if that's a thing they have: a read moves the
     /// MMC2's and the MMC5's, and TQROM's are in two places.
     fn chr_pages_now(&mut self) -> Option<[u32; 8]> {
-        let chr = if self.chr_rom.is_empty() { self.chr_ram.len() } else { self.chr_rom.len() };
-        let moves = matches!(self.mapper, Mapper::Mmc2(_) | Mapper::Mmc5(_) | Mapper::Fds(_)) || self.board == Board::Tqrom;
-        (!moves && chr > 0 && chr % 0x400 == 0).then(|| std::array::from_fn(|page| self.chr_offset(page as u16 * 0x400) as u32))
+        let chr = if self.chr_rom.is_empty() {
+            self.chr_ram.len()
+        } else {
+            self.chr_rom.len()
+        };
+        let moves = matches!(
+            self.mapper,
+            Mapper::Mmc2(_) | Mapper::Mmc5(_) | Mapper::Fds(_)
+        ) || self.board == Board::Tqrom;
+        (!moves && chr > 0 && chr % 0x400 == 0)
+            .then(|| std::array::from_fn(|page| self.chr_offset(page as u16 * 0x400) as u32))
     }
 
     /// A write to them: to its CHR RAM, if it has that.
@@ -1154,7 +1333,10 @@ impl Cartridge {
             low_since.get_or_insert(dot);
             return;
         }
-        if !low_since.take().is_some_and(|since| dot - since >= A12_LOW_DOTS) {
+        if !low_since
+            .take()
+            .is_some_and(|since| dot - since >= A12_LOW_DOTS)
+        {
             return;
         }
         if let Mapper::Rambo1(rambo) = &mut self.mapper {
@@ -1217,7 +1399,11 @@ impl Cartridge {
         let mut lines = vec![
             self.mapper_name(),
             format!("PRG {}K {chr}", kilobytes(self.prg_rom.len())),
-            format!("RAM {}K{battery}  {:?}", kilobytes(self.prg_ram.len()), self.mirroring),
+            format!(
+                "RAM {}K{battery}  {:?}",
+                kilobytes(self.prg_ram.len()),
+                self.mirroring
+            ),
         ];
         if let Mapper::Fds(fds) = &self.mapper {
             lines.push(fds.debug());
@@ -1243,7 +1429,9 @@ impl Cartridge {
             }
             return;
         }
-        let Mapper::Rambo1(rambo) = &mut self.mapper else { return };
+        let Mapper::Rambo1(rambo) = &mut self.mapper else {
+            return;
+        };
         if rambo.irq_delay > 0 {
             rambo.irq_delay -= 1;
             rambo.irq |= rambo.irq_delay == 0;

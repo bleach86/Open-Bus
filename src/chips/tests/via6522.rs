@@ -27,14 +27,22 @@ mod tests {
             via.tick();
             assert_eq!(via.read(T1C_H), 0, "cycle {cycle}: the high byte");
             assert_eq!(via.read(IFR) & T1, 0, "cycle {cycle}: timed out early");
-            assert_eq!(via.read(T1C_L), 16 - (cycle - 1) as u8, "cycle {cycle}: the count");
+            assert_eq!(
+                via.read(T1C_L),
+                16 - (cycle - 1) as u8,
+                "cycle {cycle}: the count"
+            );
         }
         // N + 2: $FFFF, and its flag set (N + 1.5 after the write).
         via.tick();
         assert_eq!(via.read(IFR) & T1, T1, "no time out at N + 2");
         assert_eq!(via.read(T1C_H), 0xFF);
         assert_eq!(via.read(T1C_L), 0xFF);
-        assert_eq!(via.read(IFR) & T1, 0, "the flag not cleared by reading the low counter");
+        assert_eq!(
+            via.read(IFR) & T1,
+            0,
+            "the flag not cleared by reading the low counter"
+        );
         // N + 3: the latch again; one-shot, no more time outs.
         via.tick();
         assert_eq!(via.read(T1C_L), 16, "not reloaded");
@@ -74,11 +82,19 @@ mod tests {
         via.write(T1L_H, 0x12);
         assert_eq!(via.read(IFR) & T1, 0, "the flag not cleared");
         via.tick();
-        assert_eq!((via.read(T1C_H), via.read(T1C_L)), (0x00, 0x01), "the counter loaded by the latch's write");
+        assert_eq!(
+            (via.read(T1C_H), via.read(T1C_L)),
+            (0x00, 0x01),
+            "the counter loaded by the latch's write"
+        );
         for _ in 0..3 {
             via.tick(); // 0, $FFFF, then the latch
         }
-        assert_eq!((via.read(T1C_H), via.read(T1C_L)), (0x12, 0x02), "the new latch not taken at the reload");
+        assert_eq!(
+            (via.read(T1C_H), via.read(T1C_L)),
+            (0x12, 0x02),
+            "the new latch not taken at the reload"
+        );
     }
 
     #[test]
@@ -94,9 +110,17 @@ mod tests {
         via.tick();
         assert_eq!(via.read(IFR) & T2, T2, "no time out at N + 2");
         assert_eq!(via.read(T2C_L), 0xFF);
-        assert_eq!(via.read(IFR) & T2, 0, "the flag not cleared by reading the low counter");
+        assert_eq!(
+            via.read(IFR) & T2,
+            0,
+            "the flag not cleared by reading the low counter"
+        );
         via.tick();
-        assert_eq!((via.read(T2C_H), via.read(T2C_L)), (0xFF, 0xFE), "not on down from $FFFF");
+        assert_eq!(
+            (via.read(T2C_H), via.read(T2C_L)),
+            (0xFF, 0xFE),
+            "not on down from $FFFF"
+        );
         for _ in 0..0x10000 {
             via.tick();
         }
@@ -131,7 +155,11 @@ mod tests {
         via.write(0x3, 0x0F); // port A: low nibble out
         via.write(0x1, 0xA5);
         via.pa_in = 0x3C;
-        assert_eq!(via.read(0x1), 0x35, "port A: outputs written, inputs driven");
+        assert_eq!(
+            via.read(0x1),
+            0x35,
+            "port A: outputs written, inputs driven"
+        );
         assert_eq!(via.port_a(), 0x35);
         via.write(0x2, 0xFF);
         via.write(0x0, 0x5A);
@@ -141,7 +169,11 @@ mod tests {
         via.write(IER, 0x80 | T1);
         via.tick();
         via.reset();
-        assert_eq!((via.read(0x2), via.read(0x3), via.read(0xE)), (0, 0, 0x80), "not cleared by RESET");
+        assert_eq!(
+            (via.read(0x2), via.read(0x3), via.read(0xE)),
+            (0, 0, 0x80),
+            "not cleared by RESET"
+        );
         assert_eq!(via.read(T1C_L), 50, "timer 1 cleared by RESET");
     }
 }

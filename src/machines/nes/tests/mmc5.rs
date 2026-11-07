@@ -39,7 +39,11 @@ mod tests {
         let mut cart = mmc5();
         assert_eq!(cart.cpu_read(0xE000), Some(63));
         prg_banks(&mut cart, [1, 2, 3, 4]);
-        assert_eq!(prg(&mut cart), [1, 2, 3, 4], "four 8K banks, with no mode written");
+        assert_eq!(
+            prg(&mut cart),
+            [1, 2, 3, 4],
+            "four 8K banks, with no mode written"
+        );
     }
 
     #[test]
@@ -48,13 +52,25 @@ mod tests {
         prg_banks(&mut cart, [9, 10, 21, 42]);
 
         cart.cpu_write(0x5100, 2, 0);
-        assert_eq!(prg(&mut cart), [10, 11, 21, 42], "16K of $5115, 8K of $5116, 8K of $5117");
+        assert_eq!(
+            prg(&mut cart),
+            [10, 11, 21, 42],
+            "16K of $5115, 8K of $5116, 8K of $5117"
+        );
 
         cart.cpu_write(0x5100, 1, 0);
-        assert_eq!(prg(&mut cart), [10, 11, 42, 43], "16K of $5115, 16K of $5117");
+        assert_eq!(
+            prg(&mut cart),
+            [10, 11, 42, 43],
+            "16K of $5115, 16K of $5117"
+        );
 
         cart.cpu_write(0x5100, 0, 0);
-        assert_eq!(prg(&mut cart), [40, 41, 42, 43], "32K of $5117, its low bits ignored");
+        assert_eq!(
+            prg(&mut cart),
+            [40, 41, 42, 43],
+            "32K of $5117, its low bits ignored"
+        );
     }
 
     #[test]
@@ -91,7 +107,10 @@ mod tests {
     }
 
     fn chr(cart: &mut Cartridge) -> [u8; 8] {
-        [0x0000, 0x0400, 0x0800, 0x0C00, 0x1000, 0x1400, 0x1800, 0x1C00].map(|addr| cart.chr_read(addr))
+        [
+            0x0000, 0x0400, 0x0800, 0x0C00, 0x1000, 0x1400, 0x1800, 0x1C00,
+        ]
+        .map(|addr| cart.chr_read(addr))
     }
 
     #[test]
@@ -101,16 +120,32 @@ mod tests {
             cart.cpu_write(0x5120 + register, 2 * register as u8 + 2, 0);
         }
         cart.cpu_write(0x5101, 3, 0);
-        assert_eq!(chr(&mut cart), [2, 4, 6, 8, 10, 12, 14, 16], "1K: its registers");
+        assert_eq!(
+            chr(&mut cart),
+            [2, 4, 6, 8, 10, 12, 14, 16],
+            "1K: its registers"
+        );
 
         cart.cpu_write(0x5101, 2, 0);
-        assert_eq!(chr(&mut cart), [8, 9, 16, 17, 24, 25, 32, 33], "2K: $5121, 3, 5, 7, by 2K banks");
+        assert_eq!(
+            chr(&mut cart),
+            [8, 9, 16, 17, 24, 25, 32, 33],
+            "2K: $5121, 3, 5, 7, by 2K banks"
+        );
 
         cart.cpu_write(0x5101, 1, 0);
-        assert_eq!(chr(&mut cart), [32, 33, 34, 35, 0, 1, 2, 3], "4K: $5123, $5127, by 4K banks, wrapped");
+        assert_eq!(
+            chr(&mut cart),
+            [32, 33, 34, 35, 0, 1, 2, 3],
+            "4K: $5123, $5127, by 4K banks, wrapped"
+        );
 
         cart.cpu_write(0x5101, 0, 0);
-        assert_eq!(chr(&mut cart)[0], 16 * 8 % 64, "8K: $5127, by 8K banks, wrapped");
+        assert_eq!(
+            chr(&mut cart)[0],
+            16 * 8 % 64,
+            "8K: $5127, by 8K banks, wrapped"
+        );
     }
 
     /// The MMC5 told rendering's on, with `tall` sprites; and the frame
@@ -177,15 +212,30 @@ mod tests {
         cart.cpu_write(0x5107, 2, 0);
         cart.cpu_write(0x5105, 0b11_10_01_00, 0);
 
-        assert_eq!((cart.nametable_page(0x2000), cart.nametable_read(0x2000)), (0, None), "the PPU's first");
-        assert_eq!((cart.nametable_page(0x2400), cart.nametable_read(0x2400)), (1, None), "the PPU's second");
+        assert_eq!(
+            (cart.nametable_page(0x2000), cart.nametable_read(0x2000)),
+            (0, None),
+            "the PPU's first"
+        );
+        assert_eq!(
+            (cart.nametable_page(0x2400), cart.nametable_read(0x2400)),
+            (1, None),
+            "the PPU's second"
+        );
         assert_eq!(cart.nametable_read(0x2810), Some(0x77), "ExRAM");
         assert_eq!(cart.nametable_read(0x2C10), Some(0x42), "the fill's tile");
-        assert_eq!(cart.nametable_read(0x2FC0), Some(0xAA), "the fill's palette, each quarter");
+        assert_eq!(
+            cart.nametable_read(0x2FC0),
+            Some(0xAA),
+            "the fill's palette, each quarter"
+        );
 
         assert!(cart.nametable_write(0x2820, 0x12), "ExRAM written");
         assert_eq!(cart.nametable_read(0x2820), Some(0x12));
-        assert!(!cart.nametable_write(0x2000, 0x34), "the PPU's taken for ExRAM");
+        assert!(
+            !cart.nametable_write(0x2000, 0x34),
+            "the PPU's taken for ExRAM"
+        );
 
         // ExRAM in its RAM modes is no nametable.
         cart.cpu_write(0x5104, 2, 0);
@@ -207,13 +257,21 @@ mod tests {
         assert_eq!(cart.cpu_read(0x5C00), None, "mode 0, open bus");
         cart.cpu_write(0x5C00, 0x33, 0);
         cart.cpu_write(0x5104, 2, 0);
-        assert_eq!(cart.cpu_read(0x5C00), Some(0x11), "mode 0, written not rendering");
+        assert_eq!(
+            cart.cpu_read(0x5C00),
+            Some(0x11),
+            "mode 0, written not rendering"
+        );
 
         cart.cpu_write(0x5104, 0, 0);
         in_frame(&mut cart, false);
         cart.cpu_write(0x5C00, 0x33, 0);
         cart.cpu_write(0x5104, 2, 0);
-        assert_eq!(cart.cpu_read(0x5C00), Some(0x33), "mode 0, written rendering");
+        assert_eq!(
+            cart.cpu_read(0x5C00),
+            Some(0x33),
+            "mode 0, written rendering"
+        );
     }
 
     #[test]
@@ -224,8 +282,16 @@ mod tests {
         cart.cpu_write(0x5104, 1, 0);
         in_frame(&mut cart, false);
 
-        assert_eq!(cart.nametable_read(0x2010), None, "the tile's still the nametable's");
-        assert_eq!(cart.nametable_read(0x23C4), Some(0xAA), "the attribute's its byte's");
+        assert_eq!(
+            cart.nametable_read(0x2010),
+            None,
+            "the tile's still the nametable's"
+        );
+        assert_eq!(
+            cart.nametable_read(0x23C4),
+            Some(0xAA),
+            "the attribute's its byte's"
+        );
         assert_eq!(cart.chr_read(0x0400), 3 * 4 + 1, "the pattern's its 4K's");
         cart.sprite_fetch = true;
         assert_ne!(cart.chr_read(0x0400), 3 * 4 + 1, "a sprite's its");
@@ -251,7 +317,11 @@ mod tests {
         cart.sprite_fetch = false;
 
         assert_eq!(cart.nametable_read(0x2100), Some(0));
-        assert_eq!(cart.nametable_read(0x2101), Some(0x5A), "the second tile, in the split");
+        assert_eq!(
+            cart.nametable_read(0x2101),
+            Some(0x5A),
+            "the second tile, in the split"
+        );
         assert_eq!(cart.nametable_read(0x23C0), Some(0xFF), "its attribute");
         assert_eq!(cart.chr_read(0x0000), 5 * 4, "its 4K bank");
         assert_eq!(cart.nametable_read(0x2102), None, "the third, out of it");
@@ -262,10 +332,15 @@ mod tests {
         let mut cart = mmc5();
         cart.cpu_write(0x5205, 200, 0);
         cart.cpu_write(0x5206, 250, 0);
-        let product = cart.cpu_read(0x5205).unwrap() as u16 | (cart.cpu_read(0x5206).unwrap() as u16) << 8;
+        let product =
+            cart.cpu_read(0x5205).unwrap() as u16 | (cart.cpu_read(0x5206).unwrap() as u16) << 8;
         assert_eq!(product, 50000);
         cart.cpu_write(0x5205, 3, 0);
-        assert_eq!(cart.cpu_read(0x5205), Some((3u16 * 250) as u8), "a number written, the other kept");
+        assert_eq!(
+            cart.cpu_read(0x5205),
+            Some((3u16 * 250) as u8),
+            "a number written, the other kept"
+        );
     }
 
     #[test]
@@ -362,7 +437,10 @@ mod tests {
         assert!(in_frame_now(&mut cart), "ended early");
         cart.cycle();
         cart.cycle();
-        assert!(!in_frame_now(&mut cart), "not ended by the PPU's going quiet");
+        assert!(
+            !in_frame_now(&mut cart),
+            "not ended by the PPU's going quiet"
+        );
 
         // Rendering turned off.
         let mut cart = mmc5();
@@ -378,7 +456,10 @@ mod tests {
         line_start(&mut cart);
         assert!(cart.irq());
         cart.cpu_read(0xFFFA);
-        assert!(!cart.irq() && !in_frame_now(&mut cart), "not ended by the NMI");
+        assert!(
+            !cart.irq() && !in_frame_now(&mut cart),
+            "not ended by the NMI"
+        );
     }
 
     #[test]

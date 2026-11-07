@@ -6,11 +6,11 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::host::machine::Machine;
-    use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
-    use crate::machines::apple2::disk2::Disk2;
+    use crate::cpu::bus::Bus;
+    use crate::host::machine::Machine;
     use crate::machines::apple2::disk_image::Disk;
+    use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::language_card::LanguageCard;
     use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME};
     use std::path::Path;
@@ -62,7 +62,11 @@ mod tests {
         apple.write(0xE000, 0x01);
         apple.read(0xC083); // once: the pre-write
         apple.write(0xE000, 0x02);
-        assert_eq!(apple.read(0xE000), 0x00, "written, protected or after one read");
+        assert_eq!(
+            apple.read(0xE000),
+            0x00,
+            "written, protected or after one read"
+        );
 
         apple.read(0xC083); // twice
         apple.write(0xE000, 0x03);
@@ -74,7 +78,11 @@ mod tests {
         apple.read(0x1234);
         apple.read(0xC083);
         apple.write(0xE000, 0x04);
-        assert_eq!(apple.read(0xE000), 0x04, "not written: a read between broke the pair");
+        assert_eq!(
+            apple.read(0xE000),
+            0x04,
+            "not written: a read between broke the pair"
+        );
 
         // Any even switch protects it again.
         apple.read(0xC080);
@@ -92,10 +100,18 @@ mod tests {
         apple.write(0xC083, 0);
         apple.read(0xC083);
         apple.write(0xE000, 0x06);
-        assert_eq!(apple.read(0xE000), 0x04, "written: a write between two reads");
+        assert_eq!(
+            apple.read(0xE000),
+            0x04,
+            "written: a write between two reads"
+        );
         apple.read(0xC083);
         apple.write(0xE000, 0x07);
-        assert_eq!(apple.read(0xE000), 0x07, "not written after two reads at last");
+        assert_eq!(
+            apple.read(0xE000),
+            0x07,
+            "not written after two reads at last"
+        );
         apple.read(0xC080);
         apple.write(0xC083, 0);
         apple.read(0xC083);
@@ -107,7 +123,11 @@ mod tests {
         apple.write(0xE000, 0x09);
         assert_eq!(apple.read(0xE000), 0x22, "the RAM read, not the ROM");
         apple.read(0xC080);
-        assert_eq!(apple.read(0xE000), 0x09, "not written while the ROM was read");
+        assert_eq!(
+            apple.read(0xE000),
+            0x09,
+            "not written while the ROM was read"
+        );
     }
 
     #[test]
@@ -190,32 +210,72 @@ mod tests {
         cpu.reset();
 
         // HELLO run, Integer BASIC loaded, and Applesoft's prompt.
-        assert!(run_until(&mut cpu, "]", 20), "no prompt: {:#?}", cpu.memory.text());
+        assert!(
+            run_until(&mut cpu, "]", 20),
+            "no prompt: {:#?}",
+            cpu.memory.text()
+        );
         type_in(&mut cpu, b"INT\r");
-        assert!(run_until(&mut cpu, ">", 2), "no Integer BASIC: {:#?}", cpu.memory.text());
+        assert!(
+            run_until(&mut cpu, ">", 2),
+            "no Integer BASIC: {:#?}",
+            cpu.memory.text()
+        );
         let card = cpu.memory.language_card.as_ref().unwrap();
-        assert!(card.read_ram && !card.write_enabled, "Integer BASIC not read from the card");
+        assert!(
+            card.read_ram && !card.write_enabled,
+            "Integer BASIC not read from the card"
+        );
 
         // Integer BASIC's arithmetic: whole numbers.
         type_in(&mut cpu, b"PRINT 7/2\r");
-        assert!(run_until(&mut cpu, ">", 1), "PRINT 7/2: {:#?}", cpu.memory.text());
+        assert!(
+            run_until(&mut cpu, ">", 1),
+            "PRINT 7/2: {:#?}",
+            cpu.memory.text()
+        );
         let text = cpu.memory.text();
-        let typed = text.iter().position(|line| line.trim_end() == ">PRINT 7/2").expect("PRINT 7/2 not on the screen");
+        let typed = text
+            .iter()
+            .position(|line| line.trim_end() == ">PRINT 7/2")
+            .expect("PRINT 7/2 not on the screen");
         assert_eq!(text[typed + 1].trim_end(), "3", "7/2: {text:#?}");
 
         // Reset: the card reads the ROM, and the ROM's reset goes to DOS's,
         // which switches it back in for Integer BASIC.
         cpu.memory.reset_button(true);
         cpu.execute(2 * CYCLES_PER_FRAME);
-        assert!(!cpu.memory.language_card.as_ref().unwrap().read_ram, "the card not reset");
+        assert!(
+            !cpu.memory.language_card.as_ref().unwrap().read_ram,
+            "the card not reset"
+        );
         cpu.memory.reset_button(false);
         cpu.execute(CYCLES_PER_FRAME);
-        assert!(run_until(&mut cpu, ">", 1), "not back to Integer BASIC: {:#?}", cpu.memory.text());
-        assert_eq!(cpu.memory.ram[0x25], 23, "the prompt not reset's, at the bottom: {:#?}", cpu.memory.text());
-        assert!(cpu.memory.language_card.as_ref().unwrap().read_ram, "Integer BASIC not read from the card");
+        assert!(
+            run_until(&mut cpu, ">", 1),
+            "not back to Integer BASIC: {:#?}",
+            cpu.memory.text()
+        );
+        assert_eq!(
+            cpu.memory.ram[0x25],
+            23,
+            "the prompt not reset's, at the bottom: {:#?}",
+            cpu.memory.text()
+        );
+        assert!(
+            cpu.memory.language_card.as_ref().unwrap().read_ram,
+            "Integer BASIC not read from the card"
+        );
 
         type_in(&mut cpu, b"FP\r");
-        assert!(run_until(&mut cpu, "]", 2), "not back to Applesoft: {:#?}", cpu.memory.text());
-        assert!(!cpu.memory.language_card.as_ref().unwrap().read_ram, "Applesoft not read from the ROM");
+        assert!(
+            run_until(&mut cpu, "]", 2),
+            "not back to Applesoft: {:#?}",
+            cpu.memory.text()
+        );
+        assert!(
+            !cpu.memory.language_card.as_ref().unwrap().read_ram,
+            "Applesoft not read from the ROM"
+        );
     }
 }

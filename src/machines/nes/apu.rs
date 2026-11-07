@@ -55,20 +55,34 @@ const TRIANGLE: [u8; 32] = [
 /// The noise's periods and the DMC's rates, in CPU cycles, NTSC's and
 /// PAL's.
 const NOISE_PERIODS: [[u16; 16]; 2] = [
-    [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068],
-    [4, 8, 14, 30, 60, 88, 118, 148, 188, 236, 354, 472, 708, 944, 1890, 3778],
+    [
+        4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
+    ],
+    [
+        4, 8, 14, 30, 60, 88, 118, 148, 188, 236, 354, 472, 708, 944, 1890, 3778,
+    ],
 ];
 const DMC_RATES: [[u16; 16]; 2] = [
-    [428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54],
-    [398, 354, 316, 298, 276, 236, 210, 198, 176, 148, 132, 118, 98, 78, 66, 50],
+    [
+        428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
+    ],
+    [
+        398, 354, 316, 298, 276, 236, 210, 198, 176, 148, 132, 118, 98, 78, 66, 50,
+    ],
 ];
 
 /// The frame counter's steps, in CPU cycles from its start, mode 0's and
 /// mode 1's, NTSC's and PAL's; and what each clocks: a quarter frame, a
 /// half, or nothing.
 const STEPS: [[[u32; 6]; 2]; 2] = [
-    [[7457, 14913, 22371, 29828, 29829, 29830], [7457, 14913, 22371, 29829, 37281, 37282]],
-    [[8313, 16627, 24939, 33252, 33253, 33254], [8313, 16627, 24939, 33253, 41565, 41566]],
+    [
+        [7457, 14913, 22371, 29828, 29829, 29830],
+        [7457, 14913, 22371, 29829, 37281, 37282],
+    ],
+    [
+        [8313, 16627, 24939, 33252, 33253, 33254],
+        [8313, 16627, 24939, 33253, 41565, 41566],
+    ],
 ];
 #[derive(Clone, Copy, PartialEq)]
 enum Frame {
@@ -767,8 +781,16 @@ impl Apu {
             (self.noise.length.counter > 0, "NOISE"),
             (self.dmc.remaining > 0, "DMC"),
         ];
-        let names: Vec<&str> = on.iter().filter(|(sounding, _)| *sounding).map(|(_, name)| *name).collect();
-        if names.is_empty() { "SILENT".to_string() } else { names.join(" ") }
+        let names: Vec<&str> = on
+            .iter()
+            .filter(|(sounding, _)| *sounding)
+            .map(|(_, name)| *name)
+            .collect();
+        if names.is_empty() {
+            "SILENT".to_string()
+        } else {
+            names.join(" ")
+        }
     }
 
     /// A CPU cycle: the frame counter, the channels' timers; then the

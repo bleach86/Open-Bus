@@ -33,8 +33,18 @@ mod tests {
     #[test]
     fn each_controller_is_read_from_its_own_register() {
         let mut nes = nes();
-        nes.gamepad = Gamepad { a: true, select: true, up: true, ..Gamepad::default() };
-        nes.gamepad_2 = Gamepad { b: true, start: true, right: true, ..Gamepad::default() };
+        nes.gamepad = Gamepad {
+            a: true,
+            select: true,
+            up: true,
+            ..Gamepad::default()
+        };
+        nes.gamepad_2 = Gamepad {
+            b: true,
+            start: true,
+            right: true,
+            ..Gamepad::default()
+        };
         // A, B, Select, Start, Up, Down, Left, Right.
         assert_eq!(read(&mut nes, 0x4016), [1, 0, 1, 0, 1, 0, 0, 0]);
         assert_eq!(read(&mut nes, 0x4017), [0, 1, 0, 1, 0, 0, 0, 1]);
@@ -43,13 +53,24 @@ mod tests {
     #[test]
     fn neither_shifts_the_other() {
         let mut nes = nes();
-        nes.gamepad = Gamepad { a: true, ..Gamepad::default() };
-        nes.gamepad_2 = Gamepad { a: true, b: true, ..Gamepad::default() };
+        nes.gamepad = Gamepad {
+            a: true,
+            ..Gamepad::default()
+        };
+        nes.gamepad_2 = Gamepad {
+            a: true,
+            b: true,
+            ..Gamepad::default()
+        };
         write(&mut nes, 1);
         write(&mut nes, 0);
         assert_eq!(nes.read(0x4016) & 1, 1, "the first's A");
         assert_eq!(nes.read(0x4016) & 1, 0, "the first's B");
-        assert_eq!(nes.read(0x4017) & 1, 1, "the second's A, after the first's B");
+        assert_eq!(
+            nes.read(0x4017) & 1,
+            1,
+            "the second's A, after the first's B"
+        );
         assert_eq!(nes.read(0x4017) & 1, 1, "the second's B");
     }
 
@@ -65,14 +86,23 @@ mod tests {
     #[test]
     fn the_seconds_d_pads_opposites_cant_both_be_held() {
         let mut nes = nes();
-        nes.gamepad_2 = Gamepad { up: true, down: true, left: true, right: true, ..Gamepad::default() };
+        nes.gamepad_2 = Gamepad {
+            up: true,
+            down: true,
+            left: true,
+            right: true,
+            ..Gamepad::default()
+        };
         assert_eq!(read(&mut nes, 0x4017), [0; 8]);
     }
 
     #[test]
     fn while_latching_each_reads_its_a() {
         let mut nes = nes();
-        nes.gamepad_2 = Gamepad { a: true, ..Gamepad::default() };
+        nes.gamepad_2 = Gamepad {
+            a: true,
+            ..Gamepad::default()
+        };
         write(&mut nes, 1);
         for _ in 0..4 {
             assert_eq!((nes.read(0x4016) & 1, nes.read(0x4017) & 1), (0, 1));
@@ -84,7 +114,10 @@ mod tests {
     fn strobe_for_a_cycle(on_a_get: bool) -> u8 {
         let mut nes = nes();
         read(&mut nes, 0x4016); // nothing latched but 1s from here
-        nes.gamepad = Gamepad { a: true, ..Gamepad::default() };
+        nes.gamepad = Gamepad {
+            a: true,
+            ..Gamepad::default()
+        };
         if (nes.cycles % 2 == 1) != on_a_get {
             nes.tick();
         }

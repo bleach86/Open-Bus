@@ -25,7 +25,10 @@ mod tests {
     #[test]
     fn its_registers_hold_their_bits() {
         let mut ay = Ay38910::new();
-        let bits = [0xFF, 0x0F, 0xFF, 0x0F, 0xFF, 0x0F, 0x1F, 0xFF, 0x1F, 0x1F, 0x1F, 0xFF, 0xFF, 0x0F, 0xFF, 0xFF];
+        let bits = [
+            0xFF, 0x0F, 0xFF, 0x0F, 0xFF, 0x0F, 0x1F, 0xFF, 0x1F, 0x1F, 0x1F, 0xFF, 0xFF, 0x0F,
+            0xFF, 0xFF,
+        ];
         for (reg, &mask) in bits.iter().enumerate() {
             set(&mut ay, reg as u8, 0xFF);
             assert_eq!(get(&mut ay, reg as u8), Some(mask), "register {reg}");
@@ -64,7 +67,11 @@ mod tests {
         assert_eq!(LEVELS[15], 1.0);
         for level in 1..15 {
             let ratio = LEVELS[level + 1] / LEVELS[level];
-            assert!((ratio - 2f32.sqrt()).abs() < 1e-4, "levels {level} to {}: {ratio}", level + 1);
+            assert!(
+                (ratio - 2f32.sqrt()).abs() < 1e-4,
+                "levels {level} to {}: {ratio}",
+                level + 1
+            );
         }
         // Tone and noise both off: the channel its level, steady.
         let mut ay = Ay38910::new();
@@ -93,17 +100,32 @@ mod tests {
             .collect();
         assert_eq!(bits[..TURN], bits[TURN..], "not repeating after 2^17 - 1");
         for shorter in [TURN / 7, TURN / 31, TURN / 127] {
-            assert_ne!(bits[..shorter], bits[shorter..2 * shorter], "repeating after {shorter}");
+            assert_ne!(
+                bits[..shorter],
+                bits[shorter..2 * shorter],
+                "repeating after {shorter}"
+            );
         }
         let ones = bits[..TURN].iter().filter(|&&bit| bit).count();
-        assert_eq!(ones, 1 << 16, "its 1s: half and a half, as the longest sequence's");
+        assert_eq!(
+            ones,
+            1 << 16,
+            "its 1s: half and a half, as the longest sequence's"
+        );
     }
 
     #[test]
     fn each_envelope_shape_is_its_data_sheets() {
         let down: Vec<u8> = (0..16).rev().collect();
         let up: Vec<u8> = (0..16).collect();
-        let then = |first: &[u8], rest: &[u8]| -> Vec<u8> { first.iter().chain(rest.iter().cycle()).copied().take(48).collect() };
+        let then = |first: &[u8], rest: &[u8]| -> Vec<u8> {
+            first
+                .iter()
+                .chain(rest.iter().cycle())
+                .copied()
+                .take(48)
+                .collect()
+        };
         for shape in 0..16u8 {
             let want = match shape {
                 0x0..=0x3 | 0x9 => then(&down, &[0]),

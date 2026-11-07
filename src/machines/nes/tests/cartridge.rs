@@ -28,16 +28,30 @@ mod tests {
     #[test]
     fn an_ines_header_is_read() {
         let mut cart = Cartridge::new(&image(1, 1, [0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0])).unwrap();
-        assert_eq!((cart.mapper.clone(), cart.mirroring, cart.battery), (Mapper::Nrom, Mirroring::Vertical, false));
-        assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000)), (Some(0), Some(0)), "16K at $8000, and again at $C000");
+        assert_eq!(
+            (cart.mapper.clone(), cart.mirroring, cart.battery),
+            (Mapper::Nrom, Mirroring::Vertical, false)
+        );
+        assert_eq!(
+            (cart.cpu_read(0x8000), cart.cpu_read(0xC000)),
+            (Some(0), Some(0)),
+            "16K at $8000, and again at $C000"
+        );
         assert_eq!(cart.chr_read(0x1FFF), 0xC0, "its CHR ROM");
         cart.chr_write(0x0000, 0x12);
         assert_eq!(cart.chr_read(0x0000), 0xC0, "its CHR ROM written");
 
         // 32K; a battery; a trainer, skipped; horizontal.
         let mut cart = Cartridge::new(&image(2, 1, [0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0])).unwrap();
-        assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000)), (Some(0), Some(1)), "32K, past the trainer");
-        assert_eq!((cart.mirroring, cart.battery), (Mirroring::Horizontal, true));
+        assert_eq!(
+            (cart.cpu_read(0x8000), cart.cpu_read(0xC000)),
+            (Some(0), Some(1)),
+            "32K, past the trainer"
+        );
+        assert_eq!(
+            (cart.mirroring, cart.battery),
+            (Mirroring::Horizontal, true)
+        );
         cart.cpu_write(0x6123, 0x77, 0);
         assert_eq!(cart.cpu_read(0x6123), Some(0x77), "its PRG RAM");
         assert_eq!(cart.cpu_read(0x5000), None, "nothing at $5000");
@@ -45,24 +59,46 @@ mod tests {
         // No CHR ROM: 8K of CHR RAM. Four screens.
         let mut cart = Cartridge::new(&image(1, 0, [0x08, 0, 0, 0, 0, 0, 0, 0, 0, 0])).unwrap();
         cart.chr_write(0x1234, 0x56);
-        assert_eq!((cart.chr_read(0x1234), cart.mirroring), (0x56, Mirroring::FourScreen), "its CHR RAM");
+        assert_eq!(
+            (cart.chr_read(0x1234), cart.mirroring),
+            (0x56, Mirroring::FourScreen),
+            "its CHR RAM"
+        );
     }
 
     #[test]
     fn its_mapper_is_from_flags_6_and_7_or_none_with_junk() {
-        let mapper = |flags| Cartridge::new(&image(1, 1, flags)).map(|cart| cart.mapper).map_err(|e| e.to_string());
-        assert_eq!(mapper([0x10, 0x40, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap_err(), "mapper 65, which isn't here yet");
+        let mapper = |flags| {
+            Cartridge::new(&image(1, 1, flags))
+                .map(|cart| cart.mapper)
+                .map_err(|e| e.to_string())
+        };
+        assert_eq!(
+            mapper([0x10, 0x40, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap_err(),
+            "mapper 65, which isn't here yet"
+        );
         // NES 2.0: byte 8's low nibble its bits 8 to 11.
-        assert_eq!(mapper([0x00, 0x08, 0x01, 0, 0, 0, 0, 0, 0, 0]).unwrap_err(), "mapper 256, which isn't here yet");
+        assert_eq!(
+            mapper([0x00, 0x08, 0x01, 0, 0, 0, 0, 0, 0, 0]).unwrap_err(),
+            "mapper 256, which isn't here yet"
+        );
         // An old header, a ripper's name in its last bytes: flags 7 junk too.
-        assert_eq!(mapper([0x00, 0x44, 0, 0, 0, 0, b'D', b'i', b's', b'k']).unwrap(), Mapper::Nrom);
+        assert_eq!(
+            mapper([0x00, 0x44, 0, 0, 0, 0, b'D', b'i', b's', b'k']).unwrap(),
+            Mapper::Nrom
+        );
         assert!(Cartridge::new(b"not an image").is_err());
-        assert!(Cartridge::new(&image(2, 1, [0; 10])[..0x5000]).is_err(), "cut short");
+        assert!(
+            Cartridge::new(&image(2, 1, [0; 10])[..0x5000]).is_err(),
+            "cut short"
+        );
     }
 
     #[test]
     fn the_nametables_are_wired_as_the_board_is() {
-        let pages = |mirroring: Mirroring| [0x2000, 0x2400, 0x2800, 0x2C00, 0x3000].map(|addr| mirroring.page(addr));
+        let pages = |mirroring: Mirroring| {
+            [0x2000, 0x2400, 0x2800, 0x2C00, 0x3000].map(|addr| mirroring.page(addr))
+        };
         assert_eq!(pages(Mirroring::Horizontal), [0, 0, 1, 1, 0]);
         assert_eq!(pages(Mirroring::Vertical), [0, 1, 0, 1, 0]);
         assert_eq!(pages(Mirroring::SingleLower), [0; 5]);
@@ -74,7 +110,11 @@ mod tests {
     /// bank's every byte its number, but for $FF in each 256 bytes' first
     /// 16, for writes with no conflict; its flags 6 and 7 from the number.
     fn board(number: u8, prg: u8, chr: u8) -> Cartridge {
-        let mut image = image(prg, chr, [number << 4, number & 0xF0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let mut image = image(
+            prg,
+            chr,
+            [number << 4, number & 0xF0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
         for page in image[16..16 + prg as usize * 0x4000].chunks_mut(0x100) {
             page[..16].fill(0xFF);
         }
@@ -83,7 +123,12 @@ mod tests {
 
     /// What's at $8020 and $C020 and in the CHR at $0000 and $1000.
     fn banks(cart: &mut Cartridge) -> (u8, u8, u8, u8) {
-        (cart.cpu_read(0x8020).unwrap(), cart.cpu_read(0xC020).unwrap(), cart.chr_read(0), cart.chr_read(0x1000))
+        (
+            cart.cpu_read(0x8020).unwrap(),
+            cart.cpu_read(0xC020).unwrap(),
+            cart.chr_read(0),
+            cart.chr_read(0x1000),
+        )
     }
 
     #[test]
@@ -91,17 +136,29 @@ mod tests {
         let mut cart = board(11, 8, 4);
         assert_eq!(banks(&mut cart), (0, 1, 0xC0, 0xC0), "from the first");
         cart.cpu_write(0xFF00, 0x32, 0);
-        assert_eq!(banks(&mut cart), (4, 5, 0xC3, 0xC3), "bits 0 and 1, and 4 up");
+        assert_eq!(
+            banks(&mut cart),
+            (4, 5, 0xC3, 0xC3),
+            "bits 0 and 1, and 4 up"
+        );
 
         // A plain header: no conflicts, even written over a 0 in the ROM.
         cart.cpu_write(0x8020, 0x01, 0);
-        assert_eq!(banks(&mut cart), (2, 3, 0xC0, 0xC0), "taken as it was written");
+        assert_eq!(
+            banks(&mut cart),
+            (2, 3, 0xC0, 0xC0),
+            "taken as it was written"
+        );
 
         // NES 2.0's submapper 2: they're there.
         let mut flags = [0xB0, 0x08, 0x20, 0, 0, 0, 0, 0, 0, 0];
         let mut cart = Cartridge::new(&image(8, 4, flags)).unwrap();
         cart.cpu_write(0x8020, 0x11, 0);
-        assert_eq!(banks(&mut cart), (0, 1, 0xC0, 0xC0), "over a 0, nothing's left of it");
+        assert_eq!(
+            banks(&mut cart),
+            (0, 1, 0xC0, 0xC0),
+            "over a 0, nothing's left of it"
+        );
         flags[2] = 0x10;
         let mut cart = Cartridge::new(&image(8, 4, flags)).unwrap();
         cart.cpu_write(0x8020, 0x11, 0);
@@ -112,7 +169,11 @@ mod tests {
     fn mapper_144s_rom_always_wins_d0() {
         let mut cart = board(144, 8, 4);
         cart.cpu_write(0x8000, 0x10, 0);
-        assert_eq!(banks(&mut cart), (2, 3, 0xC1, 0xC1), "over $FF, bit 0 the ROM's though 0 was written");
+        assert_eq!(
+            banks(&mut cart),
+            (2, 3, 0xC1, 0xC1),
+            "over $FF, bit 0 the ROM's though 0 was written"
+        );
 
         // Over 2, all 1s written: only that bit, D0 the ROM's 0.
         cart.cpu_write(0x8020, 0xFF, 0);
@@ -124,11 +185,19 @@ mod tests {
         let mut cart = board(66, 8, 4);
         assert_eq!(banks(&mut cart), (0, 1, 0xC0, 0xC0), "from the first");
         cart.cpu_write(0x8000, 0x13, 0);
-        assert_eq!(banks(&mut cart), (2, 3, 0xC3, 0xC3), "bits 4 and 5, and 0 and 1");
+        assert_eq!(
+            banks(&mut cart),
+            (2, 3, 0xC3, 0xC3),
+            "bits 4 and 5, and 0 and 1"
+        );
         cart.cpu_write(0x8000, 0x30, 0);
         assert_eq!(banks(&mut cart), (6, 7, 0xC0, 0xC0), "over $FF, as written");
         cart.cpu_write(0x8020, 0x11, 0);
-        assert_eq!(cart.chr_read(0), 0xC0 | (6 & 1), "over 6, only what both hold");
+        assert_eq!(
+            cart.chr_read(0),
+            0xC0 | (6 & 1),
+            "over 6, only what both hold"
+        );
         assert_eq!(cart.cpu_read(0x8020), Some(0), "over 6, the PRG bits gone");
     }
 
@@ -141,17 +210,29 @@ mod tests {
             cart.cpu_write(0x8000, 3, 0);
             assert_eq!(cart.cpu_read(0x8020), Some(6), "bank 3");
             cart.cpu_write(0x8020, 1, 0);
-            assert_eq!(cart.cpu_read(0x8020), Some(0), "over 6, only what both hold");
+            assert_eq!(
+                cart.cpu_read(0x8020),
+                Some(0),
+                "over 6, only what both hold"
+            );
         }
 
         // More: NINA-001, a 32K bank and two 4K of CHR.
         let mut cart = board(34, 4, 4);
-        assert!(matches!(cart.mapper, Mapper::Nina001(_)), "{:?}", cart.mapper);
+        assert!(
+            matches!(cart.mapper, Mapper::Nina001(_)),
+            "{:?}",
+            cart.mapper
+        );
         cart.cpu_write(0x7FFD, 1, 0);
         cart.cpu_write(0x7FFE, 3, 0); // bank 3 of 4K: the second 8K's second half
         cart.cpu_write(0x7FFF, 4, 0); // bank 4: the third 8K's first half
         assert_eq!(banks(&mut cart), (2, 3, 0xC1, 0xC2));
-        assert_eq!(cart.cpu_read(0x7FFE), Some(3), "the RAM under it written too");
+        assert_eq!(
+            cart.cpu_read(0x7FFE),
+            Some(3),
+            "the RAM under it written too"
+        );
         cart.cpu_write(0x7FFC, 1, 0);
         assert_eq!(banks(&mut cart).0, 2, "$7FFC a register");
         cart.cpu_write(0x8000, 0, 0);
@@ -162,9 +243,17 @@ mod tests {
     fn a_header_can_say_which_of_mapper_34s_boards_it_is() {
         let flags = |submapper: u8| [0x20, 0x28, submapper << 4, 0, 0, 0, 0, 0, 0, 0];
         let nina = Cartridge::new(&image(4, 1, flags(1))).unwrap();
-        assert!(matches!(nina.mapper, Mapper::Nina001(_)), "{:?}", nina.mapper);
+        assert!(
+            matches!(nina.mapper, Mapper::Nina001(_)),
+            "{:?}",
+            nina.mapper
+        );
         let bnrom = Cartridge::new(&image(4, 4, flags(2))).unwrap();
-        assert!(matches!(bnrom.mapper, Mapper::Bnrom(_)), "{:?}", bnrom.mapper);
+        assert!(
+            matches!(bnrom.mapper, Mapper::Bnrom(_)),
+            "{:?}",
+            bnrom.mapper
+        );
     }
 
     #[test]
@@ -196,8 +285,16 @@ mod tests {
         assert_eq!(cart.cpu_read(0x8020), Some(0), "from the first");
         cart.cpu_write(0xA000, 0xF5, 0); // bank 5 of 8K: the third 16K's second half
         assert_eq!(cart.cpu_read(0x8020), Some(2), "four bits");
-        assert_eq!(cart.cpu_read(0xA020), Some(6), "the third last 8K, the seventh 16K's second half");
-        assert_eq!((cart.cpu_read(0xC020), cart.cpu_read(0xE020)), (Some(7), Some(7)), "the last two");
+        assert_eq!(
+            cart.cpu_read(0xA020),
+            Some(6),
+            "the third last 8K, the seventh 16K's second half"
+        );
+        assert_eq!(
+            (cart.cpu_read(0xC020), cart.cpu_read(0xE020)),
+            (Some(7), Some(7)),
+            "the last two"
+        );
 
         // $AFFF is the same register, $9FFF isn't one.
         cart.cpu_write(0xAFFF, 2, 0);
@@ -223,13 +320,25 @@ mod tests {
     #[test]
     fn mmc2s_tiles_fd_and_fe_switch_a_table_after_theyre_read() {
         let mut cart = mmc2();
-        assert_eq!(banks(&mut cart).2..=banks(&mut cart).3, 0xC1..=0xC3, "tile $FE's, from the first");
+        assert_eq!(
+            banks(&mut cart).2..=banks(&mut cart).3,
+            0xC1..=0xC3,
+            "tile $FE's, from the first"
+        );
 
         // The tile's read from the old bank, what follows from the new.
-        assert_eq!(cart.chr_read(0x0FD8), 0xC1, "tile $FD's read switched itself");
+        assert_eq!(
+            cart.chr_read(0x0FD8),
+            0xC1,
+            "tile $FD's read switched itself"
+        );
         assert_eq!(cart.chr_read(0x0000), 0xC0);
         assert_eq!(cart.chr_read(0x1000), 0xC3, "the other table switched");
-        assert_eq!(cart.chr_read(0x0FE8), 0xC0, "tile $FE's read switched itself");
+        assert_eq!(
+            cart.chr_read(0x0FE8),
+            0xC0,
+            "tile $FE's read switched itself"
+        );
         assert_eq!(cart.chr_read(0x0000), 0xC1);
 
         assert_eq!(cart.chr_read(0x1FD8), 0xC3);
@@ -248,7 +357,11 @@ mod tests {
         }
         for row in 0..8 {
             cart.chr_read(0x0FD0 + row);
-            assert_eq!(cart.chr_read(0x0000), 0xC1, "the left table, on the first plane");
+            assert_eq!(
+                cart.chr_read(0x0000),
+                0xC1,
+                "the left table, on the first plane"
+            );
         }
         for row in 0..8 {
             cart.chr_read(0x1FD8 + row);
@@ -257,7 +370,11 @@ mod tests {
             assert_eq!(cart.chr_read(0x1000), 0xC3, "the right table, on row {row}");
         }
         cart.chr_read(0x1FD0);
-        assert_eq!(cart.chr_read(0x1000), 0xC3, "the right table, on the first plane");
+        assert_eq!(
+            cart.chr_read(0x1000),
+            0xC3,
+            "the right table, on the first plane"
+        );
     }
 
     /// MMC3's CHR registers set: R0 to R5, each its value.
@@ -315,11 +432,19 @@ mod tests {
         let mut cart = board(119, 8, 4);
         // R0 ROM at $0000; R2 RAM at $1000, and R3 another bank of it.
         mmc3_banks(&mut cart, false, [0x08, 0, 0x40, 0x41, 0, 0]);
-        assert_eq!(cart.chr_read(0x0000), 0xC1, "ROM's 1K bank 8, its second 8K");
+        assert_eq!(
+            cart.chr_read(0x0000),
+            0xC1,
+            "ROM's 1K bank 8, its second 8K"
+        );
 
         cart.chr_write(0x1000, 0x5A);
         cart.chr_write(0x1400, 0xA5);
-        assert_eq!((cart.chr_read(0x1000), cart.chr_read(0x1400)), (0x5A, 0xA5), "the RAM's banks");
+        assert_eq!(
+            (cart.chr_read(0x1000), cart.chr_read(0x1400)),
+            (0x5A, 0xA5),
+            "the RAM's banks"
+        );
 
         // A write to ROM doing nothing, and the RAM's 8K wrapping.
         cart.chr_write(0x0000, 0x11);
@@ -367,7 +492,9 @@ mod tests {
         for (number, bank) in [(6, 2), (7, 4), (15, 6)] {
             rambo_bank(&mut cart, 0, number, bank);
         }
-        let prg = |cart: &mut Cartridge| [0x8020, 0xA020, 0xC020, 0xE020].map(|addr| cart.cpu_read(addr).unwrap());
+        let prg = |cart: &mut Cartridge| {
+            [0x8020, 0xA020, 0xC020, 0xE020].map(|addr| cart.cpu_read(addr).unwrap())
+        };
         assert_eq!(prg(&mut cart), [1, 2, 3, 7], "R6, R7, RF, the last");
         cart.cpu_write(0x8000, 0x40, 0);
         assert_eq!(prg(&mut cart), [3, 2, 1, 7], "RF, R7, R6, the last");
@@ -378,10 +505,24 @@ mod tests {
     fn rambo_1s_chr_is_2k_and_1k_or_all_1k() {
         let mut cart = board(64, 8, 8);
         // In 1K: each 8K bank's value at every 8 of them.
-        for (number, bank) in [(0, 0x08), (1, 0x10), (2, 0x18), (3, 0x20), (4, 0x28), (5, 0x30), (8, 0x38), (9, 0x00)] {
+        for (number, bank) in [
+            (0, 0x08),
+            (1, 0x10),
+            (2, 0x18),
+            (3, 0x20),
+            (4, 0x28),
+            (5, 0x30),
+            (8, 0x38),
+            (9, 0x00),
+        ] {
             rambo_bank(&mut cart, 0, number, bank);
         }
-        let chr = |cart: &mut Cartridge| [0x0000, 0x0400, 0x0800, 0x0C00, 0x1000, 0x1400, 0x1800, 0x1C00].map(|addr| cart.chr_read(addr) & 7);
+        let chr = |cart: &mut Cartridge| {
+            [
+                0x0000, 0x0400, 0x0800, 0x0C00, 0x1000, 0x1400, 0x1800, 0x1C00,
+            ]
+            .map(|addr| cart.chr_read(addr) & 7)
+        };
 
         cart.cpu_write(0x8000, 0x00, 0);
         assert_eq!(chr(&mut cart), [1, 1, 2, 2, 3, 4, 5, 6], "R0 and R1 2K");
@@ -496,7 +637,10 @@ mod tests {
         for slot in 0..8 {
             fme7(&mut cart, slot, slot * 8);
         }
-        let chr = [0x0000, 0x0400, 0x0800, 0x0C00, 0x1000, 0x1400, 0x1800, 0x1C00].map(|addr| cart.chr_read(addr));
+        let chr = [
+            0x0000, 0x0400, 0x0800, 0x0C00, 0x1000, 0x1400, 0x1800, 0x1C00,
+        ]
+        .map(|addr| cart.chr_read(addr));
         assert_eq!(chr, [0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7]);
 
         // The command's taken from anywhere up to $9FFF, the parameter $BFFF.
@@ -524,7 +668,11 @@ mod tests {
         assert_eq!(cart.cpu_read(0x6020), Some(0x55), "RAM, enabled");
 
         fme7(&mut cart, 8, 0x40);
-        assert_eq!(cart.cpu_read(0x6020), None, "RAM selected, not enabled: open bus");
+        assert_eq!(
+            cart.cpu_read(0x6020),
+            None,
+            "RAM selected, not enabled: open bus"
+        );
         cart.cpu_write(0x6020, 0x66, 0);
         fme7(&mut cart, 8, 0xC0);
         assert_eq!(cart.cpu_read(0x6020), Some(0x55), "RAM written, disabled");
@@ -537,7 +685,12 @@ mod tests {
     #[test]
     fn fme7s_nametables() {
         let mut cart = board(69, 2, 1);
-        for (value, mirroring) in [(0, Mirroring::Vertical), (1, Mirroring::Horizontal), (2, Mirroring::SingleLower), (3, Mirroring::SingleUpper)] {
+        for (value, mirroring) in [
+            (0, Mirroring::Vertical),
+            (1, Mirroring::Horizontal),
+            (2, Mirroring::SingleLower),
+            (3, Mirroring::SingleUpper),
+        ] {
             fme7(&mut cart, 0xC, value);
             assert_eq!(cart.mirroring, mirroring, "{value}");
         }
@@ -592,13 +745,21 @@ mod tests {
     #[test]
     fn quattros_banks_are_in_a_64k_block() {
         let mut cart = board(232, 16, 0);
-        assert_eq!(banks(&mut cart), (0, 3, 0, 0), "from the first, its block's last fixed");
+        assert_eq!(
+            banks(&mut cart),
+            (0, 3, 0, 0),
+            "from the first, its block's last fixed"
+        );
         cart.cpu_write(0xC000, 0xFD, 0);
         assert_eq!(banks(&mut cart).0, 1, "two bits of bank");
 
         for (block, value) in [(0, 0x00), (1, 0x08), (2, 0x10), (3, 0x18)] {
             cart.cpu_write(0x8000, value, 0);
-            assert_eq!(banks(&mut cart), (block * 4 + 1, block * 4 + 3, 0, 0), "block {block}");
+            assert_eq!(
+                banks(&mut cart),
+                (block * 4 + 1, block * 4 + 3, 0, 0),
+                "block {block}"
+            );
         }
         cart.cpu_write(0xBFFF, 0xE7 | 0x08, 0);
         assert_eq!(banks(&mut cart).1, 7, "only bits 3 and 4, up to $BFFF");
@@ -647,7 +808,7 @@ mod tests {
             (0, 1, 1), // the first 64K, whatever it asks for
             (1, 1, 1),
             (2, 1, 1),
-            (3, 5, 5), // the second 64K
+            (3, 5, 5),  // the second 64K
             (4, 9, 13), // the second 128K, the MMC3's A16 through
             (5, 9, 13),
             (6, 9, 13),
@@ -673,11 +834,19 @@ mod tests {
         cart.cpu_write(0x7FFF, 1, 0);
         assert_eq!(multicart_prg(&mut cart, 2), 9, "bank 2 of the second 128K");
         assert_eq!(cart.chr_read(0x0000), 0xC0 | 16);
-        assert_eq!(cart.cpu_read(0xE020), Some(15), "the last fixed, of its block");
+        assert_eq!(
+            cart.cpu_read(0xE020),
+            Some(15),
+            "the last fixed, of its block"
+        );
 
         cart.cpu_write(0x6000, 0xFE, 0);
         assert_eq!(multicart_prg(&mut cart, 2), 1, "bit 0 only");
-        assert_eq!(cart.cpu_read(0xE020), Some(7), "the first block's last fixed");
+        assert_eq!(
+            cart.cpu_read(0xE020),
+            Some(7),
+            "the first block's last fixed"
+        );
     }
 
     #[test]
@@ -686,11 +855,17 @@ mod tests {
             let mut cart = board(number, 16, 32);
             cart.cpu_write(0xA001, 0x00, 0);
             cart.cpu_write(0x6000, 1 | 4, 0);
-            assert!(multicart_prg(&mut cart, 2) < 8, "{number}: written, the MMC3's RAM disabled");
+            assert!(
+                multicart_prg(&mut cart, 2) < 8,
+                "{number}: written, the MMC3's RAM disabled"
+            );
 
             cart.cpu_write(0xA001, 0xC0, 0);
             cart.cpu_write(0x6000, 1 | 4, 0);
-            assert!(multicart_prg(&mut cart, 2) < 8, "{number}: written, protected");
+            assert!(
+                multicart_prg(&mut cart, 2) < 8,
+                "{number}: written, protected"
+            );
 
             cart.cpu_write(0xA001, 0x80, 0);
             cart.cpu_write(0x6000, 1 | 4, 0);
@@ -698,7 +873,10 @@ mod tests {
             assert_eq!(cart.cpu_read(0x6000), None, "{number}: read");
 
             cart.reset();
-            assert!(multicart_prg(&mut cart, 2) < 8, "{number}: not back to the menu's");
+            assert!(
+                multicart_prg(&mut cart, 2) < 8,
+                "{number}: not back to the menu's"
+            );
         }
     }
 
@@ -713,7 +891,15 @@ mod tests {
 
     /// Action 52's write: chip, 16K bank, one-bank, CHR's high and low bits,
     /// the mirroring bit, as the address and data hold them.
-    fn active(cart: &mut Cartridge, chip: u16, bank: u16, one: u16, high: u16, low: u8, mirroring: u16) {
+    fn active(
+        cart: &mut Cartridge,
+        chip: u16,
+        bank: u16,
+        one: u16,
+        high: u16,
+        low: u8,
+        mirroring: u16,
+    ) {
         let addr = 0x8000 | mirroring << 13 | chip << 11 | bank << 6 | one << 5 | high;
         cart.cpu_write(addr, 0xFC | low, 0);
     }
@@ -735,15 +921,25 @@ mod tests {
     #[test]
     fn action_52s_chips_are_where_they_are_in_its_image() {
         let mut cart = action_52();
-        assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000)), (Some(0), Some(1)), "from the first, 32K");
+        assert_eq!(
+            (cart.cpu_read(0x8000), cart.cpu_read(0xC000)),
+            (Some(0), Some(1)),
+            "from the first, 32K"
+        );
 
         // In 32K mode, even and odd; the second chip is 32 16Ks on.
         active(&mut cart, 1, 5, 0, 0, 0, 0);
-        assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000)), (Some(32 + 4), Some(32 + 5)));
+        assert_eq!(
+            (cart.cpu_read(0x8000), cart.cpu_read(0xC000)),
+            (Some(32 + 4), Some(32 + 5))
+        );
 
         // One bank at both.
         active(&mut cart, 1, 5, 1, 0, 0, 0);
-        assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000)), (Some(32 + 5), Some(32 + 5)));
+        assert_eq!(
+            (cart.cpu_read(0x8000), cart.cpu_read(0xC000)),
+            (Some(32 + 5), Some(32 + 5))
+        );
 
         // The fourth chip's straight after the second, in the image.
         active(&mut cart, 3, 31, 1, 0, 0, 0);
@@ -751,7 +947,11 @@ mod tests {
 
         // The third isn't there, and the first's back.
         active(&mut cart, 2, 3, 0, 0, 0, 0);
-        assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000)), (None, None), "open bus");
+        assert_eq!(
+            (cart.cpu_read(0x8000), cart.cpu_read(0xC000)),
+            (None, None),
+            "open bus"
+        );
         active(&mut cart, 0, 3, 1, 0, 0, 0);
         assert_eq!(cart.cpu_read(0x8000), Some(3));
     }
@@ -760,7 +960,11 @@ mod tests {
     fn action_52s_chr_is_from_the_address_and_the_data() {
         let mut cart = action_52();
         active(&mut cart, 0, 0, 0, 0b1010, 0b11, 0);
-        assert_eq!(cart.chr_read(0), 0b1010_11, "the address's four, the data's two");
+        assert_eq!(
+            cart.chr_read(0),
+            0b1010_11,
+            "the address's four, the data's two"
+        );
         assert_eq!(cart.chr_read(0x1FFF), 0b1010_11, "8K of it");
     }
 
@@ -778,7 +982,14 @@ mod tests {
         let mut cart = action_52();
         active(&mut cart, 3, 31, 1, 15, 3, 1);
         cart.reset();
-        assert_eq!((cart.cpu_read(0x8000), cart.cpu_read(0xC000), cart.chr_read(0)), (Some(0), Some(1), 0));
+        assert_eq!(
+            (
+                cart.cpu_read(0x8000),
+                cart.cpu_read(0xC000),
+                cart.chr_read(0)
+            ),
+            (Some(0), Some(1), 0)
+        );
     }
 
     #[test]
@@ -789,7 +1000,11 @@ mod tests {
         assert_eq!(banks(&mut cart), (2, 3, 0xC2, 0xC2), "bit 3, and 0 to 2");
         for at in [0x4020, 0x4200, 0x41FF - 0x100, 0x6100, 0x8100, 0xC100] {
             cart.cpu_write(at, 0x01, 0);
-            assert_eq!(banks(&mut cart), (2, 3, 0xC2, 0xC2), "a register at {at:04X}");
+            assert_eq!(
+                banks(&mut cart),
+                (2, 3, 0xC2, 0xC2),
+                "a register at {at:04X}"
+            );
         }
         cart.cpu_write(0x5FFF, 0x03, 0);
         assert_eq!(banks(&mut cart), (0, 1, 0xC3, 0xC3), "$5F00 is another");

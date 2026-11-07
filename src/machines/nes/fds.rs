@@ -83,7 +83,8 @@ fn spread(side: &[u8], disk: &mut Vec<u8>) {
             1 => 56,
             2 => 2,
             3 => {
-                file_size = side.get(at + 13).copied().unwrap_or(0) as usize | (side.get(at + 14).copied().unwrap_or(0) as usize) << 8;
+                file_size = side.get(at + 13).copied().unwrap_or(0) as usize
+                    | (side.get(at + 14).copied().unwrap_or(0) as usize) << 8;
                 16
             }
             4 => 1 + file_size,
@@ -203,7 +204,11 @@ impl Sound {
 
     fn set_counter(&mut self, value: i32) {
         let wrapped = value.rem_euclid(128);
-        self.counter = (if wrapped >= 64 { wrapped - 128 } else { wrapped }) as i8;
+        self.counter = (if wrapped >= 64 {
+            wrapped - 128
+        } else {
+            wrapped
+        }) as i8;
     }
 
     /// The pitch's bend, from the counter and gain, by the chip's odd
@@ -235,14 +240,19 @@ impl Sound {
             self.mod_overflow = sum;
             if carried {
                 let step = self.mod_table[self.mod_at as usize];
-                let counter = if step == MOD_RESET { 0 } else { self.counter as i32 + MOD_STEPS[step as usize] as i32 };
+                let counter = if step == MOD_RESET {
+                    0
+                } else {
+                    self.counter as i32 + MOD_STEPS[step as usize] as i32
+                };
                 self.set_counter(counter);
                 self.mod_at = (self.mod_at + 1) & 0x3F;
                 self.bend();
             }
         }
         if !self.wave_written {
-            let level = self.volume.gain.min(32) as u32 * MASTER_VOLUMES[self.master_volume as usize];
+            let level =
+                self.volume.gain.min(32) as u32 * MASTER_VOLUMES[self.master_volume as usize];
             self.output = (self.wave[self.wave_at as usize] as u32 * level / 1152) as u8;
         }
         let pitch = self.volume.pitch as i32 + self.bend;
@@ -423,7 +433,11 @@ impl Fds {
     }
 
     fn side_name(&self, side: usize) -> String {
-        format!("Disk {} side {}", side / 2 + 1, if side % 2 == 0 { 'A' } else { 'B' })
+        format!(
+            "Disk {} side {}",
+            side / 2 + 1,
+            if side % 2 == 0 { 'A' } else { 'B' }
+        )
     }
 
     pub fn debug(&self) -> String {
@@ -439,7 +453,11 @@ impl Fds {
 
     /// The mirroring $4025 has set.
     pub fn mirroring(&self) -> Mirroring {
-        if self.horizontal { Mirroring::Horizontal } else { Mirroring::Vertical }
+        if self.horizontal {
+            Mirroring::Horizontal
+        } else {
+            Mirroring::Vertical
+        }
     }
 
     /// The sound's output, as a share of the NES's own: 0 to about .25.

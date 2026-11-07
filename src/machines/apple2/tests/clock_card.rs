@@ -6,18 +6,26 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
+    use crate::cpu::bus::Bus;
     use crate::host::clock::DateTime;
     use crate::machines::apple2::clock_card::{ClockCard, FIRMWARE};
-    use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::disk_image::Disk;
+    use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::language_card::LanguageCard;
     use crate::machines::apple2::{Apple2, CLOCK_HZ};
     use std::path::Path;
 
     /// Saturday the 31st of October 2026, 14:30:05.
-    const HALLOWEEN: DateTime = DateTime { year: 2026, month: 10, day: 31, weekday: 6, hour: 14, minute: 30, second: 5 };
+    const HALLOWEEN: DateTime = DateTime {
+        year: 2026,
+        month: 10,
+        day: 31,
+        weekday: 6,
+        hour: 14,
+        minute: 30,
+        second: 5,
+    };
 
     fn card(time: DateTime) -> ClockCard {
         let mut card = ClockCard::new();
@@ -27,12 +35,21 @@ mod tests {
 
     #[test]
     fn its_signature_and_its_text() {
-        assert_eq!([FIRMWARE[0], FIRMWARE[2], FIRMWARE[4], FIRMWARE[6]], [0x08, 0x28, 0x58, 0x70], "the signature");
+        assert_eq!(
+            [FIRMWARE[0], FIRMWARE[2], FIRMWARE[4], FIRMWARE[6]],
+            [0x08, 0x28, 0x58, 0x70],
+            "the signature"
+        );
         let mut card = card(HALLOWEEN);
         card.io(0xC090, Some(0));
-        let text: Vec<u8> = (0..20).map(|_| card.io(0xC091, None).unwrap() & 0x7F).collect();
+        let text: Vec<u8> = (0..20)
+            .map(|_| card.io(0xC091, None).unwrap() & 0x7F)
+            .collect();
         assert_eq!(&text[..18], b"10,06,31,14,30,05\r", "the time's text");
-        assert!(text[18..].iter().all(|&byte| byte == b'\r'), "past its end, its return");
+        assert!(
+            text[18..].iter().all(|&byte| byte == b'\r'),
+            "past its end, its return"
+        );
     }
 
     #[test]
@@ -49,9 +66,17 @@ mod tests {
             cpu.execute(1);
         }
         assert_eq!(cpu.pc, 0x1000, "not back");
-        let text: Vec<u8> = cpu.memory.ram[0x0200..0x0212].iter().map(|byte| byte & 0x7F).collect();
+        let text: Vec<u8> = cpu.memory.ram[0x0200..0x0212]
+            .iter()
+            .map(|byte| byte & 0x7F)
+            .collect();
         assert_eq!(&text, b"10,06,31,14,30,05\r", "the input buffer");
-        assert!(cpu.memory.ram[0x0200..0x0212].iter().all(|byte| byte & 0x80 != 0), "bit 7 not set");
+        assert!(
+            cpu.memory.ram[0x0200..0x0212]
+                .iter()
+                .all(|byte| byte & 0x80 != 0),
+            "bit 7 not set"
+        );
     }
 
     #[test]
@@ -68,7 +93,15 @@ mod tests {
             return;
         };
         // ProDOS 2.4 works the year out from 2023 to 2028.
-        let leap_day = DateTime { year: 2024, month: 2, day: 29, weekday: 4, hour: 9, minute: 5, second: 0 };
+        let leap_day = DateTime {
+            year: 2024,
+            month: 2,
+            day: 29,
+            weekday: 4,
+            hour: 9,
+            minute: 5,
+            second: 0,
+        };
         for time in [HALLOWEEN, leap_day] {
             let mut drive = Disk2::new(p5.clone(), &p6).unwrap();
             drive.drives[0].disk = Some(Disk::from_po(&prodos).unwrap());
@@ -79,11 +112,20 @@ mod tests {
             let mut cpu = CPU::with_bus(apple);
             cpu.clock_hz = u32::MAX; // as fast as it goes
             cpu.reset();
-            while !cpu.memory.text().iter().any(|line| line.contains("PRODOS 8")) && cpu.clock < 10 * CLOCK_HZ {
+            while !cpu
+                .memory
+                .text()
+                .iter()
+                .any(|line| line.contains("PRODOS 8"))
+                && cpu.clock < 10 * CLOCK_HZ
+            {
                 cpu.execute(100_000);
             }
             cpu.execute(CLOCK_HZ);
-            assert_eq!(cpu.memory.ram[0xBF06], 0x4C, "ProDOS's clock call not a JMP: the card not found");
+            assert_eq!(
+                cpu.memory.ram[0xBF06], 0x4C,
+                "ProDOS's clock call not a JMP: the card not found"
+            );
 
             // Its driver, in the language card's bank 1, called through it.
             cpu.memory.read(0xC08B);
@@ -99,8 +141,16 @@ mod tests {
             let ram = &cpu.memory.ram;
             let date = u16::from_le_bytes([ram[0xBF90], ram[0xBF91]]);
             let (year, month, day) = (date >> 9, (date >> 5) & 0x0F, date & 0x1F);
-            assert_eq!((year as i64 + 2000, month as u32, day as u32), (time.year, time.month, time.day), "ProDOS's date");
-            assert_eq!((ram[0xBF93] as u32, ram[0xBF92] as u32), (time.hour, time.minute), "ProDOS's time");
+            assert_eq!(
+                (year as i64 + 2000, month as u32, day as u32),
+                (time.year, time.month, time.day),
+                "ProDOS's date"
+            );
+            assert_eq!(
+                (ram[0xBF93] as u32, ram[0xBF92] as u32),
+                (time.hour, time.minute),
+                "ProDOS's time"
+            );
         }
     }
 }

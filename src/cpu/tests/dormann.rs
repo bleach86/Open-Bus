@@ -24,7 +24,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::cpu::{Variant, CPU};
+    use crate::cpu::{CPU, Variant};
     use std::path::{Path, PathBuf};
 
     fn dir() -> PathBuf {
@@ -53,7 +53,8 @@ mod tests {
         cpu.pc = 0x0400;
         cpu.execute(96_241_364 + 1_000);
 
-        let listing = std::fs::read_to_string(dir().join("6502_functional_test.lst")).unwrap_or_default();
+        let listing =
+            std::fs::read_to_string(dir().join("6502_functional_test.lst")).unwrap_or_default();
         assert!(
             cpu.pc == 0x3469,
             "trapped at ${:04X} (A ${:02X} X ${:02X} Y ${:02X} SP ${:02X} P ${:02X}):\n{}",
@@ -89,7 +90,12 @@ mod tests {
             .expect("done in the labels");
         assert_eq!(cpu.pc, done, "stopped short of done");
         // The zero page: N1 N2 HA HNVZC DA DNVZC AR NF VF ZF CF ERROR.
-        assert_eq!(cpu.memory.data[0x0B], 0, "decimal test failed: {:02X?}", &cpu.memory.data[..12]);
+        assert_eq!(
+            cpu.memory.data[0x0B],
+            0,
+            "decimal test failed: {:02X?}",
+            &cpu.memory.data[..12]
+        );
     }
 
     /// Run until caught in a jump or branch to itself, for up to `cycles`.
@@ -104,7 +110,11 @@ mod tests {
         }
     }
 
-    const CMOS: [Variant; 3] = [Variant::Synertek65C02, Variant::Rockwell65C02, Variant::Wdc65C02];
+    const CMOS: [Variant; 3] = [
+        Variant::Synertek65C02,
+        Variant::Rockwell65C02,
+        Variant::Wdc65C02,
+    ];
 
     #[test]
     fn dormann_65c02_extended_opcodes_test() {
@@ -112,7 +122,8 @@ mod tests {
             eprintln!("dormann: no 65C02 extended opcodes test; run tools/fetch-dormann");
             return;
         };
-        let listing = std::fs::read_to_string(dir().join("65C02_extended_opcodes_test.lst")).unwrap_or_default();
+        let listing = std::fs::read_to_string(dir().join("65C02_extended_opcodes_test.lst"))
+            .unwrap_or_default();
         for variant in [Variant::Rockwell65C02, Variant::Wdc65C02] {
             let mut cpu = CPU::new();
             cpu.variant = variant;
@@ -158,7 +169,12 @@ mod tests {
             cpu.pc = 0x0200;
             run_to_trap(&mut cpu, 100_000_000);
             assert_eq!(cpu.pc, done, "{variant:?}: stopped short of done");
-            assert_eq!(cpu.memory.data[0x0B], 0, "{variant:?}: decimal test failed: {:02X?}", &cpu.memory.data[..12]);
+            assert_eq!(
+                cpu.memory.data[0x0B],
+                0,
+                "{variant:?}: decimal test failed: {:02X?}",
+                &cpu.memory.data[..12]
+            );
         }
     }
 }

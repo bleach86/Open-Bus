@@ -9,11 +9,11 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::machines::apple2::disk2::Disk2;
-    use crate::host::zip::crc32;
-    use crate::machines::apple2::disk_image::{self, Disk, DOS_ORDER, TRANSLATE};
-    use crate::machines::apple2::{Apple2, CLOCK_HZ};
     use crate::cpu::CPU;
+    use crate::host::zip::crc32;
+    use crate::machines::apple2::disk_image::{self, DOS_ORDER, Disk, TRANSLATE};
+    use crate::machines::apple2::disk2::Disk2;
+    use crate::machines::apple2::{Apple2, CLOCK_HZ};
     use std::path::{Path, PathBuf};
 
     fn dir() -> PathBuf {
@@ -48,7 +48,10 @@ mod tests {
         assert_eq!(field.len(), 3 + 343 + 3);
         assert_eq!(&field[..3], &[0xD5, 0xAA, 0xAD]);
         assert_eq!(&field[346..], &[0xDE, 0xAA, 0xEB]);
-        assert!(field[3..346].iter().all(|b| TRANSLATE.contains(b)), "a byte not a disk byte");
+        assert!(
+            field[3..346].iter().all(|b| TRANSLATE.contains(b)),
+            "a byte not a disk byte"
+        );
         assert_eq!(decode(&field), Some(data));
     }
 
@@ -57,7 +60,12 @@ mod tests {
         // Volume 254, track 17, sector 5, and their checksum, 254 ^ 17 ^ 5,
         // $EA: each its odd bits, then its even, with 1s between.
         let field = disk_image::address_field(254, 17, 5);
-        assert_eq!(field, [0xD5, 0xAA, 0x96, 0xFF, 0xFE, 0xAA, 0xBB, 0xAA, 0xAF, 0xFF, 0xEA, 0xDE, 0xAA, 0xEB]);
+        assert_eq!(
+            field,
+            [
+                0xD5, 0xAA, 0x96, 0xFF, 0xFE, 0xAA, 0xBB, 0xAA, 0xAF, 0xFF, 0xEA, 0xDE, 0xAA, 0xEB
+            ]
+        );
     }
 
     #[test]
@@ -83,7 +91,16 @@ mod tests {
             *byte = (at / 4096 * 16 + at / 256 % 16) as u8 ^ (at % 256) as u8;
         }
         // The .po: a track's 8 blocks, each two DOS 3.3 sectors, as ProDOS has them.
-        let blocks = [(0x0, 0xE), (0xD, 0xC), (0xB, 0xA), (0x9, 0x8), (0x7, 0x6), (0x5, 0x4), (0x3, 0x2), (0x1, 0xF)];
+        let blocks = [
+            (0x0, 0xE),
+            (0xD, 0xC),
+            (0xB, 0xA),
+            (0x9, 0x8),
+            (0x7, 0x6),
+            (0x5, 0x4),
+            (0x3, 0x2),
+            (0x1, 0xF),
+        ];
         let mut po = Vec::new();
         for track in dsk.chunks(4096) {
             for (first, second) in blocks {
@@ -92,7 +109,10 @@ mod tests {
             }
         }
         let (from_dsk, from_po) = (Disk::from_dsk(&dsk).unwrap(), Disk::from_po(&po).unwrap());
-        assert!(from_dsk.tracks == from_po.tracks, "the .po not the .dsk's disk");
+        assert!(
+            from_dsk.tracks == from_po.tracks,
+            "the .po not the .dsk's disk"
+        );
     }
 
     /// A .woz of `version` with `tracks`, mapped by `tmap`: its header and
@@ -101,9 +121,17 @@ mod tests {
     /// block 3.
     fn woz(version: u8, tracks: &[Vec<u8>], tmap: &[u8; 160], protected: bool) -> Vec<u8> {
         let packed = |bits: &Vec<u8>| -> Vec<u8> {
-            bits.chunks(8).map(|byte| byte.iter().enumerate().map(|(i, &bit)| bit << (7 - i)).sum()).collect()
+            bits.chunks(8)
+                .map(|byte| {
+                    byte.iter()
+                        .enumerate()
+                        .map(|(i, &bit)| bit << (7 - i))
+                        .sum()
+                })
+                .collect()
         };
-        let chunk = |id: &[u8], body: Vec<u8>| [id, &(body.len() as u32).to_le_bytes(), &body].concat();
+        let chunk =
+            |id: &[u8], body: Vec<u8>| [id, &(body.len() as u32).to_le_bytes(), &body].concat();
         let mut info = vec![0; 60];
         info[0] = version;
         info[1] = 1; // 5.25"
@@ -134,8 +162,17 @@ mod tests {
             }
             trks.extend(data); // at 256 + 1,280: block 3
         }
-        let body = [chunk(b"INFO", info), chunk(b"TMAP", tmap.to_vec()), chunk(b"TRKS", trks)].concat();
-        let magic: &[u8] = if version == 1 { b"WOZ1\xFF\n\r\n" } else { b"WOZ2\xFF\n\r\n" };
+        let body = [
+            chunk(b"INFO", info),
+            chunk(b"TMAP", tmap.to_vec()),
+            chunk(b"TRKS", trks),
+        ]
+        .concat();
+        let magic: &[u8] = if version == 1 {
+            b"WOZ1\xFF\n\r\n"
+        } else {
+            b"WOZ2\xFF\n\r\n"
+        };
         [magic, &crc32(&body).to_le_bytes(), &body].concat()
     }
 
@@ -156,22 +193,43 @@ mod tests {
             let disk = Disk::from_woz(&woz(version, &tracks, &tmap, false)).unwrap();
             // WOZ2 has room for 160: the rest none.
             assert!(disk.tracks[..35] == tracks[..], "WOZ{version}'s tracks");
-            assert!(disk.tracks[35..].iter().all(Vec::is_empty), "WOZ{version}'s tracks past 35");
+            assert!(
+                disk.tracks[35..].iter().all(Vec::is_empty),
+                "WOZ{version}'s tracks past 35"
+            );
             for half in 0..70 {
-                let want = if half % 2 == 0 { Some(half / 2) } else if half == 3 { Some(2) } else { None };
-                assert_eq!(disk.half_tracks[half], want, "WOZ{version}'s half-track {half}");
+                let want = if half % 2 == 0 {
+                    Some(half / 2)
+                } else if half == 3 {
+                    Some(2)
+                } else {
+                    None
+                };
+                assert_eq!(
+                    disk.half_tracks[half], want,
+                    "WOZ{version}'s half-track {half}"
+                );
             }
             let mut broken = woz(version, &tracks, &tmap, false);
             broken[100] ^= 1;
-            assert!(Disk::from_woz(&broken).is_err(), "WOZ{version} with a wrong CRC");
+            assert!(
+                Disk::from_woz(&broken).is_err(),
+                "WOZ{version} with a wrong CRC"
+            );
         }
     }
 
     #[test]
     fn each_image_saves_as_it_was_read() {
         let dsk: Vec<u8> = (0..143_360).map(|at| (at / 256 * 7 ^ at) as u8).collect();
-        assert!(Disk::from_dsk(&dsk).unwrap().to_image().unwrap() == dsk, "the .dsk");
-        assert!(Disk::from_po(&dsk).unwrap().to_image().unwrap() == dsk, "the .po");
+        assert!(
+            Disk::from_dsk(&dsk).unwrap().to_image().unwrap() == dsk,
+            "the .dsk"
+        );
+        assert!(
+            Disk::from_po(&dsk).unwrap().to_image().unwrap() == dsk,
+            "the .po"
+        );
 
         // A .nib: on each track, a sector's fields among FFs.
         let mut nib = vec![0xFF; 6656 * 35];
@@ -181,7 +239,10 @@ mod tests {
             let data = disk_image::data_field(&[track as u8; 256]);
             nib[at + 20..at + 20 + data.len()].copy_from_slice(&data);
         }
-        assert!(Disk::from_nib(&nib).unwrap().to_image().unwrap() == nib, "the .nib");
+        assert!(
+            Disk::from_nib(&nib).unwrap().to_image().unwrap() == nib,
+            "the .nib"
+        );
 
         // A .woz, either version: a WOZ2 of the same tracks, its map the
         // same at every quarter-track, write protected as it was.
@@ -193,20 +254,33 @@ mod tests {
             }
         }
         for (version, protected) in [(1, false), (2, true)] {
-            let saved = Disk::from_woz(&woz(version, &tracks, &tmap, protected)).unwrap().to_image().unwrap();
+            let saved = Disk::from_woz(&woz(version, &tracks, &tmap, protected))
+                .unwrap()
+                .to_image()
+                .unwrap();
             assert_eq!(&saved[..4], b"WOZ2", "WOZ{version} saved");
             assert_eq!(&saved[88..248], &tmap[..], "WOZ{version}'s map, saved"); // TMAP's, after INFO's 60
             let disk = Disk::from_woz(&saved).unwrap();
-            assert!(disk.tracks[..35] == tracks[..], "WOZ{version}'s tracks, saved");
-            assert_eq!(disk.write_protected, protected, "WOZ{version}'s write protect, saved");
+            assert!(
+                disk.tracks[..35] == tracks[..],
+                "WOZ{version}'s tracks, saved"
+            );
+            assert_eq!(
+                disk.write_protected, protected,
+                "WOZ{version}'s write protect, saved"
+            );
         }
     }
 
     #[test]
     fn a_read_only_image_is_write_protected() {
-        let file = std::env::temp_dir().join(format!("cpu_emu_read_only_{}.dsk", std::process::id()));
+        let file =
+            std::env::temp_dir().join(format!("cpu_emu_read_only_{}.dsk", std::process::id()));
         std::fs::write(&file, vec![0; 143_360]).unwrap();
-        assert!(!Disk::open(&file).unwrap().write_protected, "a file that can be written, write protected");
+        assert!(
+            !Disk::open(&file).unwrap().write_protected,
+            "a file that can be written, write protected"
+        );
         let mut permissions = std::fs::metadata(&file).unwrap().permissions();
         permissions.set_readonly(true);
         std::fs::set_permissions(&file, permissions).unwrap();
@@ -219,22 +293,55 @@ mod tests {
     fn a_folder_or_a_playlist_is_its_images() {
         let folder = std::env::temp_dir().join(format!("cpu_emu_images_{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
-        for name in ["Game disk 10A.dsk", "Game disk 2A.dsk", "game disk 1B.WOZ", "Game disk 1A.woz", "notes.txt"] {
+        for name in [
+            "Game disk 10A.dsk",
+            "Game disk 2A.dsk",
+            "game disk 1B.WOZ",
+            "Game disk 1A.woz",
+            "notes.txt",
+        ] {
             std::fs::write(folder.join(name), b"").unwrap();
         }
         let names = |images: Vec<PathBuf>| -> Vec<String> {
-            images.iter().map(|image| image.file_name().unwrap().to_string_lossy().into_owned()).collect()
+            images
+                .iter()
+                .map(|image| image.file_name().unwrap().to_string_lossy().into_owned())
+                .collect()
         };
         let images = disk_image::images(&folder).unwrap();
-        assert_eq!(names(images), ["Game disk 1A.woz", "game disk 1B.WOZ", "Game disk 2A.dsk", "Game disk 10A.dsk"], "the folder's images, in order");
+        assert_eq!(
+            names(images),
+            [
+                "Game disk 1A.woz",
+                "game disk 1B.WOZ",
+                "Game disk 2A.dsk",
+                "Game disk 10A.dsk"
+            ],
+            "the folder's images, in order"
+        );
 
         let playlist = folder.join("game.m3u");
-        std::fs::write(&playlist, "# the game's disks\nGame disk 2A.dsk\n\nGame disk 1A.woz\n").unwrap();
+        std::fs::write(
+            &playlist,
+            "# the game's disks\nGame disk 2A.dsk\n\nGame disk 1A.woz\n",
+        )
+        .unwrap();
         let images = disk_image::images(&playlist).unwrap();
-        assert_eq!(images, [folder.join("Game disk 2A.dsk"), folder.join("Game disk 1A.woz")], "the playlist's, in its order");
+        assert_eq!(
+            images,
+            [
+                folder.join("Game disk 2A.dsk"),
+                folder.join("Game disk 1A.woz")
+            ],
+            "the playlist's, in its order"
+        );
 
         let one = folder.join("Game disk 1A.woz");
-        assert_eq!(disk_image::images(&one).unwrap(), [one.clone()], "an image, itself");
+        assert_eq!(
+            disk_image::images(&one).unwrap(),
+            [one.clone()],
+            "an image, itself"
+        );
         std::fs::remove_dir_all(&folder).unwrap();
     }
 
@@ -245,7 +352,11 @@ mod tests {
         disk.write_bit(1, 7, 1);
         let track = disk.track(1).expect("no track at half-track 1, written");
         assert_eq!(track.len(), disk_image::REVOLUTION_BITS);
-        assert_eq!(track.iter().filter(|&&bit| bit == 1).count(), 1, "the bit written, and only it");
+        assert_eq!(
+            track.iter().filter(|&&bit| bit == 1).count(),
+            1,
+            "the bit written, and only it"
+        );
         assert_eq!(track[7], 1);
         assert!(disk.written);
     }
@@ -301,7 +412,14 @@ mod tests {
         let p6 = std::fs::read(dir().join("disk2-p6-341-0028.bin")).ok()?;
         let bytes = std::fs::read(dir().join(format!("{DISK}.{image}"))).ok()?;
         let mut card = Disk2::new(p5, &p6).unwrap();
-        card.drives[0].disk = Some(if image == "nib" { Disk::from_nib(&bytes) } else { Disk::from_dsk(&bytes) }.unwrap());
+        card.drives[0].disk = Some(
+            if image == "nib" {
+                Disk::from_nib(&bytes)
+            } else {
+                Disk::from_dsk(&bytes)
+            }
+            .unwrap(),
+        );
         Some(card)
     }
 
@@ -320,7 +438,8 @@ mod tests {
         for at in 0..bytes.len().saturating_sub(14) {
             if bytes[at..at + 3] == [0xD5, 0xAA, 0x96] {
                 let sector = ((bytes[at + 7] << 1) | 1) & bytes[at + 8];
-                let data = (at + 14..bytes.len().saturating_sub(349)).find(|&d| bytes[d..d + 3] == [0xD5, 0xAA, 0xAD]);
+                let data = (at + 14..bytes.len().saturating_sub(349))
+                    .find(|&d| bytes[d..d + 3] == [0xD5, 0xAA, 0xAD]);
                 if let Some(data) = data.and_then(|d| decode(&bytes[d..d + 349])) {
                     if !sectors.iter().any(|&(s, _)| s == sector) {
                         sectors.push((sector, data));
@@ -334,7 +453,10 @@ mod tests {
 
     #[test]
     fn where_there_is_no_track_the_card_reads_noise() {
-        let (Ok(p5), Ok(p6)) = (std::fs::read(dir().join("disk2-p5-341-0027.bin")), std::fs::read(dir().join("disk2-p6-341-0028.bin"))) else {
+        let (Ok(p5), Ok(p6)) = (
+            std::fs::read(dir().join("disk2-p5-341-0027.bin")),
+            std::fs::read(dir().join("disk2-p6-341-0028.bin")),
+        ) else {
             eprintln!("disk2 test: no card ROMs in roms/apple2/");
             return;
         };
@@ -356,8 +478,16 @@ mod tests {
         let mut kinds = bytes.clone();
         kinds.sort();
         kinds.dedup();
-        assert!(bytes.len() > 1000, "{} bytes of noise in a turn", bytes.len());
-        assert!(kinds.len() > 20, "{} kinds of byte in the noise", kinds.len());
+        assert!(
+            bytes.len() > 1000,
+            "{} bytes of noise in a turn",
+            bytes.len()
+        );
+        assert!(
+            kinds.len() > 20,
+            "{} kinds of byte in the noise",
+            kinds.len()
+        );
     }
 
     #[test]
@@ -372,11 +502,23 @@ mod tests {
         }
         for track in 0..35 {
             let (from_dsk, from_nib) = (read_track(&mut dsk), read_track(&mut nib));
-            assert_eq!(from_dsk.len(), 16, "track {track} of the .dsk: sectors read");
-            assert_eq!(from_nib.len(), 16, "track {track} of the .nib: sectors read");
+            assert_eq!(
+                from_dsk.len(),
+                16,
+                "track {track} of the .dsk: sectors read"
+            );
+            assert_eq!(
+                from_nib.len(),
+                16,
+                "track {track} of the .nib: sectors read"
+            );
             for ((sector, data), (_, nib_data)) in from_dsk.iter().zip(&from_nib) {
                 let at = track * 4096 + DOS_ORDER[*sector as usize] * 256;
-                assert_eq!(data[..], image[at..at + 256], "track {track} sector {sector} of the .dsk");
+                assert_eq!(
+                    data[..],
+                    image[at..at + 256],
+                    "track {track} sector {sector} of the .dsk"
+                );
                 assert_eq!(nib_data, data, "track {track} sector {sector}: the .nib's");
             }
             // In a track: magnets in turn, as DOS steps.
@@ -394,7 +536,10 @@ mod tests {
 
     #[test]
     fn dos_3_3_boots_and_catalogs_its_disk() {
-        let (Some(card), Ok(rom)) = (real_card("dsk"), std::fs::read(dir().join("Apple2_Plus.rom"))) else {
+        let (Some(card), Ok(rom)) = (
+            real_card("dsk"),
+            std::fs::read(dir().join("Apple2_Plus.rom")),
+        ) else {
             eprintln!("disk2 test: no II+ ROM, card ROMs or disk in roms/apple2/");
             return;
         };
@@ -403,7 +548,12 @@ mod tests {
         let mut cpu = CPU::with_bus(apple);
         cpu.clock_hz = u32::MAX; // as fast as it goes
         cpu.reset();
-        let up = |cpu: &CPU<Apple2>| cpu.memory.text().iter().any(|line| line.contains("DOS VERSION 3.3"));
+        let up = |cpu: &CPU<Apple2>| {
+            cpu.memory
+                .text()
+                .iter()
+                .any(|line| line.contains("DOS VERSION 3.3"))
+        };
         while !up(&cpu) && cpu.clock < 8 * CLOCK_HZ {
             cpu.execute(100_000);
         }
@@ -418,8 +568,14 @@ mod tests {
         }
         cpu.execute(2 * CLOCK_HZ);
         let text = cpu.memory.text();
-        assert!(text.iter().any(|line| line.contains("DISK VOLUME 254")), "the catalog: {text:#?}");
-        assert!(text.iter().any(|line| line.contains("A 003 HELLO")), "HELLO not in it");
+        assert!(
+            text.iter().any(|line| line.contains("DISK VOLUME 254")),
+            "the catalog: {text:#?}"
+        );
+        assert!(
+            text.iter().any(|line| line.contains("A 003 HELLO")),
+            "HELLO not in it"
+        );
     }
 
     #[test]
@@ -443,10 +599,19 @@ mod tests {
         cpu.clock_hz = u32::MAX; // as fast as it goes
         cpu.reset();
         // DOS 3.3 loads it a sector a turn: half a minute.
-        let menu = |cpu: &CPU<Apple2>| cpu.memory.text().iter().any(|line| line.contains("CHOOSE A MODE (1 - 2)"));
+        let menu = |cpu: &CPU<Apple2>| {
+            cpu.memory
+                .text()
+                .iter()
+                .any(|line| line.contains("CHOOSE A MODE (1 - 2)"))
+        };
         while !menu(&cpu) && cpu.clock < 45 * CLOCK_HZ {
             cpu.execute(100_000);
         }
-        assert!(menu(&cpu), "not at its menu in 45 seconds: {:#?}", cpu.memory.text());
+        assert!(
+            menu(&cpu),
+            "not at its menu in 45 seconds: {:#?}",
+            cpu.memory.text()
+        );
     }
 }

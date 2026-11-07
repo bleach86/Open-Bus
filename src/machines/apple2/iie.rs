@@ -67,7 +67,11 @@ impl Iie {
     /// ROM, `characters`: the enhanced IIe's or the first's, their ROMs
     /// all that differs, and their CPUs.
     pub fn new(internal_rom: Vec<u8>, characters: Vec<u8>) -> Self {
-        assert_eq!(internal_rom.len(), 0x1000, "the CD ROM's $C000 to $CFFF is 4K");
+        assert_eq!(
+            internal_rom.len(),
+            0x1000,
+            "the CD ROM's $C000 to $CFFF is 4K"
+        );
         assert_eq!(characters.len(), 0x1000, "the video ROM is 4K");
         Iie {
             aux: vec![0; 0xC000],
@@ -128,7 +132,8 @@ impl Iie {
         if page == 0xC3 && !self.slotc3rom {
             self.intc8rom = true;
         }
-        let internal = self.intcxrom || (page == 0xC3 && !self.slotc3rom) || (page >= 0xC8 && self.intc8rom);
+        let internal =
+            self.intcxrom || (page == 0xC3 && !self.slotc3rom) || (page >= 0xC8 && self.intc8rom);
         if addr == 0xCFFF {
             self.intc8rom = false;
         }

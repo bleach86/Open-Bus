@@ -4,7 +4,16 @@
 // Select and Start, by what it's over, so it can slide from one to another,
 // and between A and B it's both.
 
-export const touch = { up: false, down: false, left: false, right: false, a: false, b: false, select: false, start: false };
+export const touch = {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    a: false,
+    b: false,
+    select: false,
+    start: false,
+};
 
 /// What each finger's on, and what that presses.
 const fingers = new Map();

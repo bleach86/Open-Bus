@@ -30,11 +30,11 @@ pub mod host {
     pub mod notice;
     #[cfg(not(target_arch = "wasm32"))]
     pub mod pads;
-    pub mod stats;
     pub mod page;
     pub mod run;
     pub mod save_state;
     pub mod sound;
+    pub mod stats;
     pub mod terminal;
     #[cfg(not(target_arch = "wasm32"))]
     pub mod window;
@@ -46,9 +46,9 @@ pub mod host {
         mod controls;
         mod files;
         mod notice;
-        mod stats;
         mod page;
         mod run;
+        mod stats;
         mod zip;
     }
 }

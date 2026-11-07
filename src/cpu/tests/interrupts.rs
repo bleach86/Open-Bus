@@ -6,8 +6,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
+    use crate::cpu::bus::Bus;
     use std::path::Path;
 
     const IRQS: u16 = 0x00;
@@ -30,7 +30,10 @@ mod tests {
     }
 
     fn label(labels: &str, name: &str) -> u16 {
-        let line = labels.lines().find(|line| line.ends_with(&format!(" .{name}"))).unwrap();
+        let line = labels
+            .lines()
+            .find(|line| line.ends_with(&format!(" .{name}")))
+            .unwrap();
         u16::from_str_radix(&line[3..9], 16).unwrap()
     }
 
@@ -56,14 +59,26 @@ mod tests {
         assert!(cpu.status.interrupt_disable, "I not set");
         // As an interrupt, its pushes reads: PC twice, the stack three times
         // going down, then the vector.
-        let reads: Vec<(u16, bool)> = cpu.memory.bus_log.unwrap().iter().map(|&(a, _, w)| (a, w)).collect();
+        let reads: Vec<(u16, bool)> = cpu
+            .memory
+            .bus_log
+            .unwrap()
+            .iter()
+            .map(|&(a, _, w)| (a, w))
+            .collect();
         let want = [0x0000, 0x0000, 0x0100, 0x01FF, 0x01FE, 0xFFFC, 0xFFFD];
-        assert_eq!(reads, want.map(|a| (a, false)).to_vec(), "bus cycles: address, write");
+        assert_eq!(
+            reads,
+            want.map(|a| (a, false)).to_vec(),
+            "bus cycles: address, write"
+        );
     }
 
     #[test]
     fn irq_waits_while_reset_has_i_set() {
-        let Some((mut cpu, labels)) = machine() else { return };
+        let Some((mut cpu, labels)) = machine() else {
+            return;
+        };
         cpu.pc = label(&labels, "loop");
         cpu.irq = true;
         cpu.execute(100);
@@ -73,7 +88,9 @@ mod tests {
 
     #[test]
     fn cli_lets_irq_in_after_the_next_instruction() {
-        let Some((mut cpu, labels)) = machine() else { return };
+        let Some((mut cpu, labels)) = machine() else {
+            return;
+        };
         let start = label(&labels, "cli_then");
         cpu.pc = start;
         cpu.irq = true;
@@ -94,7 +111,9 @@ mod tests {
 
     #[test]
     fn rti_goes_back_to_the_interrupted_instruction() {
-        let Some((mut cpu, labels)) = machine() else { return };
+        let Some((mut cpu, labels)) = machine() else {
+            return;
+        };
         let start = label(&labels, "cli_then");
         cpu.pc = start;
         cpu.irq = true;
@@ -113,7 +132,9 @@ mod tests {
 
     #[test]
     fn irq_comes_again_while_it_is_held() {
-        let Some((mut cpu, labels)) = machine() else { return };
+        let Some((mut cpu, labels)) = machine() else {
+            return;
+        };
         cpu.pc = label(&labels, "cli_then");
         cpu.irq = true;
         cpu.execute(1); // CLI
@@ -127,7 +148,9 @@ mod tests {
 
     #[test]
     fn sei_still_lets_a_raised_irq_in() {
-        let Some((mut cpu, labels)) = machine() else { return };
+        let Some((mut cpu, labels)) = machine() else {
+            return;
+        };
         let start = label(&labels, "sei_then");
         cpu.pc = start;
         cpu.execute(1); // CLI
@@ -143,7 +166,9 @@ mod tests {
 
     #[test]
     fn irq_is_taken_after_a_taken_branch() {
-        let Some((mut cpu, labels)) = machine() else { return };
+        let Some((mut cpu, labels)) = machine() else {
+            return;
+        };
         cpu.pc = label(&labels, "branch_then");
         cpu.execute(1); // CLI
         cpu.execute(1); // NOP
@@ -151,14 +176,24 @@ mod tests {
         cpu.irq = true;
 
         cpu.execute(1); // BCC, then the IRQ
-        assert_eq!(cpu.pc, label(&labels, "irq"), "IRQ not taken after the branch");
+        assert_eq!(
+            cpu.pc,
+            label(&labels, "irq"),
+            "IRQ not taken after the branch"
+        );
         let (_, back) = pushed(&mut cpu);
-        assert_eq!(back, label(&labels, "taken"), "pushed PC: not the branch's target");
+        assert_eq!(
+            back,
+            label(&labels, "taken"),
+            "pushed PC: not the branch's target"
+        );
     }
 
     #[test]
     fn nmi_is_taken_with_i_set_and_once() {
-        let Some((mut cpu, labels)) = machine() else { return };
+        let Some((mut cpu, labels)) = machine() else {
+            return;
+        };
         let start = label(&labels, "loop");
         cpu.pc = start;
         cpu.nmi = true;
@@ -175,7 +210,9 @@ mod tests {
 
     #[test]
     fn nmi_comes_before_irq() {
-        let Some((mut cpu, labels)) = machine() else { return };
+        let Some((mut cpu, labels)) = machine() else {
+            return;
+        };
         cpu.pc = label(&labels, "cli_then");
         cpu.execute(1); // CLI
         cpu.execute(1); // NOP

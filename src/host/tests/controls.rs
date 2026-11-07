@@ -9,9 +9,15 @@ mod tests {
         let controls = Controls::default();
         let has = |action, source: &str| controls.of(0, action).contains(&source);
         assert!(has(Action::A, "key:X") && has(Action::A, "pad:a"));
-        assert!(has(Action::B, "key:Z") && has(Action::B, "pad:x"), "West, as the pads have it");
+        assert!(
+            has(Action::B, "key:Z") && has(Action::B, "pad:x"),
+            "West, as the pads have it"
+        );
         assert!(has(Action::Select, "key:Right Shift") && has(Action::Select, "key:Tab"));
-        assert!(has(Action::Up, "pad:dpup") && has(Action::Up, "pad:lefty-"), "the D-pad and the stick");
+        assert!(
+            has(Action::Up, "pad:dpup") && has(Action::Up, "pad:lefty-"),
+            "the D-pad and the stick"
+        );
         assert!(has(Action::Library, "key:F5") && has(Action::Library, "pad:guide"));
     }
 
@@ -19,7 +25,10 @@ mod tests {
     fn the_second_player_has_a_gamepad_and_no_keys() {
         let controls = Controls::default();
         assert_eq!(controls.of(1, Action::A), ["pad:a"]);
-        assert!(controls.of(1, Action::Library).is_empty(), "there's only one way back");
+        assert!(
+            controls.of(1, Action::Library).is_empty(),
+            "there's only one way back"
+        );
     }
 
     #[test]
@@ -35,7 +44,9 @@ mod tests {
         let mut controls = Controls::default();
         controls.bind(0, Action::Up, "pad:y");
         let bound = controls.of(0, Action::Up);
-        assert!(bound.contains(&"pad:y") && bound.contains(&"key:Up") && bound.contains(&"pad:lefty-"));
+        assert!(
+            bound.contains(&"pad:y") && bound.contains(&"key:Up") && bound.contains(&"pad:lefty-")
+        );
         assert!(!bound.contains(&"pad:dpup"));
     }
 
@@ -69,13 +80,19 @@ mod tests {
         controls.bind(1, Action::Start, "pad:lefttrigger");
         let back = Controls::parse(&controls.text());
         assert_eq!(back, controls);
-        assert!(back.of(0, Action::Select).contains(&"key:Left Shift"), "a name with a space");
+        assert!(
+            back.of(0, Action::Select).contains(&"key:Left Shift"),
+            "a name with a space"
+        );
     }
 
     #[test]
     fn a_file_with_nothing_in_it_is_the_defaults() {
         assert_eq!(Controls::parse(""), Controls::default());
-        assert_eq!(Controls::parse("nonsense\n9 a key:X\n1 fly key:X\n"), Controls::default());
+        assert_eq!(
+            Controls::parse("nonsense\n9 a key:X\n1 fly key:X\n"),
+            Controls::default()
+        );
     }
 
     #[test]
@@ -97,7 +114,11 @@ mod tests {
     #[test]
     fn every_action_has_something_for_the_first_player() {
         let controls = Controls::default();
-        assert!(ACTIONS.iter().all(|&action| !controls.of(0, action).is_empty()));
+        assert!(
+            ACTIONS
+                .iter()
+                .all(|&action| !controls.of(0, action).is_empty())
+        );
     }
 
     #[test]

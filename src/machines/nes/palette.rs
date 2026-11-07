@@ -38,7 +38,10 @@ fn rgb(pixel: usize, region: Region) -> u32 {
     let (hue, emphasis) = (pixel & 0x0F, pixel >> 6);
     let (emphasis, burst) = match region {
         Region::Ntsc => (emphasis, HUE),
-        Region::Pal => (emphasis & 4 | (emphasis & 1) << 1 | (emphasis & 2) >> 1, PAL_HUE),
+        Region::Pal => (
+            emphasis & 4 | (emphasis & 1) << 1 | (emphasis & 2) >> 1,
+            PAL_HUE,
+        ),
     };
     let level = if hue > 13 { 1 } else { (pixel >> 4) & 3 };
     let (mut low, mut high) = (LEVELS[level], LEVELS[4 + level]);

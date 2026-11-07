@@ -36,8 +36,14 @@ mod tests {
         let due = Duration::from_nanos((cycles as u128 * 1_000_000_000 / hz as u128) as u64);
         let early = Duration::from_micros(500);
         let late = Duration::from_millis(20);
-        assert!(took + early >= due, "{cycles} cycles at {hz} Hz: {took:?}, early for {due:?}");
-        assert!(took <= due + late, "{cycles} cycles at {hz} Hz: {took:?}, late for {due:?}");
+        assert!(
+            took + early >= due,
+            "{cycles} cycles at {hz} Hz: {took:?}, early for {due:?}"
+        );
+        assert!(
+            took <= due + late,
+            "{cycles} cycles at {hz} Hz: {took:?}, late for {due:?}"
+        );
     }
 
     #[test]
@@ -48,7 +54,11 @@ mod tests {
         assert_eq!(slow_ran, 50_000, "50,000 cycles are 10,000 times round");
         for (cpu, ran) in [(&fast, fast_ran), (&nes, nes_ran)] {
             assert_eq!(ran, slow_ran, "cycles run");
-            assert_eq!((cpu.pc, cpu.x), (slow.pc, slow.x), "where the program got to");
+            assert_eq!(
+                (cpu.pc, cpu.x),
+                (slow.pc, slow.x),
+                "where the program got to"
+            );
         }
         assert_eq!(slow.x, (10_000 % 256) as u8);
     }

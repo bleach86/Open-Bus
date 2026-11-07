@@ -23,7 +23,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::cpu::{Variant, CPU};
+    use crate::cpu::{CPU, Variant};
     use std::path::{Path, PathBuf};
 
     const JAM: u8 = 0x02;
@@ -54,7 +54,11 @@ mod tests {
         let sections: Vec<&str> = line.split('|').collect();
         let parts: Vec<Vec<u32>> = sections[..4]
             .iter()
-            .map(|part| part.split_whitespace().map(|n| n.parse().unwrap()).collect())
+            .map(|part| {
+                part.split_whitespace()
+                    .map(|n| n.parse().unwrap())
+                    .collect()
+            })
             .collect();
         let words: Vec<&str> = sections[4].split_whitespace().collect();
         let state = |regs: &[u32], ram: &[u32]| State {
@@ -64,14 +68,23 @@ mod tests {
             x: regs[3] as u8,
             y: regs[4] as u8,
             p: regs[5] as u8,
-            ram: ram.chunks(2).map(|pair| (pair[0] as u16, pair[1] as u8)).collect(),
+            ram: ram
+                .chunks(2)
+                .map(|pair| (pair[0] as u16, pair[1] as u8))
+                .collect(),
         };
         Case {
             initial: state(&parts[0], &parts[1]),
             last: state(&parts[2], &parts[3]),
             cycles: words
                 .chunks(3)
-                .map(|cycle| (cycle[0].parse().unwrap(), cycle[1].parse().unwrap(), cycle[2] == "w"))
+                .map(|cycle| {
+                    (
+                        cycle[0].parse().unwrap(),
+                        cycle[1].parse().unwrap(),
+                        cycle[2] == "w",
+                    )
+                })
                 .collect(),
         }
     }
@@ -81,7 +94,13 @@ mod tests {
     /// its second cycle and throws it away; other than that, it mustn't be
     /// touched.
     fn can_jam(case: &Case) -> bool {
-        let opcode = case.initial.ram.iter().find(|&&(addr, _)| addr == case.initial.pc).unwrap().1;
+        let opcode = case
+            .initial
+            .ram
+            .iter()
+            .find(|&&(addr, _)| addr == case.initial.pc)
+            .unwrap()
+            .1;
         let one_byte = matches!(opcode & 0x0F, 0x08 | 0x0A) || matches!(opcode, 0x00 | 0x40 | 0x60);
         case.cycles
             .iter()
@@ -118,11 +137,25 @@ mod tests {
     type Regs = (u16, u8, u8, u8, u8, u8);
 
     fn regs(cpu: &CPU) -> Regs {
-        (cpu.pc, cpu.sp, cpu.a, cpu.x, cpu.y, cpu.status.to_byte() & !0x30)
+        (
+            cpu.pc,
+            cpu.sp,
+            cpu.a,
+            cpu.x,
+            cpu.y,
+            cpu.status.to_byte() & !0x30,
+        )
     }
 
     fn want(state: &State) -> Regs {
-        (state.pc, state.s, state.a, state.x, state.y, state.p & !0x30)
+        (
+            state.pc,
+            state.s,
+            state.a,
+            state.x,
+            state.y,
+            state.p & !0x30,
+        )
     }
 
     fn show((pc, s, a, x, y, p): Regs) -> String {
@@ -135,7 +168,9 @@ mod tests {
     /// without.
     fn cycles_taken(case: &Case, variant: Variant) -> Option<u32> {
         let cycles = case.cycles.len() as u32;
-        (1..=cycles + 4).rev().find(|&given| regs(&run(case, given, variant).0) == want(&case.last))
+        (1..=cycles + 4)
+            .rev()
+            .find(|&given| regs(&run(case, given, variant).0) == want(&case.last))
     }
 
     /// What's wrong with the CPU's run of the case, if anything.
@@ -155,7 +190,11 @@ mod tests {
             if regs(&cpu) == want(&case.initial) {
                 return Some(format!("didn't run in {cycles} cycles"));
             }
-            return Some(format!("PC S A X Y P: got {}, want {}", show(regs(&cpu)), show(want(last))));
+            return Some(format!(
+                "PC S A X Y P: got {}, want {}",
+                show(regs(&cpu)),
+                show(want(last))
+            ));
         }
         for &(addr, value) in &last.ram {
             let at = cpu.memory.data[addr as usize];
@@ -170,21 +209,36 @@ mod tests {
 
         let log = cpu.memory.bus_log.as_ref().unwrap();
         let access = |(addr, value, write): (u16, u8, bool)| {
-            format!("{} ${addr:04X} {value:02X}", if write { "write" } else { "read" })
+            format!(
+                "{} ${addr:04X} {value:02X}",
+                if write { "write" } else { "read" }
+            )
         };
         for (i, &(addr, value, write)) in case.cycles.iter().enumerate() {
             // A JAM put in the byte after reads as one.
-            let value = if jam && addr == last.pc && !write { JAM } else { value };
+            let value = if jam && addr == last.pc && !write {
+                JAM
+            } else {
+                value
+            };
             match log.get(i) {
                 Some(&got) if got == (addr, value, write) => {}
                 got => {
                     let got = got.map_or("nothing".into(), |&got| access(got));
-                    return Some(format!("cycle {}: {got}, want {}", i + 1, access((addr, value, write))));
+                    return Some(format!(
+                        "cycle {}: {got}, want {}",
+                        i + 1,
+                        access((addr, value, write))
+                    ));
                 }
             }
         }
         if log.len() > case.cycles.len() {
-            return Some(format!("cycle {}: {}, want nothing", case.cycles.len() + 1, access(log[case.cycles.len()])));
+            return Some(format!(
+                "cycle {}: {}, want nothing",
+                case.cycles.len() + 1,
+                access(log[case.cycles.len()])
+            ));
         }
         None
     }
@@ -243,13 +297,22 @@ mod tests {
                 .map(|t| {
                     scope.spawn(move || {
                         let mine = files.iter().skip(t).step_by(threads);
-                        mine.filter_map(|(file, variant)| check_file(file, *variant)).collect::<Vec<_>>()
+                        mine.filter_map(|(file, variant)| check_file(file, *variant))
+                            .collect::<Vec<_>>()
                     })
                 })
                 .collect();
-            workers.into_iter().flat_map(|worker| worker.join().unwrap()).collect()
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect()
         });
         failed.sort();
-        assert!(failed.is_empty(), "{} opcodes wrong:\n{}", failed.len(), failed.join("\n"));
+        assert!(
+            failed.is_empty(),
+            "{} opcodes wrong:\n{}",
+            failed.len(),
+            failed.join("\n")
+        );
     }
 }

@@ -10,8 +10,8 @@ mod tests {
     use crate::cpu::CPU;
     use crate::host::display::{Display, Key};
     use crate::host::run::Host;
-    use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::disk_image::Disk;
+    use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::video::{HEIGHT, PICTURE_WIDTH};
     use crate::machines::apple2::{Apple2, CLOCK_HZ};
     use std::cell::RefCell;
@@ -30,11 +30,20 @@ mod tests {
         for addr in [0xC0E3, 0xC0E0, 0xC0E5, 0xC0E2] {
             card.io(addr, None); // a track in
         }
-        assert_eq!(card.drives[1].half_track, 2, "drive 2's head not a track in");
+        assert_eq!(
+            card.drives[1].half_track, 2,
+            "drive 2's head not a track in"
+        );
         assert_eq!(card.drives[0].half_track, 0, "drive 1's head moved");
-        assert!(card.turning(1) && !card.turning(0), "the wrong drive turning");
+        assert!(
+            card.turning(1) && !card.turning(0),
+            "the wrong drive turning"
+        );
         card.io(0xC0EA, None); // drive 1
-        assert!(card.turning(0) && !card.turning(1), "drive 1 not turning, switched to");
+        assert!(
+            card.turning(0) && !card.turning(1),
+            "drive 1 not turning, switched to"
+        );
     }
 
     /// A window of the test's: function keys pressed, as the test says;
@@ -85,7 +94,11 @@ mod tests {
         let in_drives = |host: &Host<Apple2>| host.cpu.memory.in_drive;
         host.frame();
         assert_eq!(in_drives(&host), [Some(0), None]);
-        assert!(window.borrow().1.contains("Drive 1: cpu_emu_"), "the title: {}", window.borrow().1);
+        assert!(
+            window.borrow().1.contains("Drive 1: cpu_emu_"),
+            "the title: {}",
+            window.borrow().1
+        );
 
         // F9: drive 1 through each in turn.
         for want in [1, 2, 0] {
@@ -99,23 +112,46 @@ mod tests {
         }
         // The disk put in, said over the picture's foot, for 3 seconds.
         let band = || window.borrow().2[(HEIGHT - 12) * PICTURE_WIDTH..].to_vec();
-        assert!(band()[..PICTURE_WIDTH].iter().all(|&dot| dot == 0), "no notice's band");
-        assert!(band().iter().any(|&dot| dot == 0xFFFFFF), "no notice's text");
+        assert!(
+            band()[..PICTURE_WIDTH].iter().all(|&dot| dot == 0),
+            "no notice's band"
+        );
+        assert!(
+            band().iter().any(|&dot| dot == 0xFFFFFF),
+            "no notice's text"
+        );
         for _ in 0..180 {
             host.frame();
         }
-        assert!(host.notice.is_none(), "the notice still there after 3 seconds");
+        assert!(
+            host.notice.is_none(),
+            "the notice still there after 3 seconds"
+        );
 
         // Drive 1 skips the one in drive 2.
         press(&mut host, 9);
-        assert_eq!(in_drives(&host), [Some(2), Some(1)], "drive 1, past drive 2's");
-        let disk = host.cpu.memory.disk2.as_ref().unwrap().drives[0].disk.as_ref().unwrap();
-        assert_eq!(disk.path.as_deref(), Some(paths[2].as_path()), "drive 1's disk not read from its image");
+        assert_eq!(
+            in_drives(&host),
+            [Some(2), Some(1)],
+            "drive 1, past drive 2's"
+        );
+        let disk = host.cpu.memory.disk2.as_ref().unwrap().drives[0]
+            .disk
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            disk.path.as_deref(),
+            Some(paths[2].as_path()),
+            "drive 1's disk not read from its image"
+        );
 
         // Written, a disk is saved as it's taken out.
         let saved = image("saved", 0);
         std::fs::remove_file(&saved).unwrap();
-        let disk = host.cpu.memory.disk2.as_mut().unwrap().drives[0].disk.as_mut().unwrap();
+        let disk = host.cpu.memory.disk2.as_mut().unwrap().drives[0]
+            .disk
+            .as_mut()
+            .unwrap();
         disk.path = Some(saved.clone());
         disk.written = true;
         press(&mut host, 9);
@@ -169,22 +205,47 @@ mod tests {
         let mut cpu = CPU::with_bus(apple);
         cpu.clock_hz = u32::MAX; // as fast as it goes
         cpu.reset();
-        assert!(run_until(&mut cpu, "DOS VERSION 3.3", 10), "DOS 3.3 not up: {:#?}", cpu.memory.text());
+        assert!(
+            run_until(&mut cpu, "DOS VERSION 3.3", 10),
+            "DOS 3.3 not up: {:#?}",
+            cpu.memory.text()
+        );
         cpu.execute(CLOCK_HZ); // to the prompt
 
         // The catalogs a screen and more: a key for the rest.
         type_in(&mut cpu, b"NEW\r10 END\rSAVE TEST,D2\rHOME\rCATALOG,D2\r");
-        assert!(run_until(&mut cpu, " BOOT13", 10), "drive 2's catalog: {:#?}", cpu.memory.text());
+        assert!(
+            run_until(&mut cpu, " BOOT13", 10),
+            "drive 2's catalog: {:#?}",
+            cpu.memory.text()
+        );
         type_in(&mut cpu, b" ");
-        assert!(run_until(&mut cpu, " TEST", 10), "TEST not on drive 2's disk: {:#?}", cpu.memory.text());
+        assert!(
+            run_until(&mut cpu, " TEST", 10),
+            "TEST not on drive 2's disk: {:#?}",
+            cpu.memory.text()
+        );
         let card = cpu.memory.disk2.as_ref().unwrap();
-        assert!(card.drives[1].disk.as_ref().unwrap().written, "drive 2's disk not written");
-        assert!(!card.drives[0].disk.as_ref().unwrap().written, "drive 1's disk written");
+        assert!(
+            card.drives[1].disk.as_ref().unwrap().written,
+            "drive 2's disk not written"
+        );
+        assert!(
+            !card.drives[0].disk.as_ref().unwrap().written,
+            "drive 1's disk written"
+        );
 
         type_in(&mut cpu, b"HOME\rCATALOG,D1\r");
-        assert!(run_until(&mut cpu, " BOOT13", 10), "drive 1's catalog: {:#?}", cpu.memory.text());
+        assert!(
+            run_until(&mut cpu, " BOOT13", 10),
+            "drive 1's catalog: {:#?}",
+            cpu.memory.text()
+        );
         type_in(&mut cpu, b" ");
         cpu.execute(CLOCK_HZ);
-        assert!(!cpu.memory.text().iter().any(|line| line.contains(" TEST")), "TEST on drive 1's disk");
+        assert!(
+            !cpu.memory.text().iter().any(|line| line.contains(" TEST")),
+            "TEST on drive 1's disk"
+        );
     }
 }

@@ -518,7 +518,11 @@ impl Display for Window {
     }
 
     fn hint(&self) -> Option<&'static str> {
-        Some(if launched() { "SELECT + START: MENU, HELD: BACK" } else { "F1 OR SELECT + START: MENU" })
+        Some(if launched() {
+            "SELECT + START: MENU, HELD: BACK"
+        } else {
+            "F1 OR SELECT + START: MENU"
+        })
     }
 
     fn reset_held(&self) -> bool {

@@ -51,7 +51,10 @@ impl LanguageCard {
 
     /// The IIe's: with the auxiliary 16K.
     pub fn with_aux() -> Self {
-        LanguageCard { aux: vec![0; 0x4000], ..LanguageCard::new() }
+        LanguageCard {
+            aux: vec![0; 0x4000],
+            ..LanguageCard::new()
+        }
     }
 
     /// RESET: the ROM read, and bank 2 written; the RAM as it was.

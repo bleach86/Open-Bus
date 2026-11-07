@@ -6,8 +6,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::cpu::bus::Bus;
     use crate::cpu::CPU;
+    use crate::cpu::bus::Bus;
     use std::path::Path;
 
     const PORT: u16 = 0xD000;
@@ -54,10 +54,19 @@ mod tests {
             eprintln!("bus test: no program; run make -C roms");
             return None;
         };
-        let line = labels.lines().find(|line| line.ends_with(" .done")).unwrap();
+        let line = labels
+            .lines()
+            .find(|line| line.ends_with(" .done"))
+            .unwrap();
         let done = u16::from_str_radix(&line[3..9], 16).unwrap();
 
-        let mut cpu = CPU::with_bus(Board { ram, reads: 0, writes: 0, ticks: 0, reset: false });
+        let mut cpu = CPU::with_bus(Board {
+            ram,
+            reads: 0,
+            writes: 0,
+            ticks: 0,
+            reset: false,
+        });
         cpu.reset();
         // LDA abs 4, LDX # 2, LDA abs,X crossing 5, INC abs 6, LDX # 2,
         // STA abs,X 5: to the end.
@@ -74,15 +83,25 @@ mod tests {
     #[test]
     fn the_bus_is_ticked_every_cycle() {
         let Some((cpu, _)) = run() else { return };
-        assert_eq!(cpu.memory.ticks, 7 + 24, "ticks: reset's 7 and the program's 24");
+        assert_eq!(
+            cpu.memory.ticks,
+            7 + 24,
+            "ticks: reset's 7 and the program's 24"
+        );
         assert_eq!(cpu.memory.ticks, cpu.clock, "ticks and the CPU's clock");
     }
 
     #[test]
     fn the_register_sees_the_6502s_reads_and_writes() {
         let Some((cpu, _)) = run() else { return };
-        assert_eq!(cpu.memory.reads, 4, "reads: LDA, LDA abs,X, INC, STA abs,X's before the carry");
-        assert_eq!(cpu.memory.writes, 2, "writes: INC's old value back, then its new");
+        assert_eq!(
+            cpu.memory.reads, 4,
+            "reads: LDA, LDA abs,X, INC, STA abs,X's before the carry"
+        );
+        assert_eq!(
+            cpu.memory.writes, 2,
+            "writes: INC's old value back, then its new"
+        );
     }
 
     #[test]

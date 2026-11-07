@@ -13,7 +13,11 @@ impl<B: Bus> CPU<B> {
     /// A cycle jammed: $FFFF read, then $FFFE twice, then $FFFF from then on.
     pub(crate) fn jammed_cycle(&mut self) {
         let cycles = self.jammed.unwrap_or(0);
-        let addr = if matches!(cycles, 1 | 2) { 0xFFFE } else { 0xFFFF };
+        let addr = if matches!(cycles, 1 | 2) {
+            0xFFFE
+        } else {
+            0xFFFF
+        };
         self.read_byte(addr);
         self.jammed = Some((cycles + 1).min(3));
     }

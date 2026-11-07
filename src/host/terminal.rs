@@ -12,8 +12,18 @@ use std::thread;
 
 /// F1 to F12, as the terminal sends them.
 const FUNCTION_KEYS: [&[u8]; 12] = [
-    b"\x1BOP", b"\x1BOQ", b"\x1BOR", b"\x1BOS", b"\x1B[15~", b"\x1B[17~",
-    b"\x1B[18~", b"\x1B[19~", b"\x1B[20~", b"\x1B[21~", b"\x1B[23~", b"\x1B[24~",
+    b"\x1BOP",
+    b"\x1BOQ",
+    b"\x1BOR",
+    b"\x1BOS",
+    b"\x1B[15~",
+    b"\x1B[17~",
+    b"\x1B[18~",
+    b"\x1B[19~",
+    b"\x1B[20~",
+    b"\x1B[21~",
+    b"\x1B[23~",
+    b"\x1B[24~",
 ];
 
 /// The Reset key pressed, there being no key let go: held 6 frames, a tenth
@@ -66,7 +76,13 @@ impl Terminal {
                             rx.push_back(b);
                             // A function key: not keys typed.
                             for (n, sequence) in FUNCTION_KEYS.iter().enumerate() {
-                                if rx.len() >= sequence.len() && rx.iter().rev().take(sequence.len()).eq(sequence.iter().rev()) {
+                                if rx.len() >= sequence.len()
+                                    && rx
+                                        .iter()
+                                        .rev()
+                                        .take(sequence.len())
+                                        .eq(sequence.iter().rev())
+                                {
                                     let typed = rx.len() - sequence.len();
                                     rx.truncate(typed);
                                     FUNCTION_KEYS_PRESSED.lock().unwrap().push_back(n as u8 + 1);

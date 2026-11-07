@@ -9,17 +9,27 @@ export const natural = (a, b) => a.localeCompare(b, undefined, { numeric: true, 
 
 export const isVolume = (name) => /\.(hdv|2mg)$/i.test(name);
 const base = (path) => path.split('/').pop();
-const stem = (name) => base(name).replace(/\.[^.]*$/, '').toLowerCase();
+const stem = (name) =>
+    base(name)
+        .replace(/\.[^.]*$/, '')
+        .toLowerCase();
 
 /// A folder's name as a title: what's in brackets is where it's from.
-const title = (name) => name.replace(/\s*\([^)]*\)/g, '').replace(/_/g, ' ').trim();
+const title = (name) =>
+    name
+        .replace(/\s*\([^)]*\)/g, '')
+        .replace(/_/g, ' ')
+        .trim();
 
 /// What a disk's name says is its game, if it says: all before its side or
 /// disk, or a last part that's a number and a side.
 function namedGame(name) {
     const name_ = stem(name);
     const original = base(name).replace(/\.[^.]*$/, '');
-    const said = /[\s_.-]*(\b(side|disk|disc|vol|volume|part)\s*\d*[a-d]?\b|\s-\s.*\bdisk$|[\s_]\d+[ab]$|[\s_]d\d(_s\d)?$|_d\d$).*$/i.exec(original);
+    const said =
+        /[\s_.-]*(\b(side|disk|disc|vol|volume|part)\s*\d*[a-d]?\b|\s-\s.*\bdisk$|[\s_]\d+[ab]$|[\s_]d\d(_s\d)?$|_d\d$).*$/i.exec(
+            original,
+        );
     if (!said || said.index === 0) {
         return null;
     }
@@ -69,15 +79,21 @@ export function storedNames(paths, isDisk) {
     const within = (dir) => [...disks.keys()].filter((other) => other.startsWith(`${dir}/`));
     const stems = (dir) => new Set((disks.get(dir) ?? []).map(stem));
     // A folder under one with the same disks is only copies of them.
-    const copyOf = (dir) => [...disks.keys()].find((other) => dir.startsWith(`${other}/`)
-        && disks.get(dir).some((path) => stems(other).has(stem(path))));
-    const isGame = (dir) => (disks.get(dir) ?? []).filter((path) => !isVolume(path)).length >= 2
-        && !copyOf(dir) && within(dir).every(copyOf);
-    return new Map(paths.map((path) => {
-        const dir = dirOf(path);
-        if (disks.has(dir) && copyOf(dir)) {
-            return [path, null];
-        }
-        return [path, isGame(dir) ? `${base(dir)}/${base(path)}` : base(path)];
-    }));
+    const copyOf = (dir) =>
+        [...disks.keys()].find(
+            (other) => dir.startsWith(`${other}/`) && disks.get(dir).some((path) => stems(other).has(stem(path))),
+        );
+    const isGame = (dir) =>
+        (disks.get(dir) ?? []).filter((path) => !isVolume(path)).length >= 2 &&
+        !copyOf(dir) &&
+        within(dir).every(copyOf);
+    return new Map(
+        paths.map((path) => {
+            const dir = dirOf(path);
+            if (disks.has(dir) && copyOf(dir)) {
+                return [path, null];
+            }
+            return [path, isGame(dir) ? `${base(dir)}/${base(path)}` : base(path)];
+        }),
+    );
 }

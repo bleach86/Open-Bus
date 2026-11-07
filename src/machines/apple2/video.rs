@@ -43,7 +43,12 @@ pub enum Monitor {
 }
 
 impl Monitor {
-    pub const ALL: [Monitor; 4] = [Monitor::Colour, Monitor::White, Monitor::Green, Monitor::Amber];
+    pub const ALL: [Monitor; 4] = [
+        Monitor::Colour,
+        Monitor::White,
+        Monitor::Green,
+        Monitor::Amber,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -56,7 +61,10 @@ impl Monitor {
 
     /// The one after it, round again.
     pub fn next(self) -> Monitor {
-        let at = Monitor::ALL.iter().position(|&monitor| monitor == self).unwrap();
+        let at = Monitor::ALL
+            .iter()
+            .position(|&monitor| monitor == self)
+            .unwrap();
         Monitor::ALL[(at + 1) % Monitor::ALL.len()]
     }
 
@@ -134,7 +142,8 @@ pub fn scanner_address(switches: Switches, line: usize, cycle: usize) -> usize {
     let bit = |n: usize, at: usize| (n >> at) & 1;
     let (h3, h4, h5) = (bit(h, 3), bit(h, 4), bit(h, 5));
     let (v3, v4) = (bit(v, 6), bit(v, 7));
-    let hires = switches.graphics && switches.hires && !(switches.mixed && v4 == 1 && bit(v, 5) == 1);
+    let hires =
+        switches.graphics && switches.hires && !(switches.mixed && v4 == 1 && bit(v, 5) == 1);
 
     // Bits 3 to 6: a sum of the counters' bits, interleaving the rows.
     let sum = (0b1101 + (h5 << 2 | h4 << 1 | h3) + (v4 << 3 | v3 << 2 | v4 << 1 | v3)) & 0x0F;
@@ -156,10 +165,20 @@ pub fn scanner_address(switches: Switches, line: usize, cycle: usize) -> usize {
 /// `flash_on`, on `monitor`. With 80COL, text is 80 columns, and with
 /// double high-res on, graphics double; the 40 column modes as on the II+,
 /// each dot twice. On a monochrome monitor, the signal's dots, lit.
-pub fn picture_line(source: &Source, switches: Switches, monitor: Monitor, flash_on: bool, y: usize, out: &mut [u32]) {
+pub fn picture_line(
+    source: &Source,
+    switches: Switches,
+    monitor: Monitor,
+    flash_on: bool,
+    y: usize,
+    out: &mut [u32],
+) {
     if monitor != Monitor::Colour {
         let lit = monitor.phosphor();
-        for (dot, colour) in signal_line(source, switches, flash_on, y).iter().zip(out.iter_mut()) {
+        for (dot, colour) in signal_line(source, switches, flash_on, y)
+            .iter()
+            .zip(out.iter_mut())
+        {
             *colour = if *dot { lit } else { BLACK };
         }
         return;
@@ -188,7 +207,12 @@ pub fn picture_line(source: &Source, switches: Switches, monitor: Monitor, flash
 /// low-res, each block its colour's 4 bits over and over, each dot's place
 /// in the colour signal's cycle its bit (dot 4n bit 0), as colour's made
 /// of them; double graphics, their dots.
-fn signal_line(source: &Source, switches: Switches, flash_on: bool, y: usize) -> [bool; PICTURE_WIDTH] {
+fn signal_line(
+    source: &Source,
+    switches: Switches,
+    flash_on: bool,
+    y: usize,
+) -> [bool; PICTURE_WIDTH] {
     let mut signal = [false; PICTURE_WIDTH];
     let text = !switches.graphics || (switches.mixed && y >= 160);
     let double = switches.col80 && (text || switches.dhires);
@@ -199,7 +223,13 @@ fn signal_line(source: &Source, switches: Switches, flash_on: bool, y: usize) ->
                 if !double && half == 0 {
                     continue;
                 }
-                let dots = character_row(source.characters, switches.altcharset, flash_on, memory[start + place], y % 8);
+                let dots = character_row(
+                    source.characters,
+                    switches.altcharset,
+                    flash_on,
+                    memory[start + place],
+                    y % 8,
+                );
                 for dot in 0..7 {
                     let on = (dots >> dot) & 1 != 0;
                     match double {
@@ -239,9 +269,15 @@ fn signal_line(source: &Source, switches: Switches, flash_on: bool, y: usize) ->
                 // low-res's is.
                 true => {
                     let aux = nibble(source.aux[start + place]);
-                    [(place * 14, 7, ((aux << 1) | (aux >> 3)) & 0x0F), (place * 14 + 7, 7, nibble(source.main[start + place]))]
+                    [
+                        (place * 14, 7, ((aux << 1) | (aux >> 3)) & 0x0F),
+                        (place * 14 + 7, 7, nibble(source.main[start + place])),
+                    ]
                 }
-                false => [(place * 14, 14, nibble(source.main[start + place])), (0, 0, 0)],
+                false => [
+                    (place * 14, 14, nibble(source.main[start + place])),
+                    (0, 0, 0),
+                ],
             };
             for (x, width, colour) in blocks {
                 for at in x..x + width {
@@ -274,7 +310,13 @@ fn double_dots(source: &Source, page2: bool, y: usize) -> [u8; PICTURE_WIDTH] {
 /// while the flash is on; or from a IIe's video ROM, the alternate set by
 /// the byte, the primary's $40 to $7F flashing, its inverse character or
 /// its normal by turns.
-fn character_row(characters: Option<&[u8]>, altcharset: bool, flash_on: bool, byte: u8, row: usize) -> u8 {
+fn character_row(
+    characters: Option<&[u8]>,
+    altcharset: bool,
+    flash_on: bool,
+    byte: u8,
+    row: usize,
+) -> u8 {
     match characters {
         None => {
             let dots = font::dots(byte & 0x3F, row);
@@ -283,7 +325,11 @@ fn character_row(characters: Option<&[u8]>, altcharset: bool, flash_on: bool, by
         }
         Some(rom) => {
             let flashing = !altcharset && (0x40..0x80).contains(&byte);
-            let code = if flashing { byte & 0x3F | if flash_on { 0x00 } else { 0x80 } } else { byte };
+            let code = if flashing {
+                byte & 0x3F | if flash_on { 0x00 } else { 0x80 }
+            } else {
+                byte
+            };
             !rom[code as usize * 8 + row] & 0x7F
         }
     }
@@ -293,7 +339,13 @@ fn character_row(characters: Option<&[u8]>, altcharset: bool, flash_on: bool, by
 fn text40_line(source: &Source, switches: Switches, flash_on: bool, y: usize, out: &mut [u32]) {
     let start = text_address(switches.page2, y / 8);
     for (column, &byte) in source.main[start..start + 40].iter().enumerate() {
-        let dots = character_row(source.characters, switches.altcharset, flash_on, byte, y % 8);
+        let dots = character_row(
+            source.characters,
+            switches.altcharset,
+            flash_on,
+            byte,
+            y % 8,
+        );
         for dot in 0..7 {
             out[column * 7 + dot] = if (dots >> dot) & 1 != 0 { WHITE } else { BLACK };
         }
@@ -306,7 +358,13 @@ fn text80_line(source: &Source, switches: Switches, flash_on: bool, y: usize, ou
     let start = text_address(switches.page2, y / 8);
     for place in 0..40 {
         for (half, memory) in [source.aux, source.main].into_iter().enumerate() {
-            let dots = character_row(source.characters, switches.altcharset, flash_on, memory[start + place], y % 8);
+            let dots = character_row(
+                source.characters,
+                switches.altcharset,
+                flash_on,
+                memory[start + place],
+                y % 8,
+            );
             let x = (2 * place + half) * 7;
             for dot in 0..7 {
                 out[x + dot] = if (dots >> dot) & 1 != 0 { WHITE } else { BLACK };

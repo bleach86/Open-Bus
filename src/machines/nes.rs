@@ -87,9 +87,9 @@ use crate::host::sound::{HighPass, LowPass, Sampler};
 use crate::host::window::Window;
 use crate::host::zip::crc32;
 use apu::Apu;
-use region::Region;
 use cartridge::Cartridge;
 use ppu::Ppu;
+use region::Region;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -393,10 +393,10 @@ impl Nes {
             return;
         }
         let Some(sound) = &mut self.sound else { return };
-        let output = sound
-            .low_passes
-            .iter_mut()
-            .fold(self.apu.output() + self.cartridge.output(), |output, low_pass| low_pass.filter(output));
+        let output = sound.low_passes.iter_mut().fold(
+            self.apu.output() + self.cartridge.output(),
+            |output, low_pass| low_pass.filter(output),
+        );
         if let Some([sample]) = sound.sampler.cycle([output]) {
             let sample = sound.high_pass.filter(sample);
             self.samples.extend([sample * VOLUME; 2]);
@@ -557,12 +557,20 @@ impl Machine for Nes {
     }
 
     fn menu(&self) -> Vec<(&'static str, u8)> {
-        if matches!(self.cartridge.mapper, cartridge::Mapper::Fds(_)) { vec![("CHANGE DISK SIDE", CHANGE_DISK_KEY)] } else { Vec::new() }
+        if matches!(self.cartridge.mapper, cartridge::Mapper::Fds(_)) {
+            vec![("CHANGE DISK SIDE", CHANGE_DISK_KEY)]
+        } else {
+            Vec::new()
+        }
     }
 
     /// F9 changes a Disk System's disk.
     fn function_key(&mut self, key: u8) -> Option<String> {
-        if key == CHANGE_DISK_KEY { self.cartridge.change_disk() } else { None }
+        if key == CHANGE_DISK_KEY {
+            self.cartridge.change_disk()
+        } else {
+            None
+        }
     }
 
     fn sound_on(&mut self) {
@@ -609,8 +617,15 @@ impl Machine for Nes {
     /// leaves out.
     fn identity(&self) -> String {
         let roms = [&self.cartridge.prg_rom[..], &self.cartridge.chr_rom[..]].concat();
-        let region = if self.region == Region::Pal { ", PAL" } else { "" };
-        let disk = self.cartridge.disk_crc().map_or(String::new(), |crc| format!(", disk {crc:08X}"));
+        let region = if self.region == Region::Pal {
+            ", PAL"
+        } else {
+            ""
+        };
+        let disk = self
+            .cartridge
+            .disk_crc()
+            .map_or(String::new(), |crc| format!(", disk {crc:08X}"));
         format!("NES, ROMs {:08X}{disk}{region}", crc32(&roms))
     }
 
@@ -657,9 +672,19 @@ fn cartridge(image: &[u8], path: &Path) -> Result<Cartridge, String> {
     let Some(sides) = fds::sides_of(image) else {
         return Cartridge::new(image);
     };
-    let places = [path.with_file_name(FDS_BIOS), Path::new("roms/nes").join(FDS_BIOS), Path::new(FDS_BIOS).to_path_buf()];
-    let bios = places.iter().find_map(|place| files::read(place).ok().filter(|bios| bios.len() == FDS_BIOS_SIZE));
-    let bios = bios.ok_or(format!("a Disk System game needs its BIOS, {FDS_BIOS}, added beside it"))?;
+    let places = [
+        path.with_file_name(FDS_BIOS),
+        Path::new("roms/nes").join(FDS_BIOS),
+        Path::new(FDS_BIOS).to_path_buf(),
+    ];
+    let bios = places.iter().find_map(|place| {
+        files::read(place)
+            .ok()
+            .filter(|bios| bios.len() == FDS_BIOS_SIZE)
+    });
+    let bios = bios.ok_or(format!(
+        "a Disk System game needs its BIOS, {FDS_BIOS}, added beside it"
+    ))?;
     Ok(Cartridge::disk(image, sides, &bios))
 }
 
@@ -677,7 +702,9 @@ pub fn build(rom: &str, overscan: usize, region: Option<Region>) -> Result<CPU<N
     let path = Path::new(rom);
     let image = image(path).map_err(|e| format!("{rom}: {e}"))?;
     let cartridge = cartridge(&image, path).map_err(|e| format!("{rom}: {e}"))?;
-    let named = path.file_name().and_then(|name| Region::from_name(&name.to_string_lossy()));
+    let named = path
+        .file_name()
+        .and_then(|name| Region::from_name(&name.to_string_lossy()));
     let region = region.or(cartridge.region).or(named).unwrap_or_default();
     let mut nes = Nes::of(cartridge, region);
     if nes.cartridge.battery {
@@ -711,8 +738,16 @@ pub fn controls() {
     cpu.variant = Variant::Ricoh2A03;
     cpu.memory.overscan = 0;
     let (width, height) = seen(0);
-    let window = Window::new("Open Bus: controls", width, height, size(0, Region::Ntsc), false);
-    Host::new(cpu, Box::new(window), PathBuf::new()).only_controls().run();
+    let window = Window::new(
+        "Open Bus: controls",
+        width,
+        height,
+        size(0, Region::Ntsc),
+        false,
+    );
+    Host::new(cpu, Box::new(window), PathBuf::new())
+        .only_controls()
+        .run();
 }
 
 /// How big its picture's shown, `overscan` hidden: its dots and lines seen,

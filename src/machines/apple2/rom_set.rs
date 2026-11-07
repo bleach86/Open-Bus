@@ -10,9 +10,9 @@
 use super::iie;
 use crate::host::files;
 use crate::host::zip::{self, crc32};
-use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 
 /// The II+'s whole ROM, by the name it's given.
 pub const PLUS_ROM: &str = "Apple2_Plus.rom";
@@ -87,8 +87,12 @@ impl Sorted {
 
     pub fn add_of(&mut self, known: &[Rom], name: &str, bytes: &[u8]) -> bool {
         if name.to_lowercase().ends_with(".zip") {
-            let Ok(members) = zip::small_files(bytes, MOST) else { return false };
-            return members.iter().fold(false, |found, (_, member)| self.look_in(known, member) | found);
+            let Ok(members) = zip::small_files(bytes, MOST) else {
+                return false;
+            };
+            return members.iter().fold(false, |found, (_, member)| {
+                self.look_in(known, member) | found
+            });
         }
         self.look_in(known, bytes)
     }
@@ -120,7 +124,9 @@ impl Sorted {
     fn found(&mut self, is: Is, piece: &[u8]) {
         match is {
             Is::PlusChip(chip) => self.plus_chips[chip] = Some(piece.to_vec()),
-            Is::Named(name) if !self.roms.iter().any(|(known, _)| *known == name) => self.roms.push((name, piece.to_vec())),
+            Is::Named(name) if !self.roms.iter().any(|(known, _)| *known == name) => {
+                self.roms.push((name, piece.to_vec()))
+            }
             Is::Named(_) => {}
         }
     }
@@ -139,7 +145,11 @@ impl Sorted {
     /// The names of the ROMs found, a whole II+'s among them.
     pub fn names(&self) -> Vec<String> {
         let plus = self.plus_rom().map(|_| PLUS_ROM.to_string());
-        self.roms.iter().map(|(name, _)| name.to_string()).chain(plus).collect()
+        self.roms
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .chain(plus)
+            .collect()
     }
 
     /// The ROM of that name, if it's been found.
@@ -147,13 +157,23 @@ impl Sorted {
         if name == PLUS_ROM {
             return self.plus_rom();
         }
-        self.roms.iter().find(|(known, _)| *known == name).map(|(_, bytes)| bytes.clone())
+        self.roms
+            .iter()
+            .find(|(known, _)| *known == name)
+            .map(|(_, bytes)| bytes.clone())
     }
 }
 
 /// The file at `path`, unless it's too big to be ROMs.
 fn small_file(path: &Path) -> Option<Vec<u8>> {
-    let most = if path.extension().is_some_and(|kind| kind.eq_ignore_ascii_case("zip")) { MOST_ZIP } else { MOST };
+    let most = if path
+        .extension()
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("zip"))
+    {
+        MOST_ZIP
+    } else {
+        MOST
+    };
     files::size(path).filter(|&size| size as usize <= most)?;
     files::read(path).ok()
 }
@@ -183,7 +203,12 @@ pub fn scan(path: &Path) -> Sorted {
 /// and `told` a line for each file that had any, `held PATH`, for each ROM,
 /// `rom NAME`, and last, `chips COUNT`, of the II+'s.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn sort_of(known: &[Rom], paths: impl BufRead, out: &Path, told: &mut impl Write) -> io::Result<()> {
+pub fn sort_of(
+    known: &[Rom],
+    paths: impl BufRead,
+    out: &Path,
+    told: &mut impl Write,
+) -> io::Result<()> {
     let mut sorted = Sorted::new();
     for path in paths.lines() {
         let path = path?;

@@ -46,15 +46,30 @@ impl Volume {
             if image.len() < 64 || word(0x0C) != 1 {
                 return Err("a .2mg not of ProDOS's order".to_string());
             }
-            (word(0x18) as usize, word(0x1C) as usize, word(0x10) & 0x8000_0000 != 0)
+            (
+                word(0x18) as usize,
+                word(0x1C) as usize,
+                word(0x10) & 0x8000_0000 != 0,
+            )
         } else {
             (0, image.len(), false)
         };
-        let blocks = image.get(offset..offset + length).ok_or("its blocks past its end")?.to_vec();
+        let blocks = image
+            .get(offset..offset + length)
+            .ok_or("its blocks past its end")?
+            .to_vec();
         if blocks.is_empty() || blocks.len() % BLOCK != 0 || blocks.len() > 0xFFFF * BLOCK {
-            return Err(format!("{} bytes: not a volume of 512-byte blocks, up to 65,535", blocks.len()));
+            return Err(format!(
+                "{} bytes: not a volume of 512-byte blocks, up to 65,535",
+                blocks.len()
+            ));
         }
-        Ok(Volume { blocks, path: path.to_path_buf(), offset: offset as u64, write_protected: protected || read_only })
+        Ok(Volume {
+            blocks,
+            path: path.to_path_buf(),
+            offset: offset as u64,
+            write_protected: protected || read_only,
+        })
     }
 
     fn count(&self) -> u16 {
@@ -83,7 +98,15 @@ pub struct HardDisk {
 
 impl HardDisk {
     pub fn new() -> Self {
-        HardDisk { units: [None, None], command: 0, unit: 0, block: 0, error: 0, buffer: [0; BLOCK], at: 0 }
+        HardDisk {
+            units: [None, None],
+            command: 0,
+            unit: 0,
+            block: 0,
+            error: 0,
+            buffer: [0; BLOCK],
+            at: 0,
+        }
     }
 
     /// The firmware, at $Cn00 to $CnFF.
@@ -151,7 +174,8 @@ impl HardDisk {
             2 if volume.write_protected => WRITE_PROTECTED,
             2 => {
                 volume.blocks[at..at + BLOCK].copy_from_slice(&self.buffer);
-                let written = files::write_at(&volume.path, volume.offset + at as u64, &self.buffer);
+                let written =
+                    files::write_at(&volume.path, volume.offset + at as u64, &self.buffer);
                 match written {
                     Ok(()) => 0,
                     Err(e) => {

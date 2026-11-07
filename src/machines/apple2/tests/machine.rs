@@ -6,14 +6,16 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::cpu::CPU;
+    use crate::cpu::bus::Bus;
+    use crate::host::display::Joystick;
     use crate::host::machine::{Input, Machine};
     use crate::machines::apple2::disk2::Disk2;
     use crate::machines::apple2::language_card::LanguageCard;
-    use crate::machines::apple2::video::{self, Monitor, Source, LORES, Switches, HEIGHT, PICTURE_WIDTH, WIDTH};
+    use crate::machines::apple2::video::{
+        self, HEIGHT, LORES, Monitor, PICTURE_WIDTH, Source, Switches, WIDTH,
+    };
     use crate::machines::apple2::{Apple2, CLOCK_HZ, CYCLES_PER_FRAME, CYCLES_PER_LINE, VOLUME};
-    use crate::cpu::bus::Bus;
-    use crate::cpu::CPU;
-    use crate::host::display::Joystick;
     use std::path::Path;
 
     const BLACK: u32 = 0x000000;
@@ -45,16 +47,42 @@ mod tests {
         // Each column of each line seen, in its cycle (from 25, after the
         // 25 blanked): what the line is drawn from.
         for page2 in [false, true] {
-            let text = Switches { page2, ..Switches::default() };
-            let hires = Switches { graphics: true, hires: true, page2, ..Switches::default() };
-            let mixed = Switches { mixed: true, ..hires };
+            let text = Switches {
+                page2,
+                ..Switches::default()
+            };
+            let hires = Switches {
+                graphics: true,
+                hires: true,
+                page2,
+                ..Switches::default()
+            };
+            let mixed = Switches {
+                mixed: true,
+                ..hires
+            };
             for y in 0..HEIGHT {
                 for x in 0..40 {
-                    let (row, line) = (video::text_address(page2, y / 8) + x, video::hires_address(page2, y) + x);
-                    assert_eq!(video::scanner_address(text, y, 25 + x), row, "text, page2 {page2}, line {y}, column {x}");
-                    assert_eq!(video::scanner_address(hires, y, 25 + x), line, "high-res, page2 {page2}, line {y}, column {x}");
+                    let (row, line) = (
+                        video::text_address(page2, y / 8) + x,
+                        video::hires_address(page2, y) + x,
+                    );
+                    assert_eq!(
+                        video::scanner_address(text, y, 25 + x),
+                        row,
+                        "text, page2 {page2}, line {y}, column {x}"
+                    );
+                    assert_eq!(
+                        video::scanner_address(hires, y, 25 + x),
+                        line,
+                        "high-res, page2 {page2}, line {y}, column {x}"
+                    );
                     let mixed_want = if y < 160 { line } else { row };
-                    assert_eq!(video::scanner_address(mixed, y, 25 + x), mixed_want, "mixed, page2 {page2}, line {y}, column {x}");
+                    assert_eq!(
+                        video::scanner_address(mixed, y, 25 + x),
+                        mixed_want,
+                        "mixed, page2 {page2}, line {y}, column {x}"
+                    );
                 }
             }
         }
@@ -62,11 +90,21 @@ mod tests {
         // the counter's preset then $40 to $57, $1468 to $147F, the 24
         // before row 0's in the interleave. High-res isn't.
         let text = Switches::default();
-        let blanked: Vec<usize> = (0..25).map(|cycle| video::scanner_address(text, 0, cycle)).collect();
+        let blanked: Vec<usize> = (0..25)
+            .map(|cycle| video::scanner_address(text, 0, cycle))
+            .collect();
         let want: Vec<usize> = [0x1468].into_iter().chain(0x1468..=0x147F).collect();
         assert_eq!(blanked, want, "line 0, blanked");
-        let hires = Switches { graphics: true, hires: true, ..Switches::default() };
-        assert_eq!(video::scanner_address(hires, 0, 1), 0x2068, "high-res, line 0, blanked");
+        let hires = Switches {
+            graphics: true,
+            hires: true,
+            ..Switches::default()
+        };
+        assert_eq!(
+            video::scanner_address(hires, 0, 1),
+            0x2068,
+            "high-res, line 0, blanked"
+        );
     }
 
     #[test]
@@ -82,11 +120,25 @@ mod tests {
         for _ in 0..26 {
             apple.tick();
         }
-        for addr in [0xC010, 0xC020, 0xC030, 0xC040, 0xC070, 0xC080, 0xC0E1, 0xC0F0, 0xC100, 0xC7FF, 0xCFFF] {
-            assert_eq!(apple.read(addr), ram[0x0400], "${addr:04X}: not the floating bus, $0400's");
+        for addr in [
+            0xC010, 0xC020, 0xC030, 0xC040, 0xC070, 0xC080, 0xC0E1, 0xC0F0, 0xC100, 0xC7FF, 0xCFFF,
+        ] {
+            assert_eq!(
+                apple.read(addr),
+                ram[0x0400],
+                "${addr:04X}: not the floating bus, $0400's"
+            );
         }
-        assert_eq!(apple.read(0xC061), ram[0x0400] & 0x7F, "the button up: bit 7 clear, the rest floating");
-        assert_eq!(apple.read(0xC0EC), 0, "the Disk II's data register, at an even address");
+        assert_eq!(
+            apple.read(0xC061),
+            ram[0x0400] & 0x7F,
+            "the button up: bit 7 clear, the rest floating"
+        );
+        assert_eq!(
+            apple.read(0xC0EC),
+            0,
+            "the Disk II's data register, at an even address"
+        );
         assert_eq!(apple.read(0xC000) & 0x7F, 0, "the keyboard, its own");
         apple.tick();
         assert_eq!(apple.read(0xC0F0), ram[0x0401], "column 1: $0401's");
@@ -129,7 +181,12 @@ mod tests {
     fn the_text_screens_rows_are_interleaved() {
         let mut apple = machine();
         // Rows 0, 1, 8 and 23: $0400, $0480, $0428, $07D0.
-        for (addr, c) in [(0x0400, b'A'), (0x0480, b'B'), (0x0428, b'C'), (0x07D0, b'D')] {
+        for (addr, c) in [
+            (0x0400, b'A'),
+            (0x0480, b'B'),
+            (0x0428, b'C'),
+            (0x07D0, b'D'),
+        ] {
             apple.write(addr, c | 0x80);
         }
         apple.write(0x0401, 0x01); // an inverse A
@@ -201,9 +258,15 @@ mod tests {
         cpu.execute(CYCLES_PER_FRAME);
         assert_eq!(cpu.pc, pc, "the CPU ran, held");
         let card = cpu.memory.language_card.as_ref().unwrap();
-        assert!(!card.read_ram && card.write_enabled && card.bank2, "the language card not reset");
+        assert!(
+            !card.read_ram && card.write_enabled && card.bank2,
+            "the language card not reset"
+        );
         let drive = cpu.memory.disk2.as_ref().unwrap();
-        assert!(!drive.motor && drive.spinning(), "the motor not switched off, or not running on");
+        assert!(
+            !drive.motor && drive.spinning(),
+            "the motor not switched off, or not running on"
+        );
         assert_eq!(&cpu.memory.text()[0][..5], " ELLO");
 
         // Let go: from the reset vector, HELLO again.
@@ -215,7 +278,17 @@ mod tests {
     /// Line `y` of the picture, drawn from `ram` by `switches`.
     fn picture_line(ram: &[u8], switches: Switches, y: usize) -> Vec<u32> {
         let mut out = vec![0x123456; WIDTH];
-        video::line(&Source { main: ram, aux: &[], characters: None }, switches, false, y, &mut out);
+        video::line(
+            &Source {
+                main: ram,
+                aux: &[],
+                characters: None,
+            },
+            switches,
+            false,
+            y,
+            &mut out,
+        );
         out
     }
 
@@ -233,7 +306,10 @@ mod tests {
         assert_eq!(&dots[7..], &a.map(|on| !on), "inverse A's top line");
         // Its middle line, #####, and its 8th, blank.
         let middle = picture_line(&ram, text, 4);
-        assert_eq!(&middle[..7], &[BLACK, WHITE, WHITE, WHITE, WHITE, WHITE, BLACK]);
+        assert_eq!(
+            &middle[..7],
+            &[BLACK, WHITE, WHITE, WHITE, WHITE, WHITE, BLACK]
+        );
         assert!(picture_line(&ram, text, 7)[..7].iter().all(|&p| p == BLACK));
     }
 
@@ -241,16 +317,39 @@ mod tests {
     fn a_low_res_block_is_two_colours() {
         let mut ram = vec![0; 0xC000];
         ram[0x0400] = 0xD2; // dark blue above, yellow below
-        let lores = Switches { graphics: true, ..Switches::default() };
-        assert!(picture_line(&ram, lores, 0)[..7].iter().all(|&p| p == LORES[2]));
-        assert!(picture_line(&ram, lores, 3)[..7].iter().all(|&p| p == LORES[2]));
-        assert!(picture_line(&ram, lores, 4)[..7].iter().all(|&p| p == LORES[13]));
-        assert_eq!(picture_line(&ram, lores, 0)[7], LORES[0], "the next block, black");
+        let lores = Switches {
+            graphics: true,
+            ..Switches::default()
+        };
+        assert!(
+            picture_line(&ram, lores, 0)[..7]
+                .iter()
+                .all(|&p| p == LORES[2])
+        );
+        assert!(
+            picture_line(&ram, lores, 3)[..7]
+                .iter()
+                .all(|&p| p == LORES[2])
+        );
+        assert!(
+            picture_line(&ram, lores, 4)[..7]
+                .iter()
+                .all(|&p| p == LORES[13])
+        );
+        assert_eq!(
+            picture_line(&ram, lores, 0)[7],
+            LORES[0],
+            "the next block, black"
+        );
     }
 
     #[test]
     fn high_res_dots_are_coloured_by_their_column() {
-        let hires = Switches { graphics: true, hires: true, ..Switches::default() };
+        let hires = Switches {
+            graphics: true,
+            hires: true,
+            ..Switches::default()
+        };
         let line = |byte: u8| {
             let mut ram = vec![0; 0xC000];
             ram[0x2000] = byte;
@@ -259,9 +358,17 @@ mod tests {
         assert_eq!(line(0x01), [LORES[3], BLACK, BLACK], "a dot at 0: violet");
         assert_eq!(line(0x02), [BLACK, LORES[12], BLACK], "at 1: green");
         assert_eq!(line(0x81), [LORES[6], BLACK, BLACK], "at 0, shifted: blue");
-        assert_eq!(line(0x82), [BLACK, LORES[9], BLACK], "at 1, shifted: orange");
+        assert_eq!(
+            line(0x82),
+            [BLACK, LORES[9], BLACK],
+            "at 1, shifted: orange"
+        );
         assert_eq!(line(0x03), [WHITE, WHITE, BLACK], "two side by side: white");
-        assert_eq!(line(0x05), [LORES[3]; 3], "a gap between two at 0 and 2: filled");
+        assert_eq!(
+            line(0x05),
+            [LORES[3]; 3],
+            "a gap between two at 0 and 2: filled"
+        );
     }
 
     #[test]
@@ -271,7 +378,11 @@ mod tests {
         for (n, y) in [0usize, 1, 8, 64, 191].iter().enumerate() {
             ram[video::hires_address(false, *y) + n] = 0x03;
         }
-        let hires = Switches { graphics: true, hires: true, ..Switches::default() };
+        let hires = Switches {
+            graphics: true,
+            hires: true,
+            ..Switches::default()
+        };
         for (n, y) in [0usize, 1, 8, 64, 191].iter().enumerate() {
             assert_eq!(picture_line(&ram, hires, *y)[n * 7], WHITE, "line {y}");
         }
@@ -283,10 +394,26 @@ mod tests {
         let mut ram = vec![0; 0xC000];
         ram[0x0400 + 39] = 0xFF; // low-res white, at the top's last block
         ram[video::text_address(false, 20)] = 0x20; // an inverse space, row 20
-        let mixed = Switches { graphics: true, mixed: true, ..Switches::default() };
-        assert_eq!(picture_line(&ram, mixed, 0)[WIDTH - 1], WHITE, "low-res above");
-        assert_eq!(picture_line(&ram, mixed, 159)[0], BLACK, "low-res black at 159");
-        assert_eq!(picture_line(&ram, mixed, 160)[0], WHITE, "text at 160: the inverse space");
+        let mixed = Switches {
+            graphics: true,
+            mixed: true,
+            ..Switches::default()
+        };
+        assert_eq!(
+            picture_line(&ram, mixed, 0)[WIDTH - 1],
+            WHITE,
+            "low-res above"
+        );
+        assert_eq!(
+            picture_line(&ram, mixed, 159)[0],
+            BLACK,
+            "low-res black at 159"
+        );
+        assert_eq!(
+            picture_line(&ram, mixed, 160)[0],
+            WHITE,
+            "text at 160: the inverse space"
+        );
     }
 
     #[test]
@@ -315,29 +442,63 @@ mod tests {
         let picture = apple.picture();
         assert_eq!((picture.width, picture.height), (PICTURE_WIDTH, HEIGHT));
         // Each of a 40 column mode's dots two of the picture's.
-        assert!(picture.pixels.chunks(2).all(|pair| pair[0] == pair[1]), "a dot not shown twice");
+        assert!(
+            picture.pixels.chunks(2).all(|pair| pair[0] == pair[1]),
+            "a dot not shown twice"
+        );
         let at = |x: usize, y: usize| picture.pixels[y * PICTURE_WIDTH + 2 * x];
         assert_eq!(at(0, 0), WHITE, "line 0: text, the inverse space");
         assert_eq!(at(0, 99), BLACK, "line 99: text, a space");
-        assert_eq!(at(0, 128), LORES[0x0], "line 128: low-res, row 16's top: black");
-        assert_eq!(at(0, 132), LORES[0x2], "line 132: row 16's bottom: the $20's dark blue");
-        assert_eq!(at(7, 132), LORES[0xA], "line 132: the next block's, $A0's, grey");
+        assert_eq!(
+            at(0, 128),
+            LORES[0x0],
+            "line 128: low-res, row 16's top: black"
+        );
+        assert_eq!(
+            at(0, 132),
+            LORES[0x2],
+            "line 132: row 16's bottom: the $20's dark blue"
+        );
+        assert_eq!(
+            at(7, 132),
+            LORES[0xA],
+            "line 132: the next block's, $A0's, grey"
+        );
     }
 
     #[test]
     fn the_paddles_time_the_sticks_position() {
         let mut apple = machine();
         // Left and down: paddle 0 at 0, paddle 1 at 255.
-        let stick = Joystick { x: -1.0, y: 1.0, buttons: [false; 3] };
-        apple.input(Input { joystick: stick, ..Input::default() });
+        let stick = Joystick {
+            x: -1.0,
+            y: 1.0,
+            buttons: [false; 3],
+        };
+        apple.input(Input {
+            joystick: stick,
+            ..Input::default()
+        });
         apple.read(0xC070);
-        assert_eq!(apple.read(0xC064) & 0x80, 0, "paddle 0, at 0: still counting");
+        assert_eq!(
+            apple.read(0xC064) & 0x80,
+            0,
+            "paddle 0, at 0: still counting"
+        );
         for _ in 0..255 * 11 - 1 {
             apple.tick();
         }
-        assert_eq!(apple.read(0xC065) & 0x80, 0x80, "paddle 1, at 255: out before 255 steps");
+        assert_eq!(
+            apple.read(0xC065) & 0x80,
+            0x80,
+            "paddle 1, at 255: out before 255 steps"
+        );
         apple.tick();
-        assert_eq!(apple.read(0xC065) & 0x80, 0, "paddle 1: still counting after 255 steps");
+        assert_eq!(
+            apple.read(0xC065) & 0x80,
+            0,
+            "paddle 1: still counting after 255 steps"
+        );
 
         // Centred: 128, started again by a write.
         apple.input(Input::default());
@@ -345,17 +506,31 @@ mod tests {
         for _ in 0..128 * 11 - 1 {
             apple.tick();
         }
-        assert_eq!(apple.read(0xC064) & 0x80, 0x80, "centred: out before 128 steps");
+        assert_eq!(
+            apple.read(0xC064) & 0x80,
+            0x80,
+            "centred: out before 128 steps"
+        );
         apple.tick();
-        assert_eq!(apple.read(0xC064) & 0x80, 0, "centred: still counting after 128 steps");
+        assert_eq!(
+            apple.read(0xC064) & 0x80,
+            0,
+            "centred: still counting after 128 steps"
+        );
     }
 
     #[test]
     fn the_buttons_are_bit_7() {
         let mut apple = machine();
         assert_eq!(apple.read(0xC061) & 0x80, 0, "a button without a joystick");
-        let stick = Joystick { buttons: [true, false, true], ..Joystick::CENTRED };
-        apple.input(Input { joystick: stick, ..Input::default() });
+        let stick = Joystick {
+            buttons: [true, false, true],
+            ..Joystick::CENTRED
+        };
+        apple.input(Input {
+            joystick: stick,
+            ..Input::default()
+        });
         assert_eq!(apple.read(0xC061) & 0x80, 0x80, "button 0");
         assert_eq!(apple.read(0xC062) & 0x80, 0, "button 1");
         assert_eq!(apple.read(0xC063) & 0x80, 0x80, "button 2");
@@ -373,7 +548,11 @@ mod tests {
             }
         }
         // In stereo, a left sample then a right: the speaker in both.
-        let (left, right): (Vec<f32>, Vec<f32>) = apple.sound().chunks(2).map(|frame| (frame[0], frame[1])).unzip();
+        let (left, right): (Vec<f32>, Vec<f32>) = apple
+            .sound()
+            .chunks(2)
+            .map(|frame| (frame[0], frame[1]))
+            .unzip();
         assert_eq!(left, right, "the speaker not the same in both channels");
         left
     }
@@ -390,14 +569,23 @@ mod tests {
         // Every 1,023 cycles: a square wave of 500 Hz, its level crossing
         // the middle a thousand times a second.
         let samples = sound(1023);
-        let crossings = samples.windows(2).filter(|w| (w[0] < 0.0) != (w[1] < 0.0)).count();
+        let crossings = samples
+            .windows(2)
+            .filter(|w| (w[0] < 0.0) != (w[1] < 0.0))
+            .count();
         let seconds = 60.0 * CYCLES_PER_FRAME as f32 / CLOCK_HZ as f32;
         let per_second = crossings as f32 / seconds;
-        assert!((990.0..=1010.0).contains(&per_second), "{per_second} crossings a second");
+        assert!(
+            (990.0..=1010.0).contains(&per_second),
+            "{per_second} crossings a second"
+        );
         // Its swing nearly the speaker's volume either way, the settling
         // taking a little of it in a half wave.
         let loud = VOLUME * 2.0 / 3.0;
-        assert!(samples.iter().any(|&s| s > loud) && samples.iter().any(|&s| s < -loud), "too quiet");
+        assert!(
+            samples.iter().any(|&s| s > loud) && samples.iter().any(|&s| s < -loud),
+            "too quiet"
+        );
     }
 
     #[test]
@@ -411,14 +599,33 @@ mod tests {
             apple.tick();
         }
         let samples = apple.sound();
-        assert!(samples[0].abs() > VOLUME, "no click: the cone in to out, twice the volume");
-        assert!(samples[samples.len() - 100..].iter().all(|s| s.abs() < 0.001), "still sounding");
+        assert!(
+            samples[0].abs() > VOLUME,
+            "no click: the cone in to out, twice the volume"
+        );
+        assert!(
+            samples[samples.len() - 100..]
+                .iter()
+                .all(|s| s.abs() < 0.001),
+            "still sounding"
+        );
     }
 
     /// Line `y` of the picture as shown on `monitor`, 560 dots.
     fn shown(ram: &[u8], switches: Switches, monitor: Monitor, y: usize) -> Vec<u32> {
         let mut out = vec![0x123456; PICTURE_WIDTH];
-        video::picture_line(&Source { main: ram, aux: &[], characters: None }, switches, monitor, false, y, &mut out);
+        video::picture_line(
+            &Source {
+                main: ram,
+                aux: &[],
+                characters: None,
+            },
+            switches,
+            monitor,
+            false,
+            y,
+            &mut out,
+        );
         out
     }
 
@@ -432,32 +639,66 @@ mod tests {
         ram[0x2001] = 0x81; // shifted: 15 and 16, 14 held (13's, off)
         ram[0x2002] = 0x40; // dot 6: 40 and 41
         ram[0x2003] = 0x81; // shifted: 42 held (41's, on), 43 and 44
-        let hires = Switches { graphics: true, hires: true, ..Switches::default() };
+        let hires = Switches {
+            graphics: true,
+            hires: true,
+            ..Switches::default()
+        };
         let line = shown(&ram, hires, Monitor::Green, 0);
         let lit: Vec<usize> = (0..60).filter(|&x| line[x] == green).collect();
-        assert_eq!(lit, [0, 1, 15, 16, 40, 41, 42, 43, 44], "high-res's dots lit");
-        assert!(line.iter().all(|&dot| dot == green || dot == BLACK), "a colour on a monochrome monitor");
+        assert_eq!(
+            lit,
+            [0, 1, 15, 16, 40, 41, 42, 43, 44],
+            "high-res's dots lit"
+        );
+        assert!(
+            line.iter().all(|&dot| dot == green || dot == BLACK),
+            "a colour on a monochrome monitor"
+        );
 
         // Low-res: a block its colour's bits, over and over, each dot's
         // place in the cycle its bit: 5, %0101, dots 0 and 2 of each 4.
         ram[0x0400] = 0x05;
-        let lores = Switches { graphics: true, ..Switches::default() };
+        let lores = Switches {
+            graphics: true,
+            ..Switches::default()
+        };
         let line = shown(&ram, lores, Monitor::Amber, 0);
         let lit: Vec<bool> = line[..14].iter().map(|&dot| dot == 0xFFB000).collect();
-        assert_eq!(lit, [true, false, true, false, true, false, true, false, true, false, true, false, true, false]);
+        assert_eq!(
+            lit,
+            [
+                true, false, true, false, true, false, true, false, true, false, true, false, true,
+                false
+            ]
+        );
 
         // Text, in the phosphor; and colour as it was.
         ram[0x0400] = 0x20; // an inverse space: all lit
         let text = Switches::default();
-        assert!(shown(&ram, text, Monitor::Green, 0)[..14].iter().all(|&dot| dot == green), "text not green");
+        assert!(
+            shown(&ram, text, Monitor::Green, 0)[..14]
+                .iter()
+                .all(|&dot| dot == green),
+            "text not green"
+        );
         ram[0x2000] = 0x01; // a dot alone: violet, in colour
-        assert_eq!(shown(&ram, hires, Monitor::Colour, 0)[0], LORES[3], "colour not as it was");
+        assert_eq!(
+            shown(&ram, hires, Monitor::Colour, 0)[0],
+            LORES[3],
+            "colour not as it was"
+        );
     }
 
     #[test]
     fn f8_switches_the_monitor() {
         let mut apple = machine();
-        for want in [Monitor::White, Monitor::Green, Monitor::Amber, Monitor::Colour] {
+        for want in [
+            Monitor::White,
+            Monitor::Green,
+            Monitor::Amber,
+            Monitor::Colour,
+        ] {
             let notice = apple.function_key(8).expect("no notice of it");
             assert_eq!(apple.monitor, want, "F8");
             assert_eq!(notice, format!("Monitor: {}", want.name()));

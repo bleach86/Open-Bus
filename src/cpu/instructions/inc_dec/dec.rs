@@ -1,5 +1,5 @@
-use crate::cpu::bus::Bus;
 use crate::cpu::CPU;
+use crate::cpu::bus::Bus;
 
 impl<B: Bus> CPU<B> {
     fn dec_set_flags(&mut self, value: u8) {
@@ -14,7 +14,6 @@ impl<B: Bus> CPU<B> {
         value = value.wrapping_sub(1);
         self.write_byte(addr, value);
 
-
         self.dec_set_flags(value);
     }
 
@@ -27,7 +26,6 @@ impl<B: Bus> CPU<B> {
         value = value.wrapping_sub(1);
         self.write_byte(addr, value);
 
-
         self.dec_set_flags(value);
     }
 
@@ -37,7 +35,6 @@ impl<B: Bus> CPU<B> {
         self.modify_cycle(addr, value);
         value = value.wrapping_sub(1);
         self.write_byte(addr, value);
-
 
         self.dec_set_flags(value);
     }
@@ -50,7 +47,6 @@ impl<B: Bus> CPU<B> {
         self.modify_cycle(addr, value);
         value = value.wrapping_sub(1);
         self.write_byte(addr, value);
-
 
         self.dec_set_flags(value);
     }

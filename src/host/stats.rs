@@ -54,7 +54,11 @@ impl Stats {
         let target = clock_hz as f64 / self.cycles_per_frame.max(1) as f64;
         vec![
             format!("FPS {:.1} OF {:.1}", self.frames_per_second, target),
-            format!("CPU {:.3} MHZ {:.0}%", self.cycles_per_second / 1e6, 100.0 * self.cycles_per_second / clock_hz as f64),
+            format!(
+                "CPU {:.3} MHZ {:.0}%",
+                self.cycles_per_second / 1e6,
+                100.0 * self.cycles_per_second / clock_hz as f64
+            ),
             format!("HOST LOAD {:.0}%", self.load * 100.0),
             format!("CYCLES A FRAME {}", self.cycles_per_frame),
         ]

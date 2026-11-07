@@ -289,7 +289,9 @@ impl Ppu {
             0x0000..=0x1FFF => cart.chr_read(addr),
             0x2000..=0x3EFF => match cart.nametable_read(addr) {
                 Some(byte) => byte,
-                None => self.nametables[cart.nametable_page(addr) * 0x400 + (addr as usize & 0x3FF)],
+                None => {
+                    self.nametables[cart.nametable_page(addr) * 0x400 + (addr as usize & 0x3FF)]
+                }
             },
             _ => self.palette[palette_index(addr)],
         }
@@ -304,7 +306,8 @@ impl Ppu {
             0x0000..=0x1FFF => cart.chr_write(addr, value),
             0x2000..=0x3EFF => {
                 if !cart.nametable_write(addr, value) {
-                    self.nametables[cart.nametable_page(addr) * 0x400 + (addr as usize & 0x3FF)] = value;
+                    self.nametables[cart.nametable_page(addr) * 0x400 + (addr as usize & 0x3FF)] =
+                        value;
                 }
             }
             _ => self.palette[palette_index(addr)] = value & 0x3F,
@@ -319,7 +322,8 @@ impl Ppu {
                 // 2 dots on: they've gone a dot before vblank's seen to.
                 let sprites_gone = self.line == self.pre_render() && self.dot == 1;
                 let set = |flag: bool, at: u64| flag && self.dots > at;
-                let sprites = (set(self.sprite_zero_hit, self.hit_at) as u8) << 6 | (set(self.overflow, self.overflowed_at) as u8) << 5;
+                let sprites = (set(self.sprite_zero_hit, self.hit_at) as u8) << 6
+                    | (set(self.overflow, self.overflowed_at) as u8) << 5;
                 let flags = (self.vblank as u8) << 7 | if sprites_gone { 0 } else { sprites };
                 self.vblank = false;
                 if self.line == VBLANK && self.dot == 1 {
@@ -393,7 +397,9 @@ impl Ppu {
                     self.t = (self.t & !0x001F) | (value as u16 >> 3);
                     self.fine_x = value & 7;
                 } else {
-                    self.t = (self.t & !0x73E0) | ((value as u16 & 7) << 12) | ((value as u16 & 0xF8) << 2);
+                    self.t = (self.t & !0x73E0)
+                        | ((value as u16 & 7) << 12)
+                        | ((value as u16 & 0xF8) << 2);
                 }
                 self.w = !self.w;
             }
@@ -627,7 +633,9 @@ impl Ppu {
             return;
         }
         match dot {
-            280..=304 if self.line == self.pre_render() => self.v = (self.v & !0x7BE0) | (self.t & 0x7BE0),
+            280..=304 if self.line == self.pre_render() => {
+                self.v = (self.v & !0x7BE0) | (self.t & 0x7BE0)
+            }
             // One more of the nametable at the end of a line, and the
             // next line's own at its start, of the same address, its tile
             // the one fetched ahead. On a frame a dot short there's still
@@ -759,7 +767,13 @@ impl Ppu {
             self.secondary[secondary] = byte;
         }
         match self.sprite_byte {
-            0 if !on_line => self.oam_addr = if full { next_sprite_too } else { addr.wrapping_add(4) & 0xFC },
+            0 if !on_line => {
+                self.oam_addr = if full {
+                    next_sprite_too
+                } else {
+                    addr.wrapping_add(4) & 0xFC
+                }
+            }
             0 | 1 | 2 => {
                 if self.sprite_byte == 0 {
                     if full && !self.overflow {
@@ -819,7 +833,12 @@ impl Ppu {
         self.sprites_laid_out = false;
         let sprite = &mut self.sprites[slot];
         if step == 4 {
-            *sprite = Sprite { x, low: plane, high: 0, attributes };
+            *sprite = Sprite {
+                x,
+                low: plane,
+                high: 0,
+                attributes,
+            };
         } else {
             sprite.high = plane;
         }
@@ -851,7 +870,11 @@ impl Ppu {
     fn pixel(&mut self) {
         let x = self.dot as usize - 1;
         let colour = if !self.rendering() {
-            let addr = if self.v & 0x3F00 == 0x3F00 { self.v } else { 0x3F00 };
+            let addr = if self.v & 0x3F00 == 0x3F00 {
+                self.v
+            } else {
+                0x3F00
+            };
             self.palette[palette_index(addr)]
         } else {
             let (background, palette) = self.background_dot(x);
@@ -863,7 +886,9 @@ impl Ppu {
                 }
             }
             let index = match sprite {
-                Some((_, colour, sprite_palette, behind)) if background == 0 || !behind => 0x10 | sprite_palette << 2 | colour,
+                Some((_, colour, sprite_palette, behind)) if background == 0 || !behind => {
+                    0x10 | sprite_palette << 2 | colour
+                }
                 _ if background != 0 => palette << 2 | background,
                 _ => 0,
             };
@@ -872,7 +897,11 @@ impl Ppu {
         let grey = if self.mask & 0x01 != 0 { 0x30 } else { 0x3F };
         let emphasis = (self.mask as u16 >> 5) << 6;
         let border = self.region == Region::Pal && (self.line == 0 || !(2..WIDTH - 2).contains(&x));
-        self.frame[self.line as usize * WIDTH + x] = if border { BORDER } else { (colour & grey) as u16 | emphasis };
+        self.frame[self.line as usize * WIDTH + x] = if border {
+            BORDER
+        } else {
+            (colour & grey) as u16 | emphasis
+        };
     }
 
     /// The background's dot at `x`: its colour, 0 to 3, and its palette;
@@ -883,7 +912,10 @@ impl Ppu {
         }
         let bit = 15 - self.fine_x as u16;
         let pick = |shift: u16| ((shift >> bit) & 1) as u8;
-        (pick(self.shift_high) << 1 | pick(self.shift_low), pick(self.shift_attribute_high) << 1 | pick(self.shift_attribute_low))
+        (
+            pick(self.shift_high) << 1 | pick(self.shift_low),
+            pick(self.shift_attribute_high) << 1 | pick(self.shift_attribute_low),
+        )
     }
 
     /// The first sprite's dot at `x` that isn't clear: whether it's sprite
@@ -907,7 +939,8 @@ impl Ppu {
         self.sprite_dots.resize(WIDTH, 0);
         for (slot, sprite) in self.sprites[..self.sprite_count].iter().enumerate() {
             let zero = slot == 0 && self.zero_on_line;
-            let flags = (sprite.attributes & 3) << 2 | (sprite.attributes & 0x20) >> 1 | (zero as u8) << 5;
+            let flags =
+                (sprite.attributes & 3) << 2 | (sprite.attributes & 0x20) >> 1 | (zero as u8) << 5;
             for along in 0..8.min(WIDTH - sprite.x as usize) {
                 let bit = 7 - along;
                 let colour = ((sprite.high >> bit) & 1) << 1 | ((sprite.low >> bit) & 1);
@@ -925,5 +958,9 @@ impl Ppu {
 /// entries, $3F10, $3F14, $3F18 and $3F1C, the background's.
 fn palette_index(addr: u16) -> usize {
     let index = addr as usize & 0x1F;
-    if index & 0x13 == 0x10 { index & 0x0F } else { index }
+    if index & 0x13 == 0x10 {
+        index & 0x0F
+    } else {
+        index
+    }
 }

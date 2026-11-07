@@ -114,7 +114,11 @@ pub struct Joystick {
 }
 
 impl Joystick {
-    pub const CENTRED: Joystick = Joystick { x: 0.0, y: 0.0, buttons: [false; 3] };
+    pub const CENTRED: Joystick = Joystick {
+        x: 0.0,
+        y: 0.0,
+        buttons: [false; 3],
+    };
 }
 
 /// A gamepad as a console has it: its D-pad, its A and B, its Select and

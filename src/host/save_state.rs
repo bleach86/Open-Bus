@@ -72,13 +72,20 @@ pub mod bytes {
     use serde::de::Error;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    pub fn serialize<S: Serializer, const N: usize>(bytes: &[u8; N], serializer: S) -> Result<S::Ok, S::Error> {
+    pub fn serialize<S: Serializer, const N: usize>(
+        bytes: &[u8; N],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
         bytes[..].serialize(serializer)
     }
 
-    pub fn deserialize<'de, D: Deserializer<'de>, const N: usize>(deserializer: D) -> Result<[u8; N], D::Error> {
+    pub fn deserialize<'de, D: Deserializer<'de>, const N: usize>(
+        deserializer: D,
+    ) -> Result<[u8; N], D::Error> {
         let bytes = Vec::<u8>::deserialize(deserializer)?;
         let len = bytes.len();
-        bytes.try_into().map_err(|_| D::Error::custom(format!("{len} bytes, not {N}")))
+        bytes
+            .try_into()
+            .map_err(|_| D::Error::custom(format!("{len} bytes, not {N}")))
     }
 }

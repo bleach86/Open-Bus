@@ -68,7 +68,10 @@ mod tests {
         assert!(sides_of(&[0; 1000]).is_none(), "the wrong size");
         assert!(sides_of(&[]).is_none());
         let cartridge = [b"NES\x1A".to_vec(), vec![0; SIDE - 4]].concat();
-        assert!(sides_of(&cartridge).is_none(), "an iNES file that happens to fit");
+        assert!(
+            sides_of(&cartridge).is_none(),
+            "an iNES file that happens to fit"
+        );
     }
 
     #[test]
@@ -129,14 +132,22 @@ mod tests {
     #[test]
     fn a_disk_changing_leaves_the_drive_empty_a_while_then_the_next_side_is_in() {
         let mut cartridge = drive(&[side(&[]), side(&[])]);
-        assert_eq!(cartridge.register_read(0x4032, 0) & 1, 0, "the first side's in");
+        assert_eq!(
+            cartridge.register_read(0x4032, 0) & 1,
+            0,
+            "the first side's in"
+        );
         assert_eq!(cartridge.change_disk().as_deref(), Some("Disk 1 side B"));
         assert_eq!(cartridge.register_read(0x4032, 0) & 1, 1, "out at once");
         for _ in 0..CHANGE_CYCLES {
             cartridge.cycle();
         }
         assert_eq!(cartridge.register_read(0x4032, 0) & 1, 0, "in again");
-        assert_eq!(cartridge.change_disk().as_deref(), Some("Disk 1 side A"), "and round again");
+        assert_eq!(
+            cartridge.change_disk().as_deref(),
+            Some("Disk 1 side A"),
+            "and round again"
+        );
     }
 
     #[test]
@@ -177,7 +188,11 @@ mod tests {
         assert_eq!(cartridge.register_read(0x4033, 0x41), 0x41, "open bus");
         cartridge.cpu_write(0x4026, 0x12, 0);
         cartridge.cpu_write(0x4023, 1, 0);
-        assert_eq!(cartridge.register_read(0x4033, 0), 0, "that write went nowhere");
+        assert_eq!(
+            cartridge.register_read(0x4033, 0),
+            0,
+            "that write went nowhere"
+        );
     }
 
     #[test]

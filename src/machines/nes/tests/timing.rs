@@ -58,14 +58,28 @@ mod tests {
         for cycle in 1..=1000 {
             assert_eq!(Region::Ntsc.dots(cycle), 3);
         }
-        assert_eq!((1..=5000).map(|cycle| Region::Pal.dots(cycle)).sum::<u64>(), 16000);
+        assert_eq!(
+            (1..=5000).map(|cycle| Region::Pal.dots(cycle)).sum::<u64>(),
+            16000
+        );
     }
 
     #[test]
     fn they_run_at_their_own_speeds() {
-        assert_eq!((Region::Ntsc.clock_hz(), Region::Pal.clock_hz()), (CLOCK_HZ, PAL_CLOCK_HZ));
-        assert!((Region::Ntsc.frames_per_second() - 60.0988).abs() < 0.001, "{}", Region::Ntsc.frames_per_second());
-        assert!((Region::Pal.frames_per_second() - 50.007).abs() < 0.001, "{}", Region::Pal.frames_per_second());
+        assert_eq!(
+            (Region::Ntsc.clock_hz(), Region::Pal.clock_hz()),
+            (CLOCK_HZ, PAL_CLOCK_HZ)
+        );
+        assert!(
+            (Region::Ntsc.frames_per_second() - 60.0988).abs() < 0.001,
+            "{}",
+            Region::Ntsc.frames_per_second()
+        );
+        assert!(
+            (Region::Pal.frames_per_second() - 50.007).abs() < 0.001,
+            "{}",
+            Region::Pal.frames_per_second()
+        );
     }
 
     /// The line the vertical blank starts on, and the frame's last.
@@ -122,13 +136,32 @@ mod tests {
 
     #[test]
     fn a_files_name_says_its_region() {
-        for name in ["Aladdin (Europe).zip", "Elite (Europe) (En,Fr,De).zip", "Game (Australia).nes", "Spiel (Germany).zip", "Game (E).nes", "Game (PAL).nes", "Rod Land (Europe) (Rev A).zip"] {
+        for name in [
+            "Aladdin (Europe).zip",
+            "Elite (Europe) (En,Fr,De).zip",
+            "Game (Australia).nes",
+            "Spiel (Germany).zip",
+            "Game (E).nes",
+            "Game (PAL).nes",
+            "Rod Land (Europe) (Rev A).zip",
+        ] {
             assert_eq!(Region::from_name(name), Some(Region::Pal), "{name}");
         }
-        for name in ["Zelda (USA).zip", "Tetris (USA, Europe).zip", "Game (Japan, Europe).zip", "Game (World).zip", "Game (U).nes"] {
+        for name in [
+            "Zelda (USA).zip",
+            "Tetris (USA, Europe).zip",
+            "Game (Japan, Europe).zip",
+            "Game (World).zip",
+            "Game (U).nes",
+        ] {
             assert_eq!(Region::from_name(name), Some(Region::Ntsc), "{name}");
         }
-        for name in ["Homebrew.nes", "Game (Unl).zip", "Game (En,Fr).nes", "Bible Adventures (v1.4).zip"] {
+        for name in [
+            "Homebrew.nes",
+            "Game (Unl).zip",
+            "Game (En,Fr).nes",
+            "Bible Adventures (v1.4).zip",
+        ] {
             assert_eq!(Region::from_name(name), None, "{name}");
         }
     }
@@ -140,7 +173,12 @@ mod tests {
         assert_eq!(region(&[(9, 1)]), Some(Region::Pal), "flags 9");
         assert_eq!(region(&[(10, 2)]), Some(Region::Pal), "flags 10");
         assert_eq!(region(&[(9, 1), (15, b'!')]), None, "a ripper's junk");
-        for (byte, said) in [(0, Some(Region::Ntsc)), (1, Some(Region::Pal)), (2, None), (3, None)] {
+        for (byte, said) in [
+            (0, Some(Region::Ntsc)),
+            (1, Some(Region::Pal)),
+            (2, None),
+            (3, None),
+        ] {
             assert_eq!(region(&[(7, 0x08), (12, byte)]), said, "NES 2.0, {byte}");
         }
     }
@@ -182,7 +220,10 @@ mod tests {
     fn a_state_keeps_to_its_region() {
         let nes = |region| Nes::of(Cartridge::new(&image(&[])).unwrap(), region);
         let (ntsc, pal) = (nes(Region::Ntsc).identity(), nes(Region::Pal).identity());
-        assert!(ntsc.starts_with("NES, ROMs ") && ntsc.len() == "NES, ROMs 12345678".len(), "an NTSC game's old states refused: {ntsc}");
+        assert!(
+            ntsc.starts_with("NES, ROMs ") && ntsc.len() == "NES, ROMs 12345678".len(),
+            "an NTSC game's old states refused: {ntsc}"
+        );
         assert_eq!(pal, format!("{ntsc}, PAL"));
     }
 }

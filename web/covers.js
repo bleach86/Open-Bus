@@ -14,8 +14,9 @@ const boxTrees = (set) => `https://api.github.com/repos/libretro-thumbnails/${se
 const boxFiles = (set) => `https://raw.githubusercontent.com/libretro-thumbnails/${set}/master/Named_Boxarts/`;
 /// Git's mode of a symbolic link: the file's just the name of another.
 const LINK = '120000';
-const SCREENS = 'https://archive.org/advancedsearch.php?q=collection:(wozaday OR softwarelibrary_apple_games)'
-    + '&fl[]=identifier,title&rows=10000&output=json';
+const SCREENS =
+    'https://archive.org/advancedsearch.php?q=collection:(wozaday OR softwarelibrary_apple_games)' +
+    '&fl[]=identifier,title&rows=10000&output=json';
 const ITEMS = 'https://archive.org/download/';
 /// A box's regions, the best first.
 const REGIONS = ['USA', 'World', 'Europe', 'Japan'];
@@ -85,11 +86,14 @@ const bareTitle = (title) => title.replace(/\s+v?\d+(\.\d+)+.*$/i, '').replace(/
 
 /// The Apple's title screens: what's looked up by a game's title.
 async function screens() {
-    const items = (await json(SCREENS)).response.docs
-        .filter(({ identifier, title }) => !/II\s?gs/i.test(`${identifier} ${title}`));
+    const items = (await json(SCREENS)).response.docs.filter(
+        ({ identifier, title }) => !/II\s?gs/i.test(`${identifier} ${title}`),
+    );
     const byTitle = new Map();
     // The woz-a-day's first, whose pictures are the title screens.
-    for (const { identifier, title } of items.sort((a, b) => b.identifier.startsWith('wozaday') - a.identifier.startsWith('wozaday'))) {
+    for (const { identifier, title } of items.sort(
+        (a, b) => b.identifier.startsWith('wozaday') - a.identifier.startsWith('wozaday'),
+    )) {
         const key = words(bareTitle(title));
         if (key && !byTitle.has(key)) {
             byTitle.set(key, identifier);
@@ -97,7 +101,9 @@ async function screens() {
     }
     return ({ title }) => {
         const item = byTitle.get(words(title)) ?? byTitle.get(words(bareTitle(title)));
-        return item ? ['00playable_screenshot.png', '__ia_thumb.jpg'].map((file) => ({ url: `${ITEMS}${item}/${file}` })) : [];
+        return item
+            ? ['00playable_screenshot.png', '__ia_thumb.jpg'].map((file) => ({ url: `${ITEMS}${item}/${file}` }))
+            : [];
     };
 }
 
@@ -140,7 +146,7 @@ export async function findCovers(wanted, art, told) {
             try {
                 let blob = null;
                 for (const place of lookups[game.machine](game)) {
-                    blob = blob ?? await picture(place);
+                    blob = blob ?? (await picture(place));
                 }
                 if (blob) {
                     const kept = { ...art.get(game.key), cover: await shrink(blob), machine: game.machine };

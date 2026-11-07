@@ -8,10 +8,25 @@
 export const ACTIONS = ['up', 'down', 'left', 'right', 'a', 'b', 'select', 'start', 'library'];
 const STORED = 'controls';
 
-const padDefaults = { up: 'pad:padUp', down: 'pad:padDown', left: 'pad:padLeft', right: 'pad:padRight',
-    a: 'pad:a', b: 'pad:b', select: 'pad:select', start: 'pad:start' };
-const keyDefaults = { up: 'key:ArrowUp', down: 'key:ArrowDown', left: 'key:ArrowLeft', right: 'key:ArrowRight',
-    a: 'key:KeyX', b: 'key:KeyZ', start: 'key:Enter' };
+const padDefaults = {
+    up: 'pad:padUp',
+    down: 'pad:padDown',
+    left: 'pad:padLeft',
+    right: 'pad:padRight',
+    a: 'pad:a',
+    b: 'pad:b',
+    select: 'pad:select',
+    start: 'pad:start',
+};
+const keyDefaults = {
+    up: 'key:ArrowUp',
+    down: 'key:ArrowDown',
+    left: 'key:ArrowLeft',
+    right: 'key:ArrowRight',
+    a: 'key:KeyX',
+    b: 'key:KeyZ',
+    start: 'key:Enter',
+};
 
 /// As the page has always had them: the first player's on the keyboard too.
 function player(first) {
@@ -34,8 +49,10 @@ export const defaults = () => [player(true), player(false)];
 export function load(storage = localStorage) {
     try {
         const kept = JSON.parse(storage.getItem(STORED));
-        const good = Array.isArray(kept) && kept.length === 2
-            && kept.every((bound) => ACTIONS.every((action) => Array.isArray(bound[action])));
+        const good =
+            Array.isArray(kept) &&
+            kept.length === 2 &&
+            kept.every((bound) => ACTIONS.every((action) => Array.isArray(bound[action])));
         return good ? kept : defaults();
     } catch {
         return defaults();
@@ -50,8 +67,9 @@ const kindOf = (source) => source.split(':')[0];
 /// it before, and no longer anything else of theirs.
 export function bind(controls, who, action, source) {
     for (const [other, sources] of Object.entries(controls[who])) {
-        controls[who][other] = sources.filter((old) => old !== source
-            && !(other === action && kindOf(old) === kindOf(source)));
+        controls[who][other] = sources.filter(
+            (old) => old !== source && !(other === action && kindOf(old) === kindOf(source)),
+        );
     }
     controls[who][action].push(source);
 }
@@ -71,7 +89,10 @@ export function said(source) {
         const word = raw ? `${raw[1] === 'btn' ? 'button ' : 'axis '}${raw[2]}` : name.replace(/^pad(?=[A-Z])/, '');
         return `Pad ${word}`;
     }
-    return name.replace(/^Key|^Digit/, '').replace(/^Arrow/, '').replace(/^(.*)(Left|Right)$/, '$2 $1');
+    return name
+        .replace(/^Key|^Digit/, '')
+        .replace(/^Arrow/, '')
+        .replace(/^(.*)(Left|Right)$/, '$2 $1');
 }
 
 /// A gamepad's own buttons and axes that are pressed now, as bindings.

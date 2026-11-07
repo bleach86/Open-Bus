@@ -26,7 +26,11 @@ pub struct ClockCard {
 
 impl ClockCard {
     pub fn new() -> Self {
-        ClockCard { fixed: None, text: Vec::new(), at: 0 }
+        ClockCard {
+            fixed: None,
+            text: Vec::new(),
+            at: 0,
+        }
     }
 
     /// The firmware, at $Cn00 to $CnFF.
@@ -41,14 +45,26 @@ impl ClockCard {
         match (addr & 0x0F, written) {
             (0, Some(_)) => {
                 let now = self.fixed.unwrap_or_else(clock::now);
-                let fields = [now.month, now.weekday, now.day, now.hour, now.minute, now.second];
+                let fields = [
+                    now.month,
+                    now.weekday,
+                    now.day,
+                    now.hour,
+                    now.minute,
+                    now.second,
+                ];
                 let text = fields.map(|field| format!("{field:02}")).join(",") + "\r";
                 self.text = text.bytes().map(|byte| byte | 0x80).collect();
                 self.at = 0;
                 None
             }
             (1, None) => {
-                let byte = self.text.get(self.at).or(self.text.last()).copied().unwrap_or(0x8D);
+                let byte = self
+                    .text
+                    .get(self.at)
+                    .or(self.text.last())
+                    .copied()
+                    .unwrap_or(0x8D);
                 self.at = (self.at + 1).min(self.text.len().saturating_sub(1));
                 Some(byte)
             }

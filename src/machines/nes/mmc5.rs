@@ -152,7 +152,9 @@ impl Mmc5 {
             if bank & 0x80 != 0 || register == 4 {
                 Place::Rom(offset)
             } else {
-                Place::Ram(((bank & 7 & !(size - 1)) * 0x2000 + (at & (size * 0x2000 - 1))) % PRG_RAM)
+                Place::Ram(
+                    ((bank & 7 & !(size - 1)) * 0x2000 + (at & (size * 0x2000 - 1))) % PRG_RAM,
+                )
             }
         };
         match (self.prg_mode, addr) {
@@ -347,12 +349,18 @@ impl Mmc5 {
     /// extended attributes, no nametable of its own, so that all it has to
     /// do with them is count lines.
     pub fn plain_fetches(&self) -> bool {
-        self.exram_mode != 1 && (self.split & 0x80 == 0 || self.exram_mode > 1) && self.nametables & 0xAA == 0
+        self.exram_mode != 1
+            && (self.split & 0x80 == 0 || self.exram_mode > 1)
+            && self.nametables & 0xAA == 0
     }
 
     /// Whether the tile `tiles` of the line is in the split.
     fn split_has(&self, tile: u8) -> bool {
-        let (enabled, right, count) = (self.split & 0x80 != 0, self.split & 0x40 != 0, self.split & 0x1F);
+        let (enabled, right, count) = (
+            self.split & 0x80 != 0,
+            self.split & 0x40 != 0,
+            self.split & 0x1F,
+        );
         enabled && self.exram_mode <= 1 && if right { tile >= count } else { tile < count }
     }
 

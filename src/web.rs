@@ -33,14 +33,18 @@ pub fn read_file(name: &str) -> Option<Vec<u8>> {
 #[wasm_bindgen]
 pub fn written_files() -> Vec<String> {
     let names = files::written().into_iter();
-    names.map(|name| name.to_string_lossy().into_owned()).collect()
+    names
+        .map(|name| name.to_string_lossy().into_owned())
+        .collect()
 }
 
 /// The files with parts written over since the page took them.
 #[wasm_bindgen]
 pub fn changed_files() -> Vec<String> {
     let names = files::changed().into_iter();
-    names.map(|name| name.to_string_lossy().into_owned()).collect()
+    names
+        .map(|name| name.to_string_lossy().into_owned())
+        .collect()
 }
 
 /// Where in `name` its parts written over start, for the page to keep.
@@ -214,7 +218,16 @@ impl Emulator {
 
     /// The controls as they are: each gamepad's a bit each, up, down, left,
     /// right, A, B, Select, Start.
-    pub fn controls(&self, gamepad: u8, gamepad_2: u8, x: f32, y: f32, buttons: u8, key_down: bool, reset: bool) {
+    pub fn controls(
+        &self,
+        gamepad: u8,
+        gamepad_2: u8,
+        x: f32,
+        y: f32,
+        buttons: u8,
+        key_down: bool,
+        reset: bool,
+    ) {
         let pad = |bits: u8| {
             let held = |bit: u8| bits >> bit & 1 != 0;
             Gamepad {
