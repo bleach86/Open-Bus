@@ -455,6 +455,28 @@ mod tests {
         );
     }
 
+    #[test]
+    fn mmc4_has_a_16k_bank_and_its_left_table_switches_on_any_row() {
+        let mut cart = board(10, 8, 8);
+        for (register, bank) in [(0xB000, 0), (0xC000, 2), (0xD000, 4), (0xE000, 6)] {
+            cart.cpu_write(register, bank, 0);
+        }
+        cart.cpu_write(0xA000, 3, 0);
+        assert_eq!(
+            [0x8020, 0xBF20, 0xC020, 0xFF20].map(|addr| cart.cpu_read(addr).unwrap()),
+            [3, 3, 7, 7],
+            "a 16K bank, the last fixed"
+        );
+        for row in 0..8 {
+            cart.chr_read(0x0FD8 + row);
+            assert_eq!(cart.chr_read(0x0000), 0xC0, "tile $FD, row {row}");
+            cart.chr_read(0x0FE8 + row);
+            assert_eq!(cart.chr_read(0x0000), 0xC1, "tile $FE, row {row}");
+        }
+        cart.cpu_write(0x6000, 0x5A, 0);
+        assert_eq!(cart.cpu_read(0x6000), Some(0x5A), "its PRG RAM");
+    }
+
     /// MMC3's CHR registers set: R0 to R5, each its value.
     fn mmc3_banks(cart: &mut Cartridge, inverted: bool, banks: [u8; 6]) {
         let invert = if inverted { 0x80 } else { 0 };

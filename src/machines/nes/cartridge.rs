@@ -64,6 +64,10 @@
 //! that tile's top row's second plane only, at $1000 on any of its rows.
 //! Mirroring ($F000).
 //!
+//! 10, MMC4: MMC2 with a 16K bank at $8000 ($A000), the last 16K fixed,
+//! and its left table's latch set on any of tile $FD's or $FE's rows, as
+//! its right's is. 8K of PRG RAM, kept by a battery on Fire Emblem's.
+//!
 //! 11, Color Dreams: a 32K bank (bits 0 and 1) and an 8K bank of CHR (bits
 //! 4 to 7). Its bus conflicts only as NES 2.0's submapper 2 says: a plain
 //! header doesn't say which board it is, and a game of a board without
@@ -375,6 +379,7 @@ pub enum Board {
     Namco3443,
     Namco3425,
     Namco3453,
+    Mmc4,
 }
 
 impl Board {
@@ -644,7 +649,7 @@ impl Cartridge {
             }),
             5 => Mapper::Mmc5(Box::new(Mmc5::new())),
             7 => Mapper::Axrom(0),
-            9 => Mapper::Mmc2(Mmc2 {
+            9 | 10 => Mapper::Mmc2(Mmc2 {
                 prg: 0,
                 chr: [[0; 2]; 2],
                 latch: [1; 2],
@@ -681,6 +686,7 @@ impl Cartridge {
             88 => Board::Namco3443,
             95 => Board::Namco3425,
             154 => Board::Namco3453,
+            10 => Board::Mmc4,
             _ => Board::Plain,
         };
         let has_ram = chr_rom.is_empty() || board == Board::Tqrom;
@@ -871,6 +877,10 @@ impl Cartridge {
                     .map_or(last_8k, |&bank| bank as usize & 0x3F);
                 bank * 0x2000 + (addr & 0x1FFF)
             }
+            Mapper::Mmc2(mmc2) if self.board == Board::Mmc4 && addr < 0xC000 => {
+                mmc2.prg as usize * PRG_BANK + (addr & 0x3FFF)
+            }
+            Mapper::Mmc2(_) if self.board == Board::Mmc4 => len - PRG_BANK + (addr - 0xC000),
             Mapper::Mmc2(mmc2) if addr < 0xA000 => mmc2.prg as usize * 0x2000 + (addr & 0x1FFF),
             Mapper::Mmc2(_) => len - 0x6000 + (addr - 0xA000),
             Mapper::Mmc1(mmc1) => {
@@ -1386,9 +1396,12 @@ impl Cartridge {
             self.chr_rom[at]
         };
         if let Mapper::Mmc2(mmc2) = &mut self.mapper {
+            let mmc4 = self.board == Board::Mmc4;
             match addr {
                 0x0FD8 => mmc2.latch[0] = 0,
                 0x0FE8 => mmc2.latch[0] = 1,
+                0x0FD9..=0x0FDF if mmc4 => mmc2.latch[0] = 0,
+                0x0FE9..=0x0FEF if mmc4 => mmc2.latch[0] = 1,
                 0x1FD8..=0x1FDF => mmc2.latch[1] = 0,
                 0x1FE8..=0x1FEF => mmc2.latch[1] = 1,
                 _ => {}
@@ -1463,7 +1476,6 @@ impl Cartridge {
             Mapper::Cnrom(_) => (3, "CNROM"),
             Mapper::Mmc3(mmc3) if mmc3.mmc6 => (4, "MMC6"),
             Mapper::Mmc3(_) => match self.board {
-                Board::Plain => (4, "MMC3"),
                 Board::Txsrom => (118, "TXSROM"),
                 Board::Tqrom => (119, "TQROM"),
                 Board::Multicart37 => (37, "MULTICART"),
@@ -1473,9 +1485,11 @@ impl Cartridge {
                 Board::Namco3443 => (88, "NAMCOT-3443"),
                 Board::Namco3425 => (95, "NAMCOT-3425"),
                 Board::Namco3453 => (154, "NAMCOT-3453"),
+                _ => (4, "MMC3"),
             },
             Mapper::Mmc5(_) => (5, "MMC5"),
             Mapper::Axrom(_) => (7, "AXROM"),
+            Mapper::Mmc2(_) if self.board == Board::Mmc4 => (10, "MMC4"),
             Mapper::Mmc2(_) => (9, "MMC2"),
             Mapper::ColorDreams(_) => (11, "COLOR DREAMS"),
             Mapper::Bnrom(_) => (34, "BNROM"),
