@@ -969,6 +969,86 @@ mod tests {
 
     /// Action 52's write: chip, 16K bank, one-bank, CHR's high and low bits,
     /// the mirroring bit, as the address and data hold them.
+    /// What's at $8020, $A020, $C020 and $E020: each its 16K bank's number.
+    fn prg_8k(cart: &mut Cartridge) -> [u8; 4] {
+        [0x8020, 0xA020, 0xC020, 0xE020].map(|addr| cart.cpu_read(addr).unwrap())
+    }
+
+    #[test]
+    fn namco_108_has_bank_select_and_data_and_nothing_else() {
+        let mut cart = board(206, 8, 8);
+        // Bank select's PRG mode and CHR inversion aren't there.
+        cart.cpu_write(0x8000, 0xC6, 0);
+        cart.cpu_write(0x8001, 4, 0);
+        // Every write from $8000 up is one or the other, by its A0.
+        cart.cpu_write(0xA000, 7, 0);
+        cart.cpu_write(0xE001, 7, 0);
+        assert_eq!(
+            prg_8k(&mut cart),
+            [2, 3, 7, 7],
+            "R6 and R7, the last two fixed"
+        );
+        cart.cpu_write(0xC000, 0, 0);
+        cart.cpu_write(0xC001, 8, 0);
+        assert_eq!(
+            (cart.chr_read(0), cart.chr_read(0x1000)),
+            (0xC1, 0xC0),
+            "R0 at $0000, not inverted"
+        );
+        // No mirroring of its own, and no IRQ to enable.
+        assert_eq!(cart.mirroring, Mirroring::Horizontal);
+        for line in 0..4u64 {
+            cart.ppu_bus(0x0000, line * 341);
+            cart.ppu_bus(0x1000, line * 341 + 260);
+        }
+        assert!(!cart.irq());
+    }
+
+    #[test]
+    fn namcot_3446s_chr_is_four_2k_banks() {
+        let mut cart = board(76, 8, 8);
+        mmc3_banks(&mut cart, false, [0, 0, 4, 9, 2, 31]);
+        assert_eq!(
+            [0, 0x0800, 0x1000, 0x1800].map(|addr| cart.chr_read(addr)),
+            [0xC1, 0xC2, 0xC0, 0xC7],
+            "R2 to R5, 2K each"
+        );
+    }
+
+    #[test]
+    fn namcot_3443s_left_table_is_the_first_64k_and_its_right_the_second() {
+        let mut cart = board(88, 8, 16);
+        mmc3_banks(&mut cart, false, [0x48, 0, 8, 0, 0, 0]);
+        assert_eq!(
+            (cart.chr_read(0), cart.chr_read(0x1000)),
+            (0xC1, 0xC9),
+            "R0's top bit gone, R2's set"
+        );
+    }
+
+    #[test]
+    fn namcot_3425s_nametables_are_r0_and_r1s_bit_5() {
+        let mut cart = board(95, 8, 4);
+        mmc3_banks(&mut cart, false, [0x20, 0, 0, 0, 0, 0]);
+        assert_eq!(pages(&cart), [1, 1, 0, 0]);
+        mmc3_banks(&mut cart, false, [0, 0x20, 0, 0, 0, 0]);
+        assert_eq!(pages(&cart), [0, 0, 1, 1]);
+    }
+
+    #[test]
+    fn namcot_3453s_every_write_says_its_one_screen() {
+        let mut cart = board(154, 8, 16);
+        cart.cpu_write(0x8000, 0x42, 0);
+        assert_eq!(pages(&cart), [1, 1, 1, 1], "bit 6 set");
+        cart.cpu_write(0x8001, 8, 0);
+        assert_eq!(pages(&cart), [0, 0, 0, 0], "and clear");
+        assert_eq!(
+            cart.chr_read(0x1000),
+            0xC9,
+            "the right table from the second 64K"
+        );
+    }
+
     fn active(
         cart: &mut Cartridge,
         chip: u16,

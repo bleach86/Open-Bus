@@ -111,6 +111,17 @@
 //! bit 2 is the 128K of CHR and PRG's A17; its low bits, both set, force
 //! PRG's A16 high, else it's the MMC3's if bit 2's set, else low.
 //!
+//! 206, Namco 108, and its boards: the MMC3's ancestor, its bank select and
+//! bank data and nothing else, every write from $8000 up one of those two
+//! by its A0. No PRG mode or CHR inversion (bank select's top bits not
+//! there): R6 and R7 at $8000 and $A000, the last two 8K fixed; R0 and R1
+//! the left pattern table, R2 to R5 the right. No IRQ, no PRG RAM, and its
+//! mirroring wired. 76, NAMCOT-3446: R2 to R5 four 2K banks, all the CHR
+//! there is. 88, NAMCOT-3443: the left pattern table from the CHR's first
+//! 64K, the right from the second. 95, NAMCOT-3425: R0's bit 5 says which
+//! 1K the top two nametables are, R1's the bottom two. 154, NAMCOT-3453:
+//! as 88, every write's bit 6 saying which 1K all four nametables are.
+//!
 //! 64, RAMBO-1, Tengen's: MMC3's registers at the same addresses, and
 //! more. Bank select's bit 5 makes $0000 to $0FFF's banks four of 1K, R0,
 //! R8, R1 and R9, not R0 and R1's 2K each; it has a third 8K of PRG, RF, at
@@ -359,11 +370,28 @@ pub enum Board {
     Tqrom,
     Multicart37,
     Multicart47,
+    Namco108,
+    Namco3446,
+    Namco3443,
+    Namco3425,
+    Namco3453,
 }
 
 impl Board {
     fn is_multicart(self) -> bool {
         matches!(self, Board::Multicart37 | Board::Multicart47)
+    }
+
+    /// Whether it's Namco 108's, or one of its boards'.
+    fn is_namco_108(self) -> bool {
+        matches!(
+            self,
+            Board::Namco108
+                | Board::Namco3446
+                | Board::Namco3443
+                | Board::Namco3425
+                | Board::Namco3453
+        )
     }
 }
 
@@ -600,7 +628,7 @@ impl Cartridge {
             }),
             2 => Mapper::Uxrom(0),
             3 => Mapper::Cnrom(0),
-            4 | 37 | 47 | 118 | 119 => Mapper::Mmc3(Mmc3 {
+            4 | 37 | 47 | 118 | 119 | 206 | 76 | 88 | 95 | 154 => Mapper::Mmc3(Mmc3 {
                 select: 0,
                 banks: [0, 2, 4, 5, 6, 7, 0, 1],
                 ram_enabled: true,
@@ -648,6 +676,11 @@ impl Cartridge {
             119 => Board::Tqrom,
             37 => Board::Multicart37,
             47 => Board::Multicart47,
+            206 => Board::Namco108,
+            76 => Board::Namco3446,
+            88 => Board::Namco3443,
+            95 => Board::Namco3425,
+            154 => Board::Namco3453,
             _ => Board::Plain,
         };
         let has_ram = chr_rom.is_empty() || board == Board::Tqrom;
@@ -906,9 +939,14 @@ impl Cartridge {
                 0 => (mmc1.chr[0] as usize & 0x1E) * 0x1000 + addr,
                 _ => mmc1.chr[addr >> 12] as usize * 0x1000 + (addr & 0x0FFF),
             },
+            Mapper::Mmc3(mmc3) if self.board == Board::Namco3446 => {
+                mmc3.banks[2 + (addr >> 11)] as usize * 0x800 + (addr & 0x7FF)
+            }
             Mapper::Mmc3(mmc3) => {
                 let bank = mmc3.chr_bank(addr);
                 let bank = match self.board {
+                    Board::Namco3443 | Board::Namco3453 if addr < 0x1000 => bank & 0x3F,
+                    Board::Namco3443 | Board::Namco3453 => bank | 0x40,
                     Board::Tqrom => bank & 0x3F,
                     Board::Multicart37 => (bank & 0x7F) | (self.prg_ram[0] as usize & 4) << 5,
                     Board::Multicart47 => (bank & 0x7F) | (self.prg_ram[0] as usize & 1) << 7,
@@ -1213,6 +1251,19 @@ impl Cartridge {
                     _ => mmc1.prg = register,
                 }
             }
+            Mapper::Mmc3(mmc3) if self.board.is_namco_108() => {
+                if self.board == Board::Namco3453 {
+                    self.mirroring = if value & 0x40 != 0 {
+                        Mirroring::SingleUpper
+                    } else {
+                        Mirroring::SingleLower
+                    };
+                }
+                match addr & 1 {
+                    0 => mmc3.select = value & 0x07,
+                    _ => mmc3.banks[mmc3.select as usize] = value,
+                }
+            }
             Mapper::Mmc3(mmc3) => match addr & 0xE001 {
                 0x8000 => mmc3.select = value,
                 0x8001 => mmc3.banks[mmc3.select as usize & 7] = value,
@@ -1254,6 +1305,9 @@ impl Cartridge {
         match &self.mapper {
             Mapper::Mmc3(mmc3) if self.board == Board::Txsrom => {
                 mmc3.chr_bank(addr as usize & 0x0FFF) >> 7
+            }
+            Mapper::Mmc3(mmc3) if self.board == Board::Namco3425 => {
+                (mmc3.banks[(addr as usize >> 11) & 1] as usize >> 5) & 1
             }
             Mapper::Mmc5(mmc5) => mmc5.nametable_page(addr),
             _ => self.mirroring.page(addr),
@@ -1414,6 +1468,11 @@ impl Cartridge {
                 Board::Tqrom => (119, "TQROM"),
                 Board::Multicart37 => (37, "MULTICART"),
                 Board::Multicart47 => (47, "MULTICART"),
+                Board::Namco108 => (206, "NAMCO 108"),
+                Board::Namco3446 => (76, "NAMCOT-3446"),
+                Board::Namco3443 => (88, "NAMCOT-3443"),
+                Board::Namco3425 => (95, "NAMCOT-3425"),
+                Board::Namco3453 => (154, "NAMCOT-3453"),
             },
             Mapper::Mmc5(_) => (5, "MMC5"),
             Mapper::Axrom(_) => (7, "AXROM"),
