@@ -104,6 +104,19 @@ function change(section, came, gone = () => false) {
     }
 }
 
+/// `told` when games have come or gone from the folders, as a watcher saw,
+/// of how many: what's been found, as it is now, taken.
+export const whenFilesChange = (told) => listen('files-changed', async () => {
+    const games = () => [...where.keys()].filter((name) => GAMES.includes(extension(name)));
+    const before = games();
+    const known = await invoke('known_files');
+    if (known) {
+        take(known);
+    }
+    const now = games();
+    told({ came: now.filter((name) => !before.includes(name)).length, went: before.filter((name) => !now.includes(name)).length });
+});
+
 /// Hidden games, back in the library at once.
 export async function restore(paths) {
     change('folders', await invoke('restore_hidden', { paths }));

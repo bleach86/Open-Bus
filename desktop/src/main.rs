@@ -25,6 +25,8 @@ use serde_json::{Value, json};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
+use notify::{RecommendedWatcher, RecursiveMode};
+use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
@@ -172,6 +174,7 @@ fn remember(app: &AppHandle, folder: &str) -> Result<(), String> {
     if !listed(&kept, "folders").iter().any(|known| known == folder) {
         kept["folders"].as_array_mut().ok_or("bad settings")?.push(json!(folder));
         save_settings(app, &kept)?;
+        watch_folders(app);
     }
     Ok(())
 }
@@ -189,6 +192,123 @@ fn take_out(app: &AppHandle, field: &str, path: &str) -> Result<(), String> {
     let mut kept = settings(app)?;
     kept[field].as_array_mut().ok_or("bad settings")?.retain(|item| item != path);
     save_settings(app, &kept)
+}
+
+/// The kinds of file the library has, a game's or a disk's: what's worth a
+/// watcher's noticing. Saves and states beside them change as games are
+/// played, and don't matter to it.
+const GAMES: [&str; 10] = ["nes", "fds", "zip", "dsk", "do", "po", "nib", "woz", "hdv", "2mg"];
+
+/// The folders added, watched for games coming and going, and the watcher.
+#[derive(Default)]
+struct Watching(Mutex<Option<Debouncer<RecommendedWatcher>>>);
+
+/// The folders added watched, as they are now: what was watching them before
+/// stopped.
+fn watch_folders(app: &AppHandle) {
+    let folders = settings(app).map(|kept| listed(&kept, "folders")).unwrap_or_default();
+    let seeing = app.clone();
+    let watching = new_debouncer(Duration::from_millis(800), move |events: DebounceEventResult| {
+        if let Ok(events) = events {
+            seen(&seeing, events.into_iter().map(|event| event.path).collect());
+        }
+    });
+    let Ok(mut watcher) = watching else { return };
+    for folder in &folders {
+        let _ = watcher.watcher().watch(Path::new(folder), RecursiveMode::Recursive);
+    }
+    if let Ok(mut watched) = app.state::<Watching>().0.lock() {
+        *watched = Some(watcher);
+    }
+}
+
+/// Whether `path`, under one of `folders`, is somewhere `walk` doesn't go: a
+/// hidden folder, a NAS's own, a download not finished.
+fn passed_over(path: &Path, folders: &[String]) -> bool {
+    let Some(within) = folders.iter().find_map(|folder| path.strip_prefix(folder).ok()) else { return true };
+    let hidden = within.components().any(|part| {
+        let part = part.as_os_str().to_string_lossy();
+        part.starts_with('.') || part.starts_with('@')
+    });
+    hidden || path.to_string_lossy().ends_with(".part")
+}
+
+/// What a watcher saw change: each of `paths` that's a game now, or a folder
+/// with games in it, put with what's been found; each that's gone, and all
+/// that was under it, taken out. The page told, if anything changed.
+fn seen(app: &AppHandle, paths: Vec<PathBuf>) {
+    let Ok(kept) = settings(app) else { return };
+    let (folders, hidden) = (listed(&kept, "folders"), listed(&kept, "hidden"));
+    let game = |path: &Path| path.extension().is_some_and(|kind| GAMES.contains(&kind.to_string_lossy().to_lowercase().as_str()));
+    let mut changed = false;
+    let _ = change_found(app, |found| {
+        let Some(list) = found["folders"].as_array_mut() else { return };
+        for path in paths.iter().filter(|path| !passed_over(path, &folders)) {
+            let mut came = Vec::new();
+            if path.is_dir() {
+                walk(path, &mut came);
+            } else if path.is_file() {
+                if game(path) {
+                    let size = fs::metadata(path).map_or(0, |data| data.len());
+                    came.push(json!({ "path": path.to_string_lossy(), "size": size }));
+                }
+            } else {
+                let before = list.len();
+                list.retain(|entry| !entry["path"].as_str().is_some_and(|file| Path::new(file).starts_with(path)));
+                changed |= list.len() != before;
+                continue;
+            }
+            for entry in came {
+                let file = entry["path"].as_str().unwrap_or_default().to_string();
+                let known = list.iter().any(|known| known["path"] == entry["path"]);
+                if game(Path::new(&file)) && !known && !hidden.contains(&file) {
+                    list.push(entry);
+                    changed = true;
+                }
+            }
+        }
+    });
+    if changed {
+        let _ = app.emit("files-changed", ());
+    }
+}
+
+/// Whether `folder`'s on another computer, where a watcher's not told of
+/// what's done there, only of what's done from here: an NFS, SMB or SSH
+/// mount's, on Linux, as /proc/mounts has them; a share's, on Windows.
+fn on_network(folder: &str) -> bool {
+    if folder.starts_with(r"\\") {
+        return true;
+    }
+    let Ok(mounts) = fs::read_to_string("/proc/mounts") else { return false };
+    let mount = mounts
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split(' ');
+            let (_, place, kind) = (parts.next()?, parts.next()?.replace("\\040", " "), parts.next()?);
+            Path::new(folder).starts_with(&place).then(|| (place.len(), kind.to_string()))
+        })
+        .max();
+    mount.is_some_and(|(_, kind)| ["nfs", "nfs4", "cifs", "smb3", "smbfs", "fuse.sshfs"].contains(&kind.as_str()))
+}
+
+/// How often the folders on other computers are looked through again.
+const NETWORK_LOOK: Duration = Duration::from_secs(300);
+
+/// The folders looked through again, if any of them are on another computer,
+/// each NETWORK_LOOK: the page told if what's there has changed.
+fn look_over_network(app: AppHandle) {
+    thread::spawn(move || loop {
+        thread::sleep(NETWORK_LOOK);
+        let folders = settings(&app).map(|kept| listed(&kept, "folders")).unwrap_or_default();
+        if !folders.iter().any(|folder| on_network(folder)) {
+            continue;
+        }
+        let before = known_files(app.clone()).unwrap_or(Value::Null);
+        if all_files(app.clone()).is_ok_and(|now| now != before) {
+            let _ = app.emit("files-changed", ());
+        }
+    });
 }
 
 /// What `all_files` last found, to be changed by `change`, as one thing's
@@ -234,6 +354,7 @@ fn add_folder_files(app: AppHandle, entries: Vec<Value>) -> Result<Vec<Value>, S
 #[tauri::command(async)]
 fn remove_folder(app: AppHandle, path: String) -> Result<(), String> {
     take_out(&app, "folders", &path)?;
+    watch_folders(&app);
     let inside = Path::new(&path).to_path_buf();
     change_found(&app, |found| {
         if let Some(list) = found["folders"].as_array_mut() {
@@ -623,12 +744,15 @@ fn main() {
                 }
             })?;
             start_pads(app.handle());
+            watch_folders(app.handle());
+            look_over_network(app.handle().clone());
             fit_to_screen(&app.get_webview_window("main").ok_or("no window")?)?;
             Ok(())
         })
         .manage(Dropped::default())
         .manage(Pads::default())
         .manage(Windowed::default())
+        .manage(Watching::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             all_files, known_files, file_bytes, keep_file, forget_path, keep_art, all_art, pick_folder, take_dropped, folder_files, play,

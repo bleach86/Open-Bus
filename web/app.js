@@ -1330,6 +1330,17 @@ if (native) {
     page('change-controls').onclick = () => playNatively({ kind: 'controls' });
     page('rescan').onclick = () => lookForChanges(true);
     page('quit-app').onclick = () => native.quit();
+    native.whenFilesChange(async ({ came, went }) => {
+        if (!came && !went) {
+            return;
+        }
+        await refresh();
+        const counted = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
+        say([came && `${counted(came, 'new game')}`, went && `${counted(went, 'game')} gone`].filter(Boolean).join(', ') + '.');
+        if (!page('settings').hidden) {
+            fillSettings();
+        }
+    });
     page('quit-app').hidden = false;
     page('start-fullscreen').checked = localStorage.getItem('fullscreen') === 'yes';
     page('start-fullscreen').onchange = ({ target }) => localStorage.setItem('fullscreen', target.checked ? 'yes' : 'no');
