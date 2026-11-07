@@ -28,6 +28,12 @@ mod tests {
 
     const JAM: u8 = 0x02;
 
+    /// Opcodes left out, each for a variant: where the chips themselves
+    /// differ, and another test settled it. LXA's 2A03 ORs $FF into A
+    /// first, as blargg's NES tests have it; Harte's NES cases were taken
+    /// from a chip that ORs in less.
+    const LEFT_OUT: [(Variant, &str); 1] = [(Variant::Ricoh2A03, "ab")];
+
     struct State {
         pc: u16,
         s: u8,
@@ -284,7 +290,13 @@ mod tests {
                 eprintln!("harte: no {set} tests; run tools/fetch-harte");
                 continue;
             };
-            let mut set_files: Vec<PathBuf> = entries.map(|entry| entry.unwrap().path()).collect();
+            let mut set_files: Vec<PathBuf> = entries
+                .map(|entry| entry.unwrap().path())
+                .filter(|file| {
+                    let opcode = file.file_stem().unwrap().to_string_lossy();
+                    !LEFT_OUT.contains(&(variant, opcode.as_ref()))
+                })
+                .collect();
             set_files.sort();
             files.extend(set_files.into_iter().map(|file| (file, variant)));
         }
