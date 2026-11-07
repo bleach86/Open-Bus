@@ -191,16 +191,71 @@ fn take_out(app: &AppHandle, field: &str, path: &str) -> Result<(), String> {
     save_settings(app, &kept)
 }
 
-/// A folder no longer looked in: its files are left as they are.
-#[tauri::command(async)]
-fn remove_folder(app: AppHandle, path: String) -> Result<(), String> {
-    take_out(&app, "folders", &path)
+/// What `all_files` last found, to be changed by `change`, as one thing's
+/// done that changes it, so that it's not all looked for again for that.
+fn change_found(app: &AppHandle, change: impl FnOnce(&mut Value)) -> Result<(), String> {
+    let file = found_files(app)?;
+    let mut found = fs::read(&file).ok().and_then(|text| serde_json::from_slice(&text).ok()).unwrap_or_else(|| {
+        json!({ "root": folder(app, "library").map(|path| path.to_string_lossy().into_owned()).unwrap_or_default(), "library": [], "folders": [] })
+    });
+    change(&mut found);
+    write(&file, found.to_string().as_bytes())
 }
 
-/// A game hidden, back.
+/// `entries`, files found, with what was found before, in `section`, the
+/// library's or the folders': those hidden, or that are there already, left
+/// out. What's put there.
+fn add_found(app: &AppHandle, section: &str, entries: Vec<Value>) -> Result<Vec<Value>, String> {
+    let hidden = listed(&settings(app)?, "hidden");
+    let mut added = Vec::new();
+    change_found(app, |found| {
+        let Some(list) = found[section].as_array_mut() else { return };
+        for entry in entries {
+            let path = entry["path"].as_str().unwrap_or_default();
+            if !hidden.iter().any(|hidden| hidden == path) && !list.iter().any(|known| known["path"] == entry["path"]) {
+                list.push(entry.clone());
+                added.push(entry);
+            }
+        }
+    })?;
+    Ok(added)
+}
+
+/// A folder's files, as `folder_files` found them, ROMs taken out, now with
+/// the rest: the folder isn't looked through again for them.
 #[tauri::command(async)]
-fn restore_hidden(app: AppHandle, path: String) -> Result<(), String> {
-    take_out(&app, "hidden", &path)
+fn add_folder_files(app: AppHandle, entries: Vec<Value>) -> Result<Vec<Value>, String> {
+    let allowed_entries = entries.into_iter().filter(|entry| entry["path"].as_str().is_some_and(|path| allowed(&app, path).is_ok())).collect();
+    add_found(&app, "folders", allowed_entries)
+}
+
+/// A folder no longer looked in: its files are left as they are, and what was
+/// found in it's forgotten, not all looked for again.
+#[tauri::command(async)]
+fn remove_folder(app: AppHandle, path: String) -> Result<(), String> {
+    take_out(&app, "folders", &path)?;
+    let inside = Path::new(&path).to_path_buf();
+    change_found(&app, |found| {
+        if let Some(list) = found["folders"].as_array_mut() {
+            list.retain(|entry| !entry["path"].as_str().is_some_and(|file| Path::new(file).starts_with(&inside)));
+        }
+    })
+}
+
+/// Games hidden, back: out of `settings.json`'s hidden, and into what's
+/// been found, in `files.json`, as a folder's are, without its folders being
+/// looked through again. What's still there of them, as `all_files` has a
+/// folder's files.
+#[tauri::command(async)]
+fn restore_hidden(app: AppHandle, paths: Vec<String>) -> Result<Vec<Value>, String> {
+    let mut kept = settings(&app)?;
+    kept["hidden"].as_array_mut().ok_or("bad settings")?.retain(|item| !paths.iter().any(|path| item == path));
+    save_settings(&app, &kept)?;
+    let back: Vec<Value> = paths
+        .iter()
+        .filter_map(|path| fs::metadata(path).ok().map(|file| json!({ "path": path, "size": file.len() })))
+        .collect();
+    add_found(&app, "folders", back)
 }
 
 /// A folder chosen, and remembered: its path, if one was.
@@ -466,7 +521,18 @@ fn sort_roms(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
     let said = String::from_utf8_lossy(&finished.stdout);
     let of = |word: &str| said.lines().filter_map(|line| line.strip_prefix(word).map(str::to_string)).collect::<Vec<_>>();
     let chips: usize = of("chips ").first().and_then(|count| count.parse().ok()).unwrap_or(0);
-    Ok(json!({ "held": of("held "), "roms": of("rom "), "chips": chips }))
+    // The ROMs written into the library, with what was found there, for it
+    // not to be looked through again for them.
+    let library = folder(&app, "library")?;
+    let written = of("rom ")
+        .iter()
+        .filter_map(|name| {
+            let path = library.join(name);
+            fs::metadata(&path).ok().map(|file| json!({ "path": path.to_string_lossy(), "size": file.len() }))
+        })
+        .collect();
+    let kept = add_found(&app, "library", written)?;
+    Ok(json!({ "held": of("held "), "roms": of("rom "), "chips": chips, "kept": kept }))
 }
 
 /// Where a window of `outer` size goes, framed `outer - inner`, in the part of
@@ -566,7 +632,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             all_files, known_files, file_bytes, keep_file, forget_path, keep_art, all_art, pick_folder, take_dropped, folder_files, play,
-            library_settings, remove_folder, restore_hidden, sort_roms, fullscreen, quit
+            library_settings, remove_folder, restore_hidden, sort_roms, fullscreen, quit, add_folder_files
         ])
         .run(tauri::generate_context!())
         .expect("couldn't open the window");

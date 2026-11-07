@@ -35,7 +35,10 @@ export async function forget(name) {
 /// What the library has, from what was found: the library's, then the games
 /// in the folders added, named as if they'd been dropped on the page, a
 /// game's disks together. Of two of a name, the first.
+let found = null;
+
 function take({ root, library, folders }) {
+    found = { root, library, folders };
     where.clear();
     for (const { path } of library) {
         where.set(slashes(path).slice(slashes(root).length + 1), path);
@@ -86,8 +89,30 @@ export const hide = (path) => invoke('forget_path', { path });
 
 /// The folders, what's hidden, and where the app keeps its own.
 export const settings = () => invoke('library_settings');
-export const removeFolder = (path) => invoke('remove_folder', { path });
-export const restore = (path) => invoke('restore_hidden', { path });
+/// A folder no longer looked in, and its games gone from the library.
+export async function removeFolder(path) {
+    await invoke('remove_folder', { path });
+    const inside = `${slashes(path).replace(/\/$/, '')}/`;
+    change('folders', [], (file) => slashes(file).startsWith(inside));
+}
+/// What's known changed by what's just been done, not by looking through
+/// every folder again: files come into `section`, the library's or the
+/// folders'; or those `gone`.
+function change(section, came, gone = () => false) {
+    if (found) {
+        take({ ...found, [section]: [...found[section].filter(({ path }) => !gone(path)), ...came] });
+    }
+}
+
+/// Hidden games, back in the library at once.
+export async function restore(paths) {
+    change('folders', await invoke('restore_hidden', { paths }));
+}
+
+/// A folder's files, as `folderFiles` found them, with the rest.
+export async function addFolderFiles(entries) {
+    change('folders', await invoke('add_folder_files', { entries }));
+}
 
 /// How many games there are in `folder`.
 export const gamesIn = (folder) => [...where.values()].filter((path) => slashes(path).startsWith(`${slashes(folder)}/`)).length;
@@ -134,7 +159,11 @@ export const play = (machine) => invoke('play', {
 
 /// The machines' ROMs among the files at `paths`, put into the library by
 /// the emulator: `held`, those with any, `roms`, and the II+'s `chips`.
-export const sortRoms = (paths) => invoke('sort_roms', { paths });
+export async function sortRoms(paths) {
+    const sorted = await invoke('sort_roms', { paths });
+    change('library', sorted.kept);
+    return sorted;
+}
 
 /// `told` of what the gamepads hold for moving around the library, by name,
 /// each time that changes.

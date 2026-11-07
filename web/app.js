@@ -1165,7 +1165,7 @@ async function addFolder(folder) {
     for (const path of held) {
         await native.hide(path); // a ROM, not a game
     }
-    await native.scan();
+    await native.addFolderFiles(found.filter(({ path }) => !held.includes(path)));
     const media = found.map(({ path }) => native.laterFile(path)).filter(({ name }) => isMedia(name));
     const made = await takeArt(media, art, (at, total) => say(`Making covers: ${at} of ${total}…`));
     await loadArt();
@@ -1187,7 +1187,6 @@ async function addNatively(folders, dropped) {
         if (dropped.length) {
             const named = dropped.filter((path) => !notRoms.test(baseName(path)));
             const sorted = await native.sortRoms(named);
-            await native.scan();
             const others = dropped.filter((path) => !sorted.held.includes(path));
             await add(await Promise.all(others.map(native.fileAt)), [], sorted);
         }
@@ -1257,7 +1256,8 @@ async function fillSettings() {
     page('folders').replaceChildren(...folders.map((folder) => row(folder, counted(native.gamesIn(folder), 'game'), 'Remove', async () => {
         if (confirm(`Remove ${folder} from the library? Its files stay where they are.`)) {
             await native.removeFolder(folder);
-            await lookForChanges();
+            await refresh();
+            fillSettings();
         }
     })));
     if (!folders.length) {
@@ -1268,16 +1268,22 @@ async function fillSettings() {
     page('hidden-list').hidden = !hidden.length;
     page('nothing-hidden').hidden = hidden.length > 0;
     page('hidden-count').textContent = `${hidden.length} game${hidden.length === 1 ? '' : 's'} hidden`;
-    page('hidden-games').replaceChildren(...hidden.map((path) => row(shortName(path), path, 'Restore', async () => {
-        await native.restore(path);
-        await lookForChanges();
-    })));
-    page('restore-all').onclick = async () => {
-        for (const path of hidden) {
-            await native.restore(path);
-        }
-        await lookForChanges();
+    // Gone from the list as soon as they're chosen; back on the shelves once
+    // the app's said so.
+    const restoring = async (paths, rows) => {
+        rows.forEach((item) => item.remove());
+        const left = page('hidden-games').children.length;
+        page('hidden-count').textContent = `${left} game${left === 1 ? '' : 's'} hidden`;
+        await native.restore(paths);
+        await refresh();
+        say(`${paths.length} game${paths.length === 1 ? '' : 's'} back in the library.`);
+        fillSettings();
     };
+    page('hidden-games').replaceChildren(...hidden.map((path) => {
+        const item = row(shortName(path), path, 'Restore', () => restoring([path], [item]));
+        return item;
+    }));
+    page('restore-all').onclick = () => restoring(hidden, [...page('hidden-games').children]);
     const has = (name) => files.includes(name);
     const appleFound = [...DISK_II_ROMS, ...IIE_ROMS.apple2ee].filter(has).length;
     page('system-files').replaceChildren(
