@@ -733,12 +733,14 @@ fn fit_to_screen(window: &WebviewWindow) -> tauri::Result<()> {
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            // WebKitGTK alone doesn't animate a mouse wheel's steps.
+            // The page glides a mouse wheel's steps itself. WebKitGTK's own
+            // smooth scrolling runs ahead of drawing, and the sidebar and
+            // toolbar jump about.
             #[cfg(target_os = "linux")]
             app.get_webview_window("main").ok_or("no window")?.with_webview(|webview| {
                 use webkit2gtk::{SettingsExt, WebViewExt};
                 if let Some(settings) = WebViewExt::settings(&webview.inner()) {
-                    settings.set_enable_smooth_scrolling(true);
+                    settings.set_enable_smooth_scrolling(false);
                 }
             })?;
             start_pads(app.handle());

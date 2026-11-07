@@ -680,13 +680,29 @@ function placeShelf(force = true) {
     // On the TV's shelf, whole screenfuls, so that the last lines up too.
     const filled = shape.rows ? Math.ceil(rows / shape.rows) * shape.rows : rows;
     list.style.minHeight = `${Math.max(0, filled * (row + down) - down)}px`;
-    const inView = shelf.slice(first * columns, (first + count) * columns);
-    list.replaceChildren(...inView.map((name) => {
+    const inView = shelf.slice(first * columns, (first + count) * columns).map((name) => {
         if (!tiles.has(name)) {
             tiles.set(name, gameTile(name));
         }
         return tiles.get(name);
-    }));
+    });
+    // Only the tiles coming and going: taking them all off and putting them
+    // back has WebKit draw every cover again, and they flicker as the shelf
+    // scrolls.
+    const staying = new Set(inView);
+    for (const element of [...list.children]) {
+        if (!staying.has(element)) {
+            element.remove();
+        }
+    }
+    let next = list.firstElementChild;
+    for (const element of inView) {
+        if (element === next) {
+            next = next.nextElementSibling;
+        } else {
+            list.insertBefore(element, next);
+        }
+    }
     showSelected();
 }
 
@@ -702,6 +718,54 @@ const placeShelfSoon = () => {
 };
 addEventListener('scroll', placeShelfSoon, { passive: true });
 addEventListener('resize', placeShelfSoon);
+
+/// In the desktop app, the mouse wheel glides the page here, a little each
+/// frame: WebKit on Linux scrolls a wheel's steps ahead of drawing what they
+/// bring in, and the scene behind the games flashes through. Scrolled from
+/// here, as a gamepad does, each step's drawn before it's shown.
+if (native) {
+    const LINE = 40;
+    let target = null;
+    let left = 0; // where the last step left it
+    const glide = () => {
+        if (target === null) {
+            return;
+        }
+        if (Math.abs(scrollY - left) > 1) {
+            target = null; // scrolled some other way meanwhile
+            return;
+        }
+        // A quarter of the way there each frame, but at least a pixel.
+        const gap = target - scrollY;
+        const to = Math.abs(gap) <= 2 ? target : scrollY + Math.sign(gap) * Math.max(1, Math.abs(gap) / 4);
+        const from = scrollY;
+        scrollTo(0, to);
+        left = scrollY;
+        if (to === target || left === from) {
+            target = null; // there, or as far as it goes
+        } else {
+            requestAnimationFrame(glide);
+        }
+    };
+    addEventListener(
+        'wheel',
+        (event) => {
+            if (event.ctrlKey || event.target.closest('#hidden-games')) {
+                return; // a zoom, or a list scrolling in a box of its own
+            }
+            event.preventDefault();
+            const by = event.deltaY * [1, LINE, innerHeight][event.deltaMode];
+            const end = document.documentElement.scrollHeight - innerHeight;
+            const moving = target !== null;
+            target = Math.max(0, Math.min(end, (moving ? target : scrollY) + by));
+            if (!moving) {
+                left = scrollY;
+                requestAnimationFrame(glide);
+            }
+        },
+        { passive: false },
+    );
+}
 
 /// The picture of a game: its cover, or one made of its title, on a drawing
 /// of `media` if it's on any.

@@ -1264,16 +1264,26 @@ body.dropping::after {
   -webkit-user-select: none;
   cursor: default;
 }
+/* No elastic bounce past either end of the list, as WebKit on Linux has:
+   it moved everything, the sidebar and toolbar too. */
+.native,
 .native body {
-  background: #120429;
+  overscroll-behavior: none;
 }
 .native input,
 .native .row-text small {
   user-select: text;
   -webkit-user-select: text;
 }
+/* The scene, faded back behind the games, and still: moving, it would have
+   the whole window drawn again all the time. Centred on the library, right
+   of the sidebar. */
 .native #scene {
-  display: none;
+  left: 12.5rem;
+  opacity: 0.4;
+}
+.native #scene * {
+  animation: none;
 }
 .native #library {
   max-width: none;
