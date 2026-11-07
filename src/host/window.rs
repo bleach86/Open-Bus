@@ -442,6 +442,14 @@ impl Display for Window {
         self.take_events();
     }
 
+    fn can_close(&self) -> bool {
+        true
+    }
+
+    fn close(&mut self) {
+        self.closed = true;
+    }
+
     fn no_picture(&mut self) {
         self.take_events();
     }
@@ -510,7 +518,7 @@ impl Display for Window {
     }
 
     fn hint(&self) -> Option<&'static str> {
-        launched().then_some("F5, OR HOLD SELECT + START: LIBRARY")
+        Some(if launched() { "SELECT + START: MENU, HELD: BACK" } else { "F1 OR SELECT + START: MENU" })
     }
 
     fn reset_held(&self) -> bool {

@@ -67,6 +67,12 @@ pub trait Machine: Bus + Serialize + DeserializeOwned {
         None
     }
 
+    /// What it has of its own for the menu over it: each a name, and the
+    /// function key it's as.
+    fn menu(&self) -> Vec<(&'static str, u8)> {
+        Vec::new()
+    }
+
     /// This coming frame's picture left out or not, for time, if it can be:
     /// whether it is. It runs the same either way.
     fn leave_out_picture(&mut self, _leave_out: bool) -> bool {

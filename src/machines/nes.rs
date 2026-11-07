@@ -556,6 +556,10 @@ impl Machine for Nes {
         }
     }
 
+    fn menu(&self) -> Vec<(&'static str, u8)> {
+        if matches!(self.cartridge.mapper, cartridge::Mapper::Fds(_)) { vec![("CHANGE DISK SIDE", CHANGE_DISK_KEY)] } else { Vec::new() }
+    }
+
     /// F9 changes a Disk System's disk.
     fn function_key(&mut self, key: u8) -> Option<String> {
         if key == CHANGE_DISK_KEY { self.cartridge.change_disk() } else { None }

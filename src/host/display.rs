@@ -75,6 +75,14 @@ pub trait Display {
         None
     }
 
+    /// Whether it can be closed by what's shown in it, as a window can; and
+    /// closed, as if by its close button.
+    fn can_close(&self) -> bool {
+        false
+    }
+
+    fn close(&mut self) {}
+
     /// Whether it's to look for that, or for the controls as they are.
     fn capture(&mut self, _on: bool) {}
 

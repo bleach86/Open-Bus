@@ -830,6 +830,14 @@ impl Machine for Apple2 {
         self.key_down = input.key_down;
     }
 
+    fn menu(&self) -> Vec<(&'static str, u8)> {
+        let mut items = vec![("NEXT MONITOR", 8)];
+        if self.disk2.is_some() {
+            items.extend([("NEXT DISK, DRIVE 1", 9), ("NEXT DISK, DRIVE 2", 10)]);
+        }
+        items
+    }
+
     /// F8, the next monitor, colour or monochrome; F9, the next disk in
     /// drive 1; F10, the next in drive 2, or none.
     fn function_key(&mut self, key: u8) -> Option<String> {

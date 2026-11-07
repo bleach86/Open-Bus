@@ -7,6 +7,7 @@
 #[cfg(test)]
 mod tests {
     use crate::cpu::{CPU, Variant};
+    use crate::host::controls::{Action, Controls};
     use crate::host::display::{Display, Gamepad, Key};
     use crate::host::machine::Machine;
     use crate::host::run::Host;
@@ -30,9 +31,15 @@ mod tests {
         closed: bool,
         /// Closed once it's shown this many pictures, if it's to be.
         close_after: Option<usize>,
+        /// What's pressed, as bindings, while it's looking; the controls as
+        /// they were at the last picture.
+        pressed: Vec<String>,
+        controls: Option<Controls>,
     }
 
-    struct Window(Rc<RefCell<Seen>>);
+    /// The test's window: its own controls, never saved, as the window's
+    /// are, to the user's file.
+    struct Window(Rc<RefCell<Seen>>, Controls);
 
     impl Display for Window {
         fn show(&mut self, pixels: &[u32], width: usize, height: usize) {
@@ -40,6 +47,24 @@ mod tests {
             seen.pictures += 1;
             seen.size = (width, height);
             seen.last = pixels.to_vec();
+            seen.controls = Some(self.1.clone());
+        }
+
+        fn can_close(&self) -> bool {
+            true
+        }
+
+        fn close(&mut self) {
+            self.0.borrow_mut().closed = true;
+        }
+
+        fn pressed(&mut self) -> Option<String> {
+            let pressed = &mut self.0.borrow_mut().pressed;
+            (!pressed.is_empty()).then(|| pressed.remove(0))
+        }
+
+        fn controls(&mut self) -> Option<&mut Controls> {
+            Some(&mut self.1)
         }
 
         fn key(&mut self) -> Option<Key> {
@@ -91,7 +116,7 @@ mod tests {
         cpu.reset();
         let seen = Rc::new(RefCell::new(Seen::default()));
         let state = std::env::temp_dir().join(format!("cpu_emu_{}_host_{name}.state", std::process::id()));
-        (Host::new(cpu, Box::new(Window(seen.clone())), state.clone()), seen, state)
+        (Host::new(cpu, Box::new(Window(seen.clone(), Controls::default())), state.clone()), seen, state)
     }
 
     #[test]
@@ -225,6 +250,99 @@ mod tests {
         assert_eq!(started.cpu.memory.ram[0x123], 0x45);
         assert!(started.notice.is_none(), "said it resumed");
         std::fs::remove_file(&resume).unwrap();
+    }
+
+    /// Frames with the first gamepad as `pad` has it.
+    fn frames_with(host: &mut Host<Nes>, seen: &Rc<RefCell<Seen>>, pad: Gamepad, frames: usize) {
+        for _ in 0..frames {
+            seen.borrow_mut().gamepad = pad;
+            host.frame();
+        }
+    }
+
+    const SELECT_START: Gamepad = Gamepad { select: true, start: true, up: false, down: false, left: false, right: false, a: false, b: false };
+    const NONE: Gamepad = Gamepad { select: false, start: false, up: false, down: false, left: false, right: false, a: false, b: false };
+
+    #[test]
+    fn select_and_start_tapped_together_open_the_menu_and_the_game_never_sees_them() {
+        let (mut host, seen, _) = host("menu");
+        frames_with(&mut host, &seen, NONE, 2);
+        frames_with(&mut host, &seen, SELECT_START, 5);
+        assert_eq!(host.cpu.memory.gamepad, NONE, "the game saw them");
+        frames_with(&mut host, &seen, NONE, 1);
+        let paused = host.cpu.clock;
+        frames_with(&mut host, &seen, NONE, 3);
+        assert_eq!(host.cpu.clock, paused, "the game went on under the menu");
+        assert!(seen.borrow().pictures >= 10, "nothing shown while it's up");
+        // B goes back to it.
+        frames_with(&mut host, &seen, Gamepad { b: true, ..NONE }, 1);
+        frames_with(&mut host, &seen, NONE, 2);
+        assert!(host.cpu.clock > paused, "still paused");
+    }
+
+    #[test]
+    fn held_long_they_dont_open_it_and_alone_the_game_has_them_at_once() {
+        let (mut host, seen, _) = host("held");
+        frames_with(&mut host, &seen, SELECT_START, 60);
+        frames_with(&mut host, &seen, NONE, 2);
+        let running = host.cpu.clock;
+        frames_with(&mut host, &seen, NONE, 1);
+        assert!(host.cpu.clock > running, "a long hold opened the menu");
+        frames_with(&mut host, &seen, Gamepad { start: true, ..NONE }, 1);
+        assert!(host.cpu.memory.gamepad.start, "Start alone held back");
+        // Joined by Select, it's let go of, as far as the game knows, until
+        // both are.
+        frames_with(&mut host, &seen, SELECT_START, 1);
+        assert_eq!(host.cpu.memory.gamepad, NONE, "the game saw them together");
+        frames_with(&mut host, &seen, Gamepad { start: true, ..NONE }, 1);
+        assert!(!host.cpu.memory.gamepad.start, "Start given again before it was let go");
+    }
+
+    #[test]
+    fn from_the_menu_a_state_is_saved_and_its_quit() {
+        let (mut host, seen, state) = host("menu_items");
+        let _ = std::fs::remove_file(&state);
+        seen.borrow_mut().function_keys.push(1);
+        frames_with(&mut host, &seen, NONE, 2);
+        let down = Gamepad { down: true, ..NONE };
+        let choose = Gamepad { a: true, ..NONE };
+        // Resume, then Save state.
+        for pad in [down, NONE, choose, NONE] {
+            frames_with(&mut host, &seen, pad, 1);
+        }
+        assert!(state.exists(), "not saved");
+        assert_eq!(host.notice.as_ref().map(|(text, _)| text.as_str()), Some("State saved"));
+        // Up from Resume is the last, Quit.
+        seen.borrow_mut().function_keys.push(1);
+        frames_with(&mut host, &seen, NONE, 2);
+        frames_with(&mut host, &seen, Gamepad { up: true, ..NONE }, 1);
+        frames_with(&mut host, &seen, NONE, 1);
+        seen.borrow_mut().gamepad = choose;
+        assert!(!host.frame(), "not quit");
+        std::fs::remove_file(&state).unwrap();
+    }
+
+    #[test]
+    fn controls_are_changed_by_the_gamepad_alone_and_cancelled() {
+        let (mut host, seen, _) = host("controls");
+        seen.borrow_mut().function_keys.push(6);
+        host.frame();
+        // Down the list to B, chosen, and the next press bound to it.
+        seen.borrow_mut().pressed.extend(["pad:dpdown", "pad:dpdown", "pad:dpdown", "pad:dpdown", "pad:dpdown", "pad:a", "pad:y"].map(String::from));
+        host.frame();
+        host.frame();
+        let bound = seen.borrow().controls.clone().unwrap();
+        assert!(bound.of(0, Action::B).contains(&"pad:y"), "not bound: {:?}", bound.of(0, Action::B));
+        assert!(!bound.of(0, Action::B).contains(&"pad:x"), "the button it had is still bound");
+        // B cancels: as they were.
+        seen.borrow_mut().pressed.push("pad:b".to_string());
+        host.frame();
+        host.frame();
+        let after = seen.borrow().controls.clone().unwrap();
+        assert_eq!(after, Controls::default());
+        let running = host.cpu.clock;
+        host.frame();
+        assert!(host.cpu.clock > running, "still changing them");
     }
 
     #[test]
