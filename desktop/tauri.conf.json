@@ -26,6 +26,7 @@
     "targets": "all",
     "category": "Game",
     "shortDescription": "An emulator of the Apple II and the NES, from the 6502 up",
+    "license": "GPL-3.0-or-later",
     "linux": {
       "deb": { "depends": ["libsdl2-2.0-0"] },
       "rpm": { "depends": ["SDL2"] }
