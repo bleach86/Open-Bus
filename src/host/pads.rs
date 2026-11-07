@@ -23,9 +23,10 @@ const PUSHED: f32 = 0.5;
 const LOOK_EVERY: Duration = Duration::from_millis(4);
 const SETTLE: Duration = Duration::from_millis(150);
 
-/// What the library moves by, as it's bound, and its shoulder buttons.
+/// What the library moves by, as it's bound, and its shoulders and triggers.
 const LIBRARY: [Action; 7] = [Action::Up, Action::Down, Action::Left, Action::Right, Action::A, Action::B, Action::Start];
-const SHOULDERS: [(&str, &str); 2] = [("leftshoulder", "previous"), ("rightshoulder", "next")];
+const SHOULDERS: [(&str, &str); 4] =
+    [("leftshoulder", "previous"), ("rightshoulder", "next"), ("lefttrigger", "pageup"), ("righttrigger", "pagedown")];
 
 /// To be said before SDL starts, by anything using it for gamepads: that
 /// buttons go by where they are; and SDL's own driver for Switch

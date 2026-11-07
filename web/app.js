@@ -356,7 +356,7 @@ function gameTile(name) {
     const known = art.get(key);
     const button = document.createElement('button');
     button.className = 'play';
-    button.title = [titleOf(name), known?.developer, name].filter(Boolean).join('\n');
+    button.dataset.tip = [titleOf(name), known?.developer, name].filter(Boolean).join('\n');
     button.onclick = () => (native
         ? playNatively({ kind: 'nes', game: name })
         : start(() => Emulator.nes(name, 8), 'nes', [name]));
@@ -383,12 +383,15 @@ function shelfShape(list) {
     return { columns, row: tile * COVER_SHAPE + words, down };
 }
 
-/// Gamepad or arrow keys around the library. A selection, by name on the
-/// shelf of games, by place among the Apple's tiles; held directions repeat.
+/// Gamepad or arrow keys around the library. On the shelf of games a tile's
+/// selected, by name; anywhere else, the page's buttons, choices, ticks and
+/// the Apple's disks are moved between by where they are. Held directions
+/// repeat.
 /// Nothing's taken until all's let go, coming back from a game, so that the
 /// A that ended it, say, doesn't start another.
 let selectedGame = null;
-let selectedDisk = -1;
+/// What's moved to off the shelf of games, if anything is.
+let padFocus = null;
 let moving = '';
 let moveAgainAt = 0;
 let wasPressed = {};
@@ -417,15 +420,24 @@ function navigationPressed() {
         }
         pressed.previous ||= shoulders(pad, 4);
         pressed.next ||= shoulders(pad, 5);
+        pressed.pageup ||= shoulders(pad, 6);
+        pressed.pagedown ||= shoulders(pad, 7);
     }
     return pressed;
 }
 
-/// The selection shown, where the tiles are.
+/// The selection shown: a tile's, on the shelf of games or a disk's; or
+/// what else is moved to, ringed.
 function showSelected() {
     document.querySelectorAll('.tile.selected').forEach((tile) => tile.classList.remove('selected'));
-    tiles.get(selectedGame)?.classList.add('selected');
-    document.querySelectorAll('#disks .tile')[selectedDisk]?.classList.add('selected');
+    document.querySelectorAll('.pad-focus').forEach((element) => element.classList.remove('pad-focus'));
+    if (!padFocus) {
+        tiles.get(selectedGame)?.classList.add('selected');
+    } else if (padFocus.closest('.tile')) {
+        padFocus.closest('.tile').classList.add('selected');
+    } else {
+        padFocus.classList.add('pad-focus');
+    }
 }
 
 /// The selection on the shelf of games moved, and scrolled to.
@@ -437,7 +449,9 @@ function moveInGames(way) {
         // The first press takes the first tile in view.
         selectedGame = shelf[Math.min(shelfRow, Math.ceil(shelf.length / columns) - 1) * columns] ?? shelf[0];
     } else {
-        const step = { up: -columns, down: columns, left: -1, right: 1 }[way];
+        const toolbar = document.querySelector('.toolbar').getBoundingClientRect().height;
+        const page = Math.max(1, Math.floor((innerHeight - toolbar) / (row + down))) * columns;
+        const step = { up: -columns, down: columns, left: -1, right: 1, pageup: -page, pagedown: page }[way] ?? 0;
         selectedGame = shelf[Math.min(shelf.length - 1, Math.max(0, at + step))];
     }
     const height = row + down;
@@ -453,26 +467,88 @@ function moveInGames(way) {
     showSelected();
 }
 
-function moveInDisks(way) {
-    const all = [...document.querySelectorAll('#disks .tile')];
-    if (!all.length) {
-        return;
-    }
-    const columns = getComputedStyle(page('disks')).gridTemplateColumns.split(' ').length;
-    const step = { up: -columns, down: columns, left: -1, right: 1 }[way];
-    selectedDisk = selectedDisk < 0 ? 0 : Math.min(all.length - 1, Math.max(0, selectedDisk + step));
-    showSelected();
-    all[selectedDisk].scrollIntoView({ block: 'nearest' });
+/// What can be moved to off the shelf of games: the toolbar's buttons and
+/// choice, the page's buttons, choices and ticks, the Apple's disks; not the
+/// search, which wants typing, nor a tile's remove button.
+function focusable() {
+    const all = document.querySelectorAll(['.toolbar button', '.toolbar select', '.shelf:not([hidden]) button',
+        '.shelf:not([hidden]) select', '.shelf:not([hidden]) summary', '.shelf:not([hidden]) label.check', '#disks .tile label'].join());
+    return [...all].filter((element) => !element.closest('#games') && !element.matches('.remove')
+        && !element.disabled && element.getClientRects().length);
 }
 
-const move = (way) => (gamesShowing() ? moveInGames(way) : appleShowing() && moveInDisks(way));
+/// The nearest of `options` from `from` the way `way` goes: by how far
+/// along it, and more by how far off to the side.
+function nearest(from, way, options) {
+    const at = from.getBoundingClientRect();
+    const [x, y] = [at.left + at.width / 2, at.top + at.height / 2];
+    let best = null;
+    let bestScore = Infinity;
+    for (const option of options.filter((option) => option !== from)) {
+        const there = option.getBoundingClientRect();
+        const [dx, dy] = [there.left + there.width / 2 - x, there.top + there.height / 2 - y];
+        const [along, aside] = { up: [-dy, dx], down: [dy, dx], left: [-dx, dy], right: [dx, dy] }[way] ?? [0, 0];
+        const score = along + 2 * Math.abs(aside);
+        if (along > 1 && score < bestScore) {
+            [best, bestScore] = [option, score];
+        }
+    }
+    return best;
+}
 
-/// A press of confirm: the selected game started, or disk ticked.
+/// `element` moved to, and scrolled to, unless it's on the toolbar, which
+/// stays in view.
+function focusOn(element) {
+    padFocus = element;
+    showSelected();
+    if (!element.closest('.toolbar')) {
+        element.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+/// Back on the shelf of games' own selection.
+function backToShelf() {
+    padFocus = null;
+    moveInGames('here');
+}
+
+/// A move: on the shelf of games, tile to tile, up off its top row onto the
+/// toolbar; anywhere else, to the nearest that way, down off the bottom of
+/// the toolbar onto the shelf of games.
+function move(way) {
+    if (gamesShowing() && !padFocus) {
+        const { columns } = shelfShape(page('games'));
+        const at = shelf.indexOf(selectedGame);
+        const tile = tiles.get(selectedGame);
+        const above = way === 'up' && at >= 0 && at < columns && tile && nearest(tile, 'up', focusable());
+        return above ? focusOn(above) : moveInGames(way);
+    }
+    if (way === 'down' && padFocus?.closest('.toolbar') && gamesShowing()) {
+        return backToShelf();
+    }
+    const options = focusable();
+    if (!options.includes(padFocus)) {
+        const disk = options.find((option) => option.closest('#disks'));
+        return focusOn(disk ?? options.find((option) => !option.closest('.toolbar')) ?? options[0]);
+    }
+    const next = nearest(padFocus, way, options);
+    if (next) {
+        focusOn(next);
+    } else if (way === 'down' && gamesShowing()) {
+        backToShelf();
+    }
+}
+
+/// A press of confirm: the selected game started; or what's moved to
+/// pressed, a disk ticked, a choice on to its next option.
 function confirmSelected() {
-    if (gamesShowing()) {
+    if (padFocus instanceof HTMLSelectElement) {
+        padFocus.selectedIndex = (padFocus.selectedIndex + 1) % padFocus.options.length;
+        padFocus.dispatchEvent(new Event('change'));
+    } else if (padFocus) {
+        padFocus.click();
+    } else if (gamesShowing()) {
         tiles.get(selectedGame)?.querySelector('.play').click();
-    } else if (appleShowing()) {
-        document.querySelectorAll('#disks .tile')[selectedDisk]?.querySelector('label').click();
     }
 }
 
@@ -481,6 +557,16 @@ function nextTab(step) {
     const at = shelves.findIndex((tab) => tab.classList.contains('on'));
     shelves[(at + step + shelves.length) % shelves.length].click();
 }
+
+/// The pointer hidden while a gamepad or the arrow keys are going round the
+/// library, and what's under it not lit up as if it were chosen; back once
+/// the mouse moves.
+const pointerGone = (gone) => document.body.classList.toggle('pointer-gone', gone);
+addEventListener('mousemove', (event) => {
+    if (event.movementX || event.movementY) {
+        pointerGone(false);
+    }
+});
 
 /// A frame of the library: what's newly pressed acted on.
 function navigate(now) {
@@ -496,7 +582,10 @@ function navigate(now) {
         wasPressed = pressed;
         return;
     }
-    const way = ['up', 'down', 'left', 'right'].find((direction) => pressed[direction]) ?? '';
+    if (Object.values(pressed).some(Boolean)) {
+        pointerGone(true);
+    }
+    const way = ['up', 'down', 'left', 'right', 'pageup', 'pagedown'].find((direction) => pressed[direction]) ?? '';
     if (way !== moving) {
         moveAgainAt = now + FIRST_REPEAT;
         moving = way;
@@ -511,6 +600,8 @@ function navigate(now) {
     if (newly('a')) {
         navigationWaits = true;
         confirmSelected();
+    } else if (newly('b') && padFocus && gamesShowing()) {
+        backToShelf();
     } else if (newly('b')) {
         const search = page('filter');
         if (search.value) {
@@ -536,8 +627,9 @@ addEventListener('keydown', (event) => {
     const way = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[event.code];
     if (way) {
         event.preventDefault();
+        pointerGone(true);
         move(way);
-    } else if (event.code === 'Enter' && (selectedGame || selectedDisk >= 0) && document.activeElement === document.body) {
+    } else if (event.code === 'Enter' && (selectedGame || padFocus) && document.activeElement === document.body) {
         event.preventDefault();
         confirmSelected();
     }
@@ -657,7 +749,7 @@ function diskTile(game, wanted) {
     item.className = 'tile';
     const label = document.createElement('label');
     label.className = 'play';
-    label.title = several ? title : game.disks[0];
+    label.dataset.tip = several ? title : game.disks[0];
     const box = document.createElement('input');
     box.type = 'checkbox';
     box.className = 'unseen';

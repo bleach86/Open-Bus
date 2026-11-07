@@ -504,7 +504,6 @@ ul {
   border-radius: 1rem;
   background: #4c4257;
 }
-.play:hover .art,
 .play:focus-visible .art,
 .play:has(input:focus-visible) .art {
   translate: 0 -3px;
@@ -1363,10 +1362,6 @@ body.dropping::after {
   box-shadow: none;
   transition: none;
 }
-.native .play:hover .art {
-  translate: none;
-  box-shadow: 0 0 0 2px var(--cyan);
-}
 
 /* The shelf of games: rows of a fixed height, for app.js to place them. */
 #games {
@@ -1419,9 +1414,76 @@ body.dropping::after {
   }
 }
 
-/* What a gamepad or the arrow keys have selected: within the art, as a tile
-   on the shelf of games clips what's outside it. */
-.tile.selected .art {
-  outline: 4px solid var(--cyan);
-  outline-offset: -4px;
+/* What's chosen: a game's box ringed a little way out, the ring slowly
+   pulsing, its title lit. By the mouse, the one under it; by a gamepad or the
+   arrow keys, the one they've moved to, shown only while they're what's in
+   use, so that there's only ever one. Out past the edge the shelf of games
+   clips a tile at otherwise. */
+#games .tile.selected,
+#games .tile:hover {
+  overflow: visible;
 }
+body.pointer-gone .tile.selected .art,
+body:not(.pointer-gone) .play:hover .art,
+body.pointer-gone .pad-focus {
+  outline: 3px solid #3fe7ff;
+  outline-offset: 4px;
+  animation: chosen 1.6s ease-in-out infinite;
+}
+@keyframes chosen {
+  50% {
+    outline-color: #1f6bff;
+  }
+}
+body.pointer-gone .tile.selected .tile-title,
+body:not(.pointer-gone) .play:hover .tile-title {
+  color: #3fe7ff;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.pointer-gone .tile.selected .art,
+  body:not(.pointer-gone) .play:hover .art,
+  body.pointer-gone .pad-focus {
+    animation: none;
+  }
+}
+
+/* A gamepad or the arrow keys in use: no pointer, and nothing lit up by
+   where it was left. */
+body.pointer-gone,
+body.pointer-gone * {
+  cursor: none !important;
+}
+
+/* A tile's tooltip, drawn by the page, not the browser, whose stays up when
+   the pointer's hidden: inside the tile, which clips what's outside it, and
+   clear of its remove button. */
+.play[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: 4px;
+  right: 34px;
+  left: 4px;
+  z-index: 2;
+  padding: 0.3rem 0.45rem;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  font: 12px/1.35 system-ui, sans-serif;
+  color: var(--text);
+  background: #0b0614eb;
+  border-radius: 4px;
+  pointer-events: none;
+  opacity: 0;
+  animation: tip 0.15s 0.6s forwards;
+}
+@keyframes tip {
+  to {
+    opacity: 1;
+  }
+}
+.pointer-gone .play[data-tip]::after {
+  display: none;
+}
+.pointer-gone .tile:hover .remove {
+  visibility: hidden;
+}
+
