@@ -1267,7 +1267,8 @@ body.dropping::after {
 /* No elastic bounce past either end of the list, as WebKit on Linux has:
    it moved everything, the sidebar and toolbar too. */
 .native,
-.native body {
+.native body,
+.native #library {
   overscroll-behavior: none;
 }
 .native input,
@@ -1275,20 +1276,56 @@ body.dropping::after {
   user-select: text;
   -webkit-user-select: text;
 }
-/* The scene, faded back behind the games, and still: moving, it would have
-   the whole window drawn again all the time. Centred on the library, right
-   of the sidebar. */
+/* The scene, faded back behind the games, frosted, and still: moving, it
+   would have the whole window drawn again all the time. Under the sidebar
+   too, but centred on the library, right of it: as far past the right edge
+   as the sidebar's wide. And a little past the window's edges, so that the
+   blur doesn't fade out at them. */
 .native #scene {
-  left: 12.5rem;
-  opacity: 0.4;
+  inset: -3rem;
+  right: -15.5rem;
+  opacity: 0.45;
+  filter: blur(8px) saturate(1.2);
+}
+.native #scene::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #d8ccff26;
 }
 .native #scene * {
   animation: none;
 }
+/* A scene in pixels instead, scenes.js's: crisp, so neither blurred nor
+   hazed, and the window's size. */
+.native #scene.pixel {
+  inset: 0;
+  filter: none;
+}
+.native #scene.pixel::after,
+#scene.pixel > div {
+  display: none;
+}
+#scene canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+#background {
+  margin-left: .5rem;
+}
 .native #library {
   max-width: none;
-  margin: 0 0 0 12.5rem;
-  padding: 0 1rem 1rem;
+  margin: 0;
+  /* Past the sidebar: the library's the whole window, the sidebar in it,
+     as WebKit cuts off what's fixed in place outside what scrolls it. */
+  padding: 0 1rem 1rem 13.5rem;
+  /* The games scroll here, not the window: the scrollbar's then over the
+     scene, not beside it. And what's placed by the page, as a file choice's
+     hidden input is, is placed here instead, or the window would scroll
+     too. */
+  position: relative;
+  height: 100vh;
+  overflow-y: auto;
 }
 .native .toolbar {
   margin: 0 -1rem;
@@ -1299,6 +1336,11 @@ body.dropping::after {
 }
 .native .tools {
   flex: 1;
+}
+/* Nothing on the toolbar, in Settings, but the sidebar: no bar. */
+.native .toolbar:has(#tools[hidden]) {
+  padding: 0;
+  border: 0;
 }
 .native .tools input {
   flex: 1 1 auto;
@@ -1318,7 +1360,11 @@ body.dropping::after {
   gap: .1rem;
   margin: 0;
   padding: .9rem .5rem;
-  background: #0d0221;
+  /* Frosted glass over the scene. Nothing scrolls under it, so it's
+     blurred once, not as the games go by. */
+  background: linear-gradient(#ffffff10, #ffffff06), #0d022180;
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.4);
   border-right: 1px solid #ffffff14;
 }
 .native .tabs h1 {

@@ -7,12 +7,16 @@ import { games, isVolume, storedNames, shortName, natural } from './disks.js';
 import { findCovers } from './covers.js';
 import * as bindings from './controls.js';
 import { artKey, isMedia, keyOf, plainTitle, tagsOf, takeArt, titleWords } from './art.js';
+import { drawScene } from './scenes.js';
 
 /// The emulator's WebAssembly: the browser's only, the desktop app's games
 /// being the native emulator's, which sorts its ROMs too.
 const { default: init, Emulator, RomSorter, put_file, read_file, read_part, written_files, changed_files, take_changed_parts } = native ? {} : await import('./pkg/cpu_emu.js');
 
 const page = (id) => document.getElementById(id);
+/// What the library scrolls in: in the desktop app, the library itself, its
+/// scrollbar over the scene behind it; in a browser, the page.
+const scroller = native ? page('library') : document.scrollingElement;
 const IIE_ROMS = {
     apple2ee: ['Apple IIe Enhanced ROM Pages C0-DF - 342-0304-A - 1984.bin',
         'Apple IIe Enhanced ROM Pages E0-FF - 342-0303-A - 1984.bin',
@@ -474,13 +478,14 @@ function moveInGames(way) {
     }
     const height = row + down;
     const rowAt = Math.floor(shelf.indexOf(selectedGame) / columns);
-    const top = list.getBoundingClientRect().top + scrollY + rowAt * height;
+    const scrolled = scroller.scrollTop;
+    const top = list.getBoundingClientRect().top + scrolled + rowAt * height;
     const toolbar = document.querySelector('.toolbar').getBoundingClientRect().height;
-    if (top < scrollY + toolbar) {
-        scrollTo(0, top - toolbar - down);
-    } else if (top + row > scrollY + innerHeight) {
+    if (top < scrolled + toolbar) {
+        scroller.scrollTo(0, top - toolbar - down);
+    } else if (top + row > scrolled + innerHeight) {
         // The TV's shelf, whole rows to the screen, lined up by the top one.
-        scrollTo(0, rows ? top - toolbar - down - (rows - 1) * height : top + row + down - innerHeight);
+        scroller.scrollTo(0, rows ? top - toolbar - down - (rows - 1) * height : top + row + down - innerHeight);
     }
     placeShelf();
     showSelected();
@@ -716,13 +721,13 @@ const placeShelfSoon = () => {
         });
     }
 };
-addEventListener('scroll', placeShelfSoon, { passive: true });
+(native ? scroller : window).addEventListener('scroll', placeShelfSoon, { passive: true });
 addEventListener('resize', placeShelfSoon);
 
-/// In the desktop app, the mouse wheel glides the page here, a little each
-/// frame: WebKit on Linux scrolls a wheel's steps ahead of drawing what they
-/// bring in, and the scene behind the games flashes through. Scrolled from
-/// here, as a gamepad does, each step's drawn before it's shown.
+/// In the desktop app, the mouse wheel and the keys that scroll glide the
+/// library here, a little each frame: WebKit on Linux scrolls ahead of
+/// drawing what it brings in, the sidebar and toolbar jumping about. Scrolled
+/// from here, as a gamepad does, each step's drawn before it's shown.
 if (native) {
     const LINE = 40;
     let target = null;
@@ -731,19 +736,28 @@ if (native) {
         if (target === null) {
             return;
         }
-        if (Math.abs(scrollY - left) > 1) {
+        const now = scroller.scrollTop;
+        if (Math.abs(now - left) > 1) {
             target = null; // scrolled some other way meanwhile
             return;
         }
         // A quarter of the way there each frame, but at least a pixel.
-        const gap = target - scrollY;
-        const to = Math.abs(gap) <= 2 ? target : scrollY + Math.sign(gap) * Math.max(1, Math.abs(gap) / 4);
-        const from = scrollY;
-        scrollTo(0, to);
-        left = scrollY;
-        if (to === target || left === from) {
+        const gap = target - now;
+        const to = Math.abs(gap) <= 2 ? target : now + Math.sign(gap) * Math.max(1, Math.abs(gap) / 4);
+        scroller.scrollTo(0, to);
+        left = scroller.scrollTop;
+        if (to === target || left === now) {
             target = null; // there, or as far as it goes
         } else {
+            requestAnimationFrame(glide);
+        }
+    };
+    /// Glided to `to`, from where it's going if it's moving already.
+    const glideTo = (to) => {
+        const moving = target !== null;
+        target = Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, to(moving ? target : scroller.scrollTop)));
+        if (!moving) {
+            left = scroller.scrollTop;
             requestAnimationFrame(glide);
         }
     };
@@ -754,17 +768,31 @@ if (native) {
                 return; // a zoom, or a list scrolling in a box of its own
             }
             event.preventDefault();
-            const by = event.deltaY * [1, LINE, innerHeight][event.deltaMode];
-            const end = document.documentElement.scrollHeight - innerHeight;
-            const moving = target !== null;
-            target = Math.max(0, Math.min(end, (moving ? target : scrollY) + by));
-            if (!moving) {
-                left = scrollY;
-                requestAnimationFrame(glide);
-            }
+            const by = event.deltaY * [1, LINE, scroller.clientHeight][event.deltaMode];
+            glideTo((from) => from + by);
         },
         { passive: false },
     );
+    addEventListener('keydown', (event) => {
+        const on = document.activeElement;
+        if (/^(INPUT|SELECT|TEXTAREA)$/.test(on?.tagName) || event.ctrlKey || event.altKey || event.metaKey) {
+            return;
+        }
+        // A screenful, less the toolbar over its top.
+        const screen = scroller.clientHeight - document.querySelector('.toolbar').getBoundingClientRect().height - LINE;
+        const space = event.code === 'Space' && on === document.body; // not a button's press
+        const to = {
+            PageDown: (from) => from + screen,
+            PageUp: (from) => from - screen,
+            Space: space && ((from) => from + (event.shiftKey ? -screen : screen)),
+            Home: () => 0,
+            End: () => Infinity,
+        }[event.code];
+        if (to) {
+            event.preventDefault();
+            glideTo(to);
+        }
+    });
 }
 
 /// The picture of a game: its cover, or one made of its title, on a drawing
@@ -1436,7 +1464,45 @@ if (native) {
     }
     page('quick-resume').onchange = ({ target }) => localStorage.setItem('resume', target.checked ? 'yes' : 'no');
     page('performance-mode').onchange = ({ target }) => localStorage.setItem('performance', target.checked ? 'yes' : 'no');
+    page('background').value = localStorage.getItem('background') ?? 'smooth';
+    page('background').onchange = ({ target }) => {
+        localStorage.setItem('background', target.value);
+        showScene();
+    };
 }
+
+/// The scene behind the library: the smooth one, or one in pixels, about as
+/// many lines tall as the NES's picture and scaled up by whole pixels, more
+/// of it to the sides in a wider window. The desktop app's chosen in
+/// Settings, and centred on the library, right of the sidebar; a browser's
+/// the sunset in pixels.
+function showScene() {
+    const name = native ? page('background').value : 'sunset';
+    const scene = page('scene');
+    scene.classList.toggle('pixel', name !== 'smooth');
+    let canvas = scene.querySelector('canvas');
+    if (name === 'smooth') {
+        canvas?.remove();
+        return;
+    }
+    if (!canvas) {
+        canvas = document.createElement('canvas');
+        scene.append(canvas);
+    }
+    const scale = Math.max(1, Math.round(innerHeight / 240));
+    canvas.width = Math.ceil(innerWidth / scale);
+    canvas.height = Math.ceil(innerHeight / scale);
+    canvas.style.width = `${canvas.width * scale}px`;
+    canvas.style.height = `${canvas.height * scale}px`;
+    const sidebar = native ? document.querySelector('.tabs').getBoundingClientRect().width : 0;
+    drawScene(name, canvas, (sidebar + innerWidth) / 2 / scale);
+}
+showScene();
+let sceneDue = null;
+addEventListener('resize', () => {
+    clearTimeout(sceneDue);
+    sceneDue = setTimeout(showScene, 100);
+});
 
 // Running a machine.
 let emulator = null;
