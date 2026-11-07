@@ -10,8 +10,9 @@
 //! battery (bit 1), a 512-byte trainer before the PRG (bit 2), and the
 //! mapper's low nibble; flags 7, its high nibble, and in bits 2 and 3 a 2
 //! for NES 2.0, whose byte 8 has the mapper's bits 8 to 11 and bytes 10
-//! and 11 its RAMs' sizes. An old header with junk in its last bytes (a
-//! ripper's name) has none in flags 7 either, taken as 0.
+//! and 11 its RAMs' sizes, if its ROMs as it has them fit in the image. An
+//! old header with junk in its last bytes (a ripper's name) has none in
+//! flags 7 either, taken as 0.
 //!
 //! The mappers:
 //!
@@ -141,6 +142,7 @@
 //! driving the bus, the bits it holds low win; the register's given what
 //! was written ANDed with the ROM's byte there.
 
+use super::database::{self, Known};
 use super::fds::Fds;
 use super::mmc5::{self, Mmc5};
 use super::region::Region;
@@ -477,13 +479,37 @@ const PRG_BANK: usize = 0x4000;
 const CHR_BANK: usize = 0x2000;
 
 impl Cartridge {
-    /// The cartridge in the iNES image `image`.
+    /// The cartridge in the iNES image `image`: as the database has it if
+    /// it knows the game, unless that's a board that isn't here yet and the
+    /// header's is, as many a game on a near enough board's has been run.
     pub fn new(image: &[u8]) -> Result<Cartridge, String> {
+        Cartridge::known_as(image, database::find)
+    }
+
+    /// The cartridge in `image`, as `find` knows its game by its ROMs'
+    /// CRC-32, or as its header has it.
+    pub(super) fn known_as(
+        image: &[u8],
+        find: fn(u32) -> Option<&'static Known>,
+    ) -> Result<Cartridge, String> {
+        Cartridge::read(image, find)
+            .or_else(|known| Cartridge::read(image, |_| None).map_err(|_| known))
+    }
+
+    /// The cartridge in `image`, as `find` knows it, if it does.
+    fn read(image: &[u8], find: fn(u32) -> Option<&'static Known>) -> Result<Cartridge, String> {
         let header = image
             .get(..HEADER)
             .filter(|header| header.starts_with(b"NES\x1A"))
             .ok_or("not an iNES image")?;
-        let nes2 = header[7] & 0x0C == 0x08;
+        // NES 2.0, unless the ROMs it says there are wouldn't fit in the
+        // image: then it's an old header's junk that looks like it.
+        let trainer = if header[6] & 0x04 != 0 { TRAINER } else { 0 };
+        let nes2 = header[7] & 0x0C == 0x08 && {
+            let prg = (header[4] as usize | ((header[9] & 0x0F) as usize) << 8) * PRG_BANK;
+            let chr = (header[5] as usize | ((header[9] >> 4) as usize) << 8) * CHR_BANK;
+            HEADER + trainer + prg + chr <= image.len()
+        };
         let junk = !nes2 && header[12..16].iter().any(|&byte| byte != 0);
         let high = if junk { 0 } else { header[7] & 0xF0 };
         let mut number = (header[6] >> 4) as u16 | high as u16;
@@ -505,8 +531,27 @@ impl Cartridge {
             prg_ram_size = sizes(header[10]);
             chr_ram_size = sizes(header[11]);
         }
-        let submapper = if nes2 { header[8] >> 4 } else { 0 };
-        let start = HEADER + if header[6] & 0x04 != 0 { TRAINER } else { 0 };
+        let mut submapper = if nes2 { header[8] >> 4 } else { 0 };
+        let start = HEADER + trainer;
+        // A game the database knows is as it has it. One it's checked is
+        // as sure as a NES 2.0 header; one it hasn't only adds RAM.
+        let known = image
+            .get(start..)
+            .and_then(|roms| find(crate::host::zip::crc32(roms)));
+        let mut battery = header[6] & 0x02 != 0;
+        if let Some(known) = known {
+            number = known.mapper;
+            submapper = known.submapper.unwrap_or(0);
+            (prg_size, chr_size) = (known.prg_rom, known.chr_rom);
+            if known.checked() || known.chr_ram > 0 {
+                chr_ram_size = known.chr_ram;
+            }
+            if known.checked() || known.prg_ram > 0 {
+                prg_ram_size = known.prg_ram;
+            }
+            battery |= known.battery;
+        }
+        let told = nes2 || known.is_some_and(Known::checked);
         let prg_rom = image
             .get(start..start + prg_size)
             .ok_or("its PRG ROM cut short")?
@@ -527,11 +572,11 @@ impl Cartridge {
             _ => None,
         };
         let rom_crc = crate::host::zip::crc32(&[&prg_rom[..], &chr_rom[..]].concat());
-        let mmc6 = number == 4 && ((nes2 && header[8] >> 4 == 1) || MMC6_GAMES.contains(&rom_crc));
-        if mmc6 && !nes2 {
+        let mmc6 = number == 4 && ((told && submapper == 1) || MMC6_GAMES.contains(&rom_crc));
+        if mmc6 && !told {
             prg_ram_size = 0x400;
         }
-        if number == 64 && !nes2 {
+        if number == 64 && !told {
             prg_ram_size = 0;
         }
         if number == 5 {
@@ -542,6 +587,7 @@ impl Cartridge {
             0x01 => Mirroring::Vertical,
             _ => Mirroring::FourScreen,
         };
+        let mirroring = known.and_then(|known| known.mirroring).unwrap_or(mirroring);
         let mapper = match number {
             0 => Mapper::Nrom,
             1 => Mapper::Mmc1(Mmc1 {
@@ -578,7 +624,7 @@ impl Cartridge {
             11 if MAPPER_144_GAMES.contains(&rom_crc) => {
                 Mapper::ColorDreams(Banks::new(Conflicts::RomD0))
             }
-            11 if nes2 && submapper == 2 => Mapper::ColorDreams(Banks::new(Conflicts::And)),
+            11 if told && submapper == 2 => Mapper::ColorDreams(Banks::new(Conflicts::And)),
             11 => Mapper::ColorDreams(Banks::new(Conflicts::None)),
             144 => Mapper::ColorDreams(Banks::new(Conflicts::RomD0)),
             34 if submapper == 1 || (submapper != 2 && chr_size > CHR_BANK) => {
@@ -623,7 +669,7 @@ impl Cartridge {
                     prg_ram_size
                 }
             ],
-            battery: header[6] & 0x02 != 0,
+            battery,
             written: false,
             mirroring,
             mapper,

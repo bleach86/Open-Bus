@@ -56,6 +56,7 @@
 
 pub mod apu;
 pub mod cartridge;
+mod database;
 pub mod fds;
 pub mod mmc5;
 pub mod palette;
@@ -66,6 +67,7 @@ pub mod region;
 mod tests {
     mod cartridge;
     mod controllers;
+    mod database;
     mod fds;
     mod mmc5;
     mod sound;

@@ -1,11 +1,13 @@
 //! The cartridge: an iNES header's sizes, mirroring, battery, trainer and
-//! mapper, NES 2.0's and an old header's junk too; NROM's 16K mirrored,
+//! mapper, NES 2.0's and an old header's junk too; a game the database
+//! knows as it has it; NROM's 16K mirrored,
 //! its CHR RAM; the nametables' wiring; the small boards' banks, where
 //! their registers are, and their bus conflicts.
 
 #[cfg(test)]
 mod tests {
     use crate::machines::nes::cartridge::{Board, Cartridge, Mapper, Mirroring};
+    use crate::machines::nes::database::Known;
 
     /// An iNES image: its flags 6 to 15, then `prg` 16K banks, each its
     /// number in every byte, and `chr` 8K banks of $C0 and its number.
@@ -87,10 +89,86 @@ mod tests {
             mapper([0x00, 0x44, 0, 0, 0, 0, b'D', b'i', b's', b'k']).unwrap(),
             Mapper::Nrom
         );
+        // Junk that looks like NES 2.0, but its ROMs as that has them
+        // wouldn't fit in the image: an old header's junk all the same.
+        assert_eq!(
+            mapper([0x00, 0x48, 0, 0x4C, 0, 0, b'N', b'i', b'0', b'3']).unwrap(),
+            Mapper::Nrom
+        );
         assert!(Cartridge::new(b"not an image").is_err());
         assert!(
             Cartridge::new(&image(2, 1, [0; 10])[..0x5000]).is_err(),
             "cut short"
+        );
+    }
+
+    /// A game a database knows: NROM, 32K and 8K, vertical, no RAM, checked.
+    static KNOWN: Known = Known {
+        mapper: 0,
+        submapper: Some(0),
+        prg_rom: 0x8000,
+        chr_rom: 0x2000,
+        chr_ram: 0,
+        prg_ram: 0,
+        battery: false,
+        mirroring: Some(Mirroring::Vertical),
+    };
+
+    #[test]
+    fn a_known_game_is_as_the_database_has_it() {
+        // Its header says CNROM, 16K, horizontal, a battery.
+        let mut cnrom = image(2, 1, [0x32, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        cnrom[4] = 1;
+        let cart = Cartridge::known_as(&cnrom, |_| Some(&KNOWN)).unwrap();
+        assert_eq!(
+            (
+                cart.mapper,
+                cart.prg_rom.len(),
+                cart.mirroring,
+                cart.prg_ram.len()
+            ),
+            (Mapper::Nrom, 0x8000, Mirroring::Vertical, 0),
+            "checked, it has no RAM"
+        );
+        assert!(cart.battery, "a battery the database hasn't still kept");
+        let unchecked = |_| {
+            static UNCHECKED: Known = Known {
+                submapper: None,
+                battery: true,
+                mirroring: None,
+                ..KNOWN
+            };
+            Some(&UNCHECKED)
+        };
+        let cart = Cartridge::known_as(&image(2, 1, [0; 10]), unchecked).unwrap();
+        assert_eq!(
+            (cart.prg_ram.len(), cart.battery, cart.mirroring),
+            (0x2000, true, Mirroring::Horizontal),
+            "unchecked, the header's RAM and mirroring, a battery added"
+        );
+    }
+
+    #[test]
+    fn a_known_game_on_a_board_not_here_is_as_its_header_has_it() {
+        let karaoke = |_| {
+            static KARAOKE: Known = Known {
+                mapper: 188,
+                ..KNOWN
+            };
+            Some(&KARAOKE)
+        };
+        let cart =
+            Cartridge::known_as(&image(2, 1, [0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0]), karaoke).unwrap();
+        assert_eq!(
+            (cart.mapper, cart.mirroring),
+            (Mapper::Nrom, Mirroring::Vertical)
+        );
+        let neither =
+            Cartridge::known_as(&image(2, 1, [0x10, 0x40, 0, 0, 0, 0, 0, 0, 0, 0]), karaoke);
+        assert_eq!(
+            neither.err().as_deref(),
+            Some("mapper 188, which isn't here yet"),
+            "the database's board named"
         );
     }
 
