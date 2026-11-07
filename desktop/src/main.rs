@@ -273,13 +273,11 @@ fn seen(app: &AppHandle, paths: Vec<PathBuf>) {
     }
 }
 
-/// Whether `folder`'s on another computer, where a watcher's not told of
-/// what's done there, only of what's done from here: an NFS, SMB or SSH
-/// mount's, on Linux, as /proc/mounts has them; a share's, on Windows.
+/// Whether `folder`'s on another computer whose changes a watcher isn't told
+/// of, only of what's done from here: an NFS, SMB or SSH mount's, on Linux,
+/// as /proc/mounts has them. Windows asks an SMB server to tell it of changes
+/// there, by anyone, so its shares are watched as well as its own folders.
 fn on_network(folder: &str) -> bool {
-    if folder.starts_with(r"\\") {
-        return true;
-    }
     let Ok(mounts) = fs::read_to_string("/proc/mounts") else { return false };
     let mount = mounts
         .lines()
