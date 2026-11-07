@@ -1263,10 +1263,21 @@ async function fillSettings() {
     if (!folders.length) {
         page('folders').append(row('No folders yet. Add one to start your library.'));
     }
+    // How many, and the list itself only when it's asked for, in a box of
+    // its own height: hundreds of them would make Settings go on for ever.
+    page('hidden-list').hidden = !hidden.length;
+    page('nothing-hidden').hidden = hidden.length > 0;
+    page('hidden-count').textContent = `${hidden.length} game${hidden.length === 1 ? '' : 's'} hidden`;
     page('hidden-games').replaceChildren(...hidden.map((path) => row(shortName(path), path, 'Restore', async () => {
         await native.restore(path);
         await lookForChanges();
     })));
+    page('restore-all').onclick = async () => {
+        for (const path of hidden) {
+            await native.restore(path);
+        }
+        await lookForChanges();
+    };
     const has = (name) => files.includes(name);
     const appleFound = [...DISK_II_ROMS, ...IIE_ROMS.apple2ee].filter(has).length;
     page('system-files').replaceChildren(

@@ -688,6 +688,15 @@ summary {
 details.short summary {
   color: var(--gold);
 }
+/* Settings' hidden games: their list scrolls in a box of its own. */
+.hidden-list #hidden-games {
+  max-height: 18rem;
+  overflow-y: auto;
+}
+.hidden-list summary {
+  padding: 0.3rem 0;
+  font-size: 0.85rem;
+}
 #rom-list li {
   padding-left: 0.25rem;
 }

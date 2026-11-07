@@ -59,8 +59,12 @@
 
     <h2>Hidden games</h2>
     <p class="quiet">Games you've removed from the library. Their files are still where they were.</p>
-    <ul id="hidden-games" class="rows"></ul>
-    <p class="empty">Nothing's hidden.</p>
+    <details id="hidden-list" class="hidden-list">
+      <summary id="hidden-count"></summary>
+      <ul id="hidden-games" class="rows"></ul>
+      <p class="row-actions"><button id="restore-all">Restore all</button></p>
+    </details>
+    <p id="nothing-hidden" class="quiet">Nothing's hidden.</p>
 
     <h2>Games</h2>
     <p class="row-actions"><label class="check"><input id="tv-layout" type="checkbox"> TV layout</label></p>
