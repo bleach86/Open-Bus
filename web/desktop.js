@@ -92,8 +92,6 @@ export const restore = (path) => invoke('restore_hidden', { path });
 /// How many games there are in `folder`.
 export const gamesIn = (folder) => [...where.values()].filter((path) => slashes(path).startsWith(`${slashes(folder)}/`)).length;
 
-/// `told` of what's chosen on the app's menu.
-export const whenMenu = (told) => listen('menu', ({ payload }) => told(payload));
 
 /// A file at `path` as the page reads one, not read until it's wanted.
 export function laterFile(path) {
@@ -143,6 +141,12 @@ export const sortRoms = (paths) => invoke('sort_roms', { paths });
 export const whenPads = (told) => listen('pads', ({ payload }) => {
     told(Object.fromEntries(payload.split(' ').filter(Boolean).map((name) => [name, true])));
 });
+
+/// The window fullscreen, or back as it was.
+export const fullscreen = (on) => invoke('fullscreen', { on });
+
+/// The app closed.
+export const quit = () => invoke('quit');
 
 /// `told` when a game's over, of what went wrong, if anything did.
 export const whenGameEnds = (told) => listen('game-ended', ({ payload }) => told(payload));

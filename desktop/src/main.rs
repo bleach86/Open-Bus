@@ -30,8 +30,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use tauri::ipc::{InvokeBody, Request, Response};
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 /// How long the library stays up after a game starts, for its window to be
@@ -470,37 +469,6 @@ fn sort_roms(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
     Ok(json!({ "held": of("held "), "roms": of("rom "), "chips": chips }))
 }
 
-/// The app's menu: its own items, told to the page, and the system's.
-fn menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let item = |id: &str, text: &str, keys: &str| MenuItem::with_id(app, id, text, true, Some(keys));
-    let library = Submenu::with_items(
-        app,
-        "Library",
-        true,
-        &[
-            &item("add-folder", "Add Folder…", "CmdOrCtrl+O")?,
-            &item("rescan", "Look for New Games", "CmdOrCtrl+R")?,
-            &item("find", "Search", "CmdOrCtrl+F")?,
-            &PredefinedMenuItem::separator(app)?,
-            &item("settings", "Settings…", "CmdOrCtrl+,")?,
-            &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::quit(app, None)?,
-        ],
-    )?;
-    let edit = Submenu::with_items(
-        app,
-        "Edit",
-        true,
-        &[
-            &PredefinedMenuItem::cut(app, None)?,
-            &PredefinedMenuItem::copy(app, None)?,
-            &PredefinedMenuItem::paste(app, None)?,
-            &PredefinedMenuItem::select_all(app, None)?,
-        ],
-    )?;
-    Menu::with_items(app, &[&library, &edit])
-}
-
 /// Where a window of `outer` size goes, framed `outer - inner`, in the part of
 /// a screen at `at` and `area` that's free, a taskbar's left out: its `inner`
 /// size no more than leaves it all there, and the place that centres it. Its
@@ -512,6 +480,51 @@ fn fitted(inner: (u32, u32), outer: (u32, u32), at: (i32, i32), area: (u32, u32)
     let (width, height) = (outer.0.min(area.0), outer.1.min(area.1));
     let size = (width.saturating_sub(frame.0), height.saturating_sub(frame.1));
     (size, (at.0 + (area.0 - width) as i32 / 2, at.1 + (area.1 - height) as i32 / 2))
+}
+
+/// The window's place and size as it was before it went fullscreen, to go
+/// back to after.
+#[derive(Default)]
+struct Windowed(Mutex<Option<(PhysicalPosition<i32>, PhysicalSize<u32>)>>);
+
+/// The window fullscreen, as the TV layout has it, or back as it was. Hidden
+/// and shown again for a game, a window manager can forget what it was, so
+/// it's kept here; and put back a moment after, once the window manager's done
+/// with putting back what it remembers. With nothing kept, it's as it first
+/// opens.
+#[tauri::command]
+fn fullscreen(app: AppHandle, window: WebviewWindow, on: bool) -> Result<(), String> {
+    let kept = app.state::<Windowed>();
+    let mut kept = kept.0.lock().map_err(|e| e.to_string())?;
+    if on {
+        if kept.is_none() && !window.is_fullscreen().map_err(|e| e.to_string())? {
+            *kept = Some((window.outer_position().map_err(|e| e.to_string())?, window.inner_size().map_err(|e| e.to_string())?));
+        }
+        return window.set_fullscreen(true).map_err(|e| e.to_string());
+    }
+    window.set_fullscreen(false).map_err(|e| e.to_string())?;
+    let was = kept.take();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(200));
+        match was {
+            Some((place, size)) => {
+                let _ = window.set_size(size);
+                let _ = window.set_position(place);
+            }
+            None => {
+                let _ = window.set_size(LogicalSize::new(1280.0, 800.0));
+                thread::sleep(Duration::from_millis(100));
+                let _ = fit_to_screen(&window);
+            }
+        }
+    });
+    Ok(())
+}
+
+/// The app closed: by Ctrl+Q, or for a gamepad, from Settings.
+#[tauri::command]
+fn quit(app: AppHandle) {
+    app.exit(0);
 }
 
 /// The window all on the screen it's opening on, however big that is, and
@@ -544,19 +557,16 @@ fn main() {
                 }
             })?;
             start_pads(app.handle());
-            app.set_menu(menu(app.handle())?)?;
             fit_to_screen(&app.get_webview_window("main").ok_or("no window")?)?;
-            app.on_menu_event(|app, event| {
-                let _ = app.emit("menu", event.id().0.clone());
-            });
             Ok(())
         })
         .manage(Dropped::default())
         .manage(Pads::default())
+        .manage(Windowed::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             all_files, known_files, file_bytes, keep_file, forget_path, keep_art, all_art, pick_folder, take_dropped, folder_files, play,
-            library_settings, remove_folder, restore_hidden, sort_roms
+            library_settings, remove_folder, restore_hidden, sort_roms, fullscreen, quit
         ])
         .run(tauri::generate_context!())
         .expect("couldn't open the window");

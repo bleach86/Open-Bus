@@ -56,6 +56,7 @@ const SHOWN_EVERY = 24;
 /// The shelf's sizes, in rem, and a cover's height as a share of its width,
 /// as the CSS has them; and rows of tiles kept either side of those in view.
 const SMALLEST_TILE = 9;
+const TV_TILE = 14;
 const GAP_ACROSS = 0.9;
 const GAP_DOWN = 1.1;
 const CAPTION = 3.7;
@@ -229,12 +230,17 @@ function showShelf(name) {
         fillSettings();
     }
     placeShelf();
-    for (const tab of document.querySelectorAll('.tabs button')) {
+    for (const tab of document.querySelectorAll('.tabs button[data-tab]')) {
         tab.classList.toggle('on', tab.dataset.tab === name);
     }
+    // What a gamepad had, gone with the page it was on.
+    if (padFocus && !focusable().includes(padFocus)) {
+        padFocus = null;
+    }
+    showSelected();
 }
 
-for (const tab of document.querySelectorAll('.tabs button')) {
+for (const tab of document.querySelectorAll('.tabs button[data-tab]')) {
     tab.onclick = () => showShelf(tab.dataset.tab);
 }
 
@@ -376,7 +382,8 @@ let shelfPlaced = -1;
 /// A row's height, and how many tiles are in one: as the CSS's grid has it.
 function shelfShape(list) {
     const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
-    const [smallest, across, down, words] = [SMALLEST_TILE, GAP_ACROSS, GAP_DOWN, CAPTION].map((size) => size * rem);
+    const least = document.documentElement.classList.contains('tv') ? TV_TILE : SMALLEST_TILE;
+    const [smallest, across, down, words] = [least, GAP_ACROSS, GAP_DOWN, CAPTION].map((size) => size * rem);
     const width = list.clientWidth;
     const columns = Math.max(1, Math.floor((width + across) / (smallest + across)));
     const tile = (width - across * (columns - 1)) / columns;
@@ -552,9 +559,12 @@ function confirmSelected() {
     }
 }
 
+/// The next shelf, or the one before, by the shoulder buttons: the gamepad
+/// starting afresh on it, but for the shelf of games' own selection.
 function nextTab(step) {
-    const shelves = [...document.querySelectorAll('.tabs button')].filter((tab) => !tab.hidden);
+    const shelves = [...document.querySelectorAll('.tabs button[data-tab]')].filter((tab) => !tab.hidden);
     const at = shelves.findIndex((tab) => tab.classList.contains('on'));
+    padFocus = null;
     shelves[(at + step + shelves.length) % shelves.length].click();
 }
 
@@ -1100,7 +1110,7 @@ function playNatively(machine) {
         say(`Disk System games need the BIOS, ${FDS_BIOS}: add it in Settings.`, true);
         return;
     }
-    const fullscreen = machine.kind !== 'controls' && page('start-fullscreen').checked;
+    const fullscreen = machine.kind !== 'controls' && (page('start-fullscreen').checked || page('tv-layout').checked);
     const fast = page('performance-mode').checked;
     const resume = machine.kind !== 'controls' && page('quick-resume').checked;
     native.play({ ...machine, fullscreen, fast, resume }).catch((problem) => say(String(problem), true));
@@ -1108,7 +1118,19 @@ function playNatively(machine) {
 native?.whenPads((pressed) => {
     padsSaid = pressed;
 });
+/// The TV layout: everything bigger, for across a room, the window
+/// fullscreen, and the pointer out of the way until the mouse moves.
+function tvLayout(on) {
+    document.documentElement.classList.toggle('tv', on);
+    native?.fullscreen(on);
+    pointerGone(on);
+    placeShelf(true);
+}
+
 native?.whenGameEnds((problem) => {
+    if (page('tv-layout').checked) {
+        native.fullscreen(true);
+    }
     navigationWaits = true;
     padsSaid = null;
     say(problem ?? '', Boolean(problem));
@@ -1247,26 +1269,46 @@ if (native) {
     page('tab-settings').hidden = false;
     addEventListener('contextmenu', (event) => event.preventDefault());
     native.whenDropped(({ folders, files: dropped }) => addNatively(folders, dropped).then(fillSettings));
-    native.whenMenu((item) => {
-        if (item === 'add-folder') {
-            chooseFolder();
-        } else if (item === 'settings') {
-            showShelf('settings');
-        } else if (item === 'find') {
-            showShelf(page('nes').hidden && page('apple-shelf').hidden ? 'nes' : localStorage.getItem('shelf'));
-            page('filter').focus();
-        } else if (item === 'rescan') {
-            lookForChanges(true);
+    // The keys a menu bar would have, without one: Ctrl, or Cmd on a Mac,
+    // with O to add a folder, R to look for new games, F to search, comma for
+    // Settings, Q to quit. R's not the page reloaded either.
+    addEventListener('keydown', (event) => {
+        if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || page('library').hidden) {
+            return;
+        }
+        const shortcut = {
+            KeyO: chooseFolder,
+            KeyR: () => lookForChanges(true),
+            KeyF: () => {
+                showShelf(page('nes').hidden && page('apple-shelf').hidden ? 'nes' : localStorage.getItem('shelf'));
+                page('filter').focus();
+            },
+            Comma: () => showShelf('settings'),
+            KeyQ: native.quit,
+        }[event.code];
+        if (shortcut) {
+            event.preventDefault();
+            shortcut();
         }
     });
     page('open-controls').hidden = true;
     page('add-path').onclick = chooseFolder;
     page('change-controls').onclick = () => playNatively({ kind: 'controls' });
     page('rescan').onclick = () => lookForChanges(true);
+    page('quit-app').onclick = () => native.quit();
+    page('quit-app').hidden = false;
     page('start-fullscreen').checked = localStorage.getItem('fullscreen') === 'yes';
     page('start-fullscreen').onchange = ({ target }) => localStorage.setItem('fullscreen', target.checked ? 'yes' : 'no');
     page('performance-mode').checked = localStorage.getItem('performance') === 'yes';
     page('quick-resume').checked = localStorage.getItem('resume') === 'yes';
+    page('tv-layout').checked = localStorage.getItem('tv') === 'yes';
+    page('tv-layout').onchange = ({ target }) => {
+        localStorage.setItem('tv', target.checked ? 'yes' : 'no');
+        tvLayout(target.checked);
+    };
+    if (page('tv-layout').checked) {
+        tvLayout(true);
+    }
     page('quick-resume').onchange = ({ target }) => localStorage.setItem('resume', target.checked ? 'yes' : 'no');
     page('performance-mode').onchange = ({ target }) => localStorage.setItem('performance', target.checked ? 'yes' : 'no');
 }

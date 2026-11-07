@@ -1331,6 +1331,15 @@ body.dropping::after {
 .native .tabs #tab-settings {
   margin-top: auto;
 }
+.native .tabs #quit-app {
+  justify-content: flex-start;
+  gap: 0.5rem;
+  color: var(--quiet);
+}
+.native .tabs #quit-app svg {
+  width: 1em;
+  height: 1em;
+}
 .native button,
 .native .button,
 .native select {
@@ -1485,5 +1494,14 @@ body.pointer-gone * {
 }
 .pointer-gone .tile:hover .remove {
   visibility: hidden;
+}
+
+/* The TV layout: a quarter bigger throughout, and fewer, bigger games across,
+   their smallest as TV_TILE has it. */
+html.tv {
+  font-size: 20px;
+}
+.tv .grid {
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
 }
 
