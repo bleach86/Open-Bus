@@ -28,7 +28,7 @@ const FDS_BIOS = 'disksys.rom';
 const kind = (name) => name.split('.').pop().toLowerCase();
 const isGame = (name) => ['nes', 'fds', 'zip'].includes(kind(name));
 const isDisk = (name) => ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'].includes(kind(name));
-const isOurs = (name) => ['srm', 'state'].includes(kind(name));
+const isOurs = (name) => ['srm', 'state', 'resume'].includes(kind(name));
 const isRom = (name) => kind(name) === 'rom' || DISK_II_ROMS.includes(name) || Object.values(IIE_ROMS).flat().includes(name);
 const isUsable = (name) => isGame(name) || isDisk(name) || isOurs(name) || isRom(name);
 /// The most a file can be and hold a ROM, a zip's and any other's; and what
@@ -1010,7 +1010,8 @@ function playNatively(machine) {
     }
     const fullscreen = machine.kind !== 'controls' && page('start-fullscreen').checked;
     const fast = page('performance-mode').checked;
-    native.play({ ...machine, fullscreen, fast }).catch((problem) => say(String(problem), true));
+    const resume = machine.kind !== 'controls' && page('quick-resume').checked;
+    native.play({ ...machine, fullscreen, fast, resume }).catch((problem) => say(String(problem), true));
 }
 native?.whenPads((pressed) => {
     padsSaid = pressed;
@@ -1173,6 +1174,8 @@ if (native) {
     page('start-fullscreen').checked = localStorage.getItem('fullscreen') === 'yes';
     page('start-fullscreen').onchange = ({ target }) => localStorage.setItem('fullscreen', target.checked ? 'yes' : 'no');
     page('performance-mode').checked = localStorage.getItem('performance') === 'yes';
+    page('quick-resume').checked = localStorage.getItem('resume') === 'yes';
+    page('quick-resume').onchange = ({ target }) => localStorage.setItem('resume', target.checked ? 'yes' : 'no');
     page('performance-mode').onchange = ({ target }) => localStorage.setItem('performance', target.checked ? 'yes' : 'no');
 }
 

@@ -421,6 +421,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
     command
         .args(line)
         .args(machine["fullscreen"].as_bool().unwrap_or(false).then_some("--fullscreen"))
+        .args(machine["resume"].as_bool().unwrap_or(false).then_some("--resume"))
         .arg(window_place(&window)?)
         .current_dir(&library)
         .stderr(Stdio::piped());

@@ -197,6 +197,37 @@ mod tests {
     }
 
     #[test]
+    fn put_away_it_resumes_where_it_was() {
+        let (mut first, seen, state) = host("resume");
+        let resume = state.with_extension("resume");
+        let _ = std::fs::remove_file(&resume);
+        first.resume();
+        assert!(first.notice.is_none(), "resumed with nothing to resume");
+        first.frame();
+        first.cpu.memory.ram[0x123] = 0x45;
+        first.keep_for_resuming();
+        assert!(!state.exists(), "F2's state written");
+        let (mut again, _, _) = host("resume");
+        again.resume();
+        assert_eq!(again.cpu.memory.ram[0x123], 0x45, "not where it was");
+        assert_eq!(again.notice.as_ref().map(|(text, _)| text.as_str()), Some("Resumed"));
+        assert_eq!(seen.borrow().pictures, 1);
+        std::fs::remove_file(&resume).unwrap();
+    }
+
+    #[test]
+    fn a_state_to_resume_that_wont_load_starts_it_afresh() {
+        let (mut started, _, state) = host("unresumable");
+        let resume = state.with_extension("resume");
+        std::fs::write(&resume, b"not a state").unwrap();
+        started.cpu.memory.ram[0x123] = 0x45;
+        started.resume();
+        assert_eq!(started.cpu.memory.ram[0x123], 0x45);
+        assert!(started.notice.is_none(), "said it resumed");
+        std::fs::remove_file(&resume).unwrap();
+    }
+
+    #[test]
     fn it_runs_to_the_cpus_clock_until_its_closed() {
         let (mut host, seen, _) = host("clock");
         host.cpu.clock_hz = crate::machines::nes::CLOCK_HZ;

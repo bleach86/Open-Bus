@@ -20,6 +20,7 @@ use crate::host::notice;
 use crate::host::save_state;
 use crate::host::stats::Stats;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -50,6 +51,11 @@ const FRAMES_A_SECOND: u32 = 60;
 /// How far behind its clock a machine is before it leaves out a picture, if
 /// it can: half a frame.
 const LATE: Duration = Duration::from_millis(8);
+
+/// Quick resume, if it's asked for: a state kept as a machine's put away, and
+/// gone on from the next time it's run, a file of its own beside the state F2
+/// saves, which it leaves alone.
+pub static RESUME: AtomicBool = AtomicBool::new(false);
 
 pub struct Host<M: Machine> {
     pub cpu: CPU<M>,
@@ -270,6 +276,10 @@ impl<M: Machine> Host<M> {
     /// closed. The time due is from the start, so a late frame is made up
     /// by the next.
     pub fn run(mut self) {
+        let resuming = RESUME.load(Ordering::Relaxed);
+        if resuming {
+            self.resume();
+        }
         let start = Instant::now();
         while self.frame() {
             let due_ns = self.cycles as u128 * 1_000_000_000 / self.cpu.clock_hz as u128;
@@ -279,6 +289,40 @@ impl<M: Machine> Host<M> {
                 sleep(due - elapsed);
             }
             self.late = elapsed > due + LATE;
+        }
+        if resuming {
+            self.keep_for_resuming();
+        }
+    }
+
+    /// Where the state to resume from is: beside the one F2 saves.
+    fn resume_file(&self) -> PathBuf {
+        self.state.with_extension("resume")
+    }
+
+    /// Gone on from where it was put away, if it was, and said so. A state
+    /// that won't load, as one from before a change to what's saved won't,
+    /// is told of, and it starts afresh.
+    pub fn resume(&mut self) {
+        let file = self.resume_file();
+        if !files::exists(&file) {
+            return;
+        }
+        let loaded = files::read(&file)
+            .map_err(|e| e.to_string())
+            .and_then(|state| save_state::restore(&mut self.cpu, &state));
+        match loaded {
+            Ok(()) => self.say("Resumed"),
+            Err(e) => eprintln!("{}: not resumed: {e}", file.display()),
+        }
+    }
+
+    /// Its state kept, as it's put away, to resume from.
+    pub fn keep_for_resuming(&mut self) {
+        let file = self.resume_file();
+        let kept = save_state::state(&self.cpu).and_then(|state| files::save(&file, &state).map_err(|e| e.to_string()));
+        if let Err(e) = kept {
+            eprintln!("{}: not kept to resume: {e}", file.display());
         }
     }
 
