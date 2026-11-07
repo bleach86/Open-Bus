@@ -153,6 +153,29 @@
 //! that bank at $8000 and $C000, not 32K of it and the next; and of the CHR's 8K
 //! bank, A3 to A0 the high bits, the data's two the low.
 //!
+//! Boards of one register, written at $8000 up, that's all there is to
+//! them: what was last written, each its bits' meaning.
+//!
+//! 94, UN1ROM: as UxROM, its bank in bits 2 to 4. 180, Crazy Climber's
+//! UNROM: the first 16K fixed at $8000, a bank at $C000.
+//!
+//! 13, CPROM: 16K of CHR RAM, its first 4K at $0000, a 4K bank at $1000
+//! (bits 0 and 1).
+//!
+//! 185, CNROM with its CHR ROM as copy protection: CHR there only if what's
+//! written, with bus conflicts, says so; NES 2.0's submappers 4 to 7, its
+//! bits 0 and 1 being theirs, and else its low four bits not 0 and it not
+//! $13. Without it, the pattern tables are open bus, the address's low
+//! byte, but with D0 pulled up, as Mighty Bomb Jack needs to start.
+//!
+//! 70, Bandai's: a 16K bank at $8000 (bits 4 to 6), the last fixed, and an
+//! 8K bank of CHR (bits 0 to 3). 152: as 70, bit 7 which 1K all four
+//! nametables are.
+//!
+//! 89, Sunsoft-2 on Mito Koumon: as 152, but the nametables' 1K bit 3,
+//! and bit 7 the CHR bank's bit 3. 93, Sunsoft-2 on Fantasy Zone: a 16K bank
+//! (bits 4 to 6), its CHR RAM there only with bit 0 set.
+//!
 //! Bus conflicts: on a board whose register is written with its ROM still
 //! driving the bus, the bits it holds low win; the register's given what
 //! was written ANDed with the ROM's byte there.
@@ -380,6 +403,15 @@ pub enum Board {
     Namco3425,
     Namco3453,
     Mmc4,
+    Un1rom,
+    Unrom180,
+    Cprom,
+    /// 185's, its submapper saying when its CHR's there.
+    Cnrom185(u8),
+    Bandai70,
+    Bandai152,
+    Sunsoft89,
+    Sunsoft93,
 }
 
 impl Board {
@@ -466,6 +498,7 @@ pub enum Mapper {
     Mmc5(Box<Mmc5>),
     Active(Active),
     Fds(Box<Fds>),
+    Latch(u8),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -649,6 +682,10 @@ impl Cartridge {
             }),
             5 => Mapper::Mmc5(Box::new(Mmc5::new())),
             7 => Mapper::Axrom(0),
+            // Its CHR there at first, as it'd be with nothing written.
+            185 if submapper >= 4 => Mapper::Latch(submapper & 3),
+            185 | 93 => Mapper::Latch(1),
+            94 | 180 | 13 | 70 | 152 | 89 => Mapper::Latch(0),
             9 | 10 => Mapper::Mmc2(Mmc2 {
                 prg: 0,
                 chr: [[0; 2]; 2],
@@ -687,8 +724,19 @@ impl Cartridge {
             95 => Board::Namco3425,
             154 => Board::Namco3453,
             10 => Board::Mmc4,
+            94 => Board::Un1rom,
+            180 => Board::Unrom180,
+            13 => Board::Cprom,
+            185 => Board::Cnrom185(submapper),
+            70 => Board::Bandai70,
+            152 => Board::Bandai152,
+            89 => Board::Sunsoft89,
+            93 => Board::Sunsoft93,
             _ => Board::Plain,
         };
+        if board == Board::Cprom {
+            chr_ram_size = chr_ram_size.max(0x4000);
+        }
         let has_ram = chr_rom.is_empty() || board == Board::Tqrom;
         let chr_ram = if has_ram {
             vec![0; chr_ram_size.max(CHR_BANK)]
@@ -824,6 +872,18 @@ impl Cartridge {
         let in_16k = |bank: usize| bank * PRG_BANK + (addr & 0x3FFF);
         let offset = match &self.mapper {
             Mapper::Nrom | Mapper::Cnrom(_) => addr - 0x8000,
+            Mapper::Latch(_) if matches!(self.board, Board::Cprom | Board::Cnrom185(_)) => {
+                addr - 0x8000
+            }
+            Mapper::Latch(latch) if addr >= 0xC000 => in_16k(match self.board {
+                Board::Unrom180 => *latch as usize & 7,
+                _ => last_16k,
+            }),
+            Mapper::Latch(latch) => in_16k(match self.board {
+                Board::Un1rom => (*latch as usize >> 2) & 7,
+                Board::Unrom180 => 0,
+                _ => (*latch as usize >> 4) & 7,
+            }),
             Mapper::Uxrom(bank) | Mapper::Camerica(bank) => in_16k(if addr < 0xC000 {
                 *bank as usize
             } else {
@@ -934,6 +994,15 @@ impl Cartridge {
             | Mapper::Mmc5(_)
             | Mapper::Fds(_) => addr,
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
+            Mapper::Latch(latch) => {
+                let latch = *latch as usize;
+                match self.board {
+                    Board::Cprom if addr >= 0x1000 => (latch & 3) * 0x1000 + (addr & 0x0FFF),
+                    Board::Bandai70 | Board::Bandai152 => (latch & 0x0F) * CHR_BANK + addr,
+                    Board::Sunsoft89 => ((latch & 7) | (latch & 0x80) >> 4) * CHR_BANK + addr,
+                    _ => addr,
+                }
+            }
             Mapper::Active(active) => active.chr as usize * CHR_BANK + addr,
             Mapper::ColorDreams(banks) | Mapper::Nina03(banks) | Mapper::Gxrom(banks) => {
                 banks.chr as usize * CHR_BANK + addr
@@ -1121,6 +1190,24 @@ impl Cartridge {
             | Mapper::Mmc5(_)
             | Mapper::Fds(_) => {}
             Mapper::Uxrom(bank) | Mapper::Cnrom(bank) => *bank = value,
+            Mapper::Latch(latch) => {
+                *latch = match self.board {
+                    Board::Cnrom185(_) => value & rom,
+                    _ => value,
+                };
+                let upper = match self.board {
+                    Board::Bandai152 => Some(value & 0x80 != 0),
+                    Board::Sunsoft89 => Some(value & 0x08 != 0),
+                    _ => None,
+                };
+                if let Some(upper) = upper {
+                    self.mirroring = if upper {
+                        Mirroring::SingleUpper
+                    } else {
+                        Mirroring::SingleLower
+                    };
+                }
+            }
             Mapper::Axrom(bank) => {
                 *bank = value & 7;
                 self.mirroring = if value & 0x10 != 0 {
@@ -1389,6 +1476,9 @@ impl Cartridge {
             };
         }
         self.chr_pages = self.chr_pages_now();
+        if let Some(open_bus) = self.chr_off(addr) {
+            return open_bus;
+        }
         let at = self.chr_offset(addr);
         let value = if self.chr_in_ram(addr) {
             self.chr_ram[at]
@@ -1421,9 +1511,26 @@ impl Cartridge {
         let moves = matches!(
             self.mapper,
             Mapper::Mmc2(_) | Mapper::Mmc5(_) | Mapper::Fds(_)
-        ) || self.board == Board::Tqrom;
+        ) || self.board == Board::Tqrom
+            || self.chr_off(0).is_some();
         (!moves && chr > 0 && chr % 0x400 == 0)
             .then(|| std::array::from_fn(|page| self.chr_offset(page as u16 * 0x400) as u32))
+    }
+
+    /// What a read of CHR address `addr` gets if its board has its CHR off:
+    /// open bus, the address's low byte, 185's D0 pulled up.
+    fn chr_off(&self, addr: u16) -> Option<u8> {
+        let Mapper::Latch(latch) = self.mapper else {
+            return None;
+        };
+        let on = match self.board {
+            Board::Sunsoft93 => latch & 1 != 0,
+            Board::Cnrom185(submapper @ 4..=7) => latch & 3 == submapper & 3,
+            Board::Cnrom185(_) => latch & 0x0F != 0 && latch != 0x13,
+            _ => true,
+        };
+        let pulled_up = matches!(self.board, Board::Cnrom185(_)) as u8;
+        (!on).then_some(addr as u8 | pulled_up)
     }
 
     /// A write to them: to its CHR RAM, if it has that.
@@ -1501,6 +1608,16 @@ impl Cartridge {
             Mapper::Nina03(_) => (79, "NINA-03"),
             Mapper::Active(_) => (228, "ACTIVE"),
             Mapper::Fds(_) => (20, "FDS"),
+            Mapper::Latch(_) => match self.board {
+                Board::Un1rom => (94, "UN1ROM"),
+                Board::Unrom180 => (180, "UNROM"),
+                Board::Cprom => (13, "CPROM"),
+                Board::Cnrom185(_) => (185, "CNROM"),
+                Board::Bandai70 => (70, "BANDAI"),
+                Board::Bandai152 => (152, "BANDAI"),
+                Board::Sunsoft89 => (89, "SUNSOFT-2"),
+                _ => (93, "SUNSOFT-2"),
+            },
             Mapper::Quattro(_) => (232, "QUATTRO"),
         };
         format!("MAPPER {number} {name}")

@@ -477,6 +477,100 @@ mod tests {
         assert_eq!(cart.cpu_read(0x6000), Some(0x5A), "its PRG RAM");
     }
 
+    #[test]
+    fn un1rom_has_its_bank_in_bits_2_to_4_and_unrom_180_at_c000() {
+        let mut cart = board(94, 8, 0);
+        cart.cpu_write(0x8000, 3 << 2, 0);
+        assert_eq!(
+            (cart.cpu_read(0x8020), cart.cpu_read(0xC020)),
+            (Some(3), Some(7))
+        );
+        let mut cart = board(180, 8, 0);
+        cart.cpu_write(0x8000, 2, 0);
+        assert_eq!(
+            (cart.cpu_read(0x8020), cart.cpu_read(0xC020)),
+            (Some(0), Some(2)),
+            "the first fixed, the bank after it"
+        );
+    }
+
+    #[test]
+    fn cprom_has_16k_of_chr_ram_a_4k_bank_at_1000() {
+        let mut cart = board(13, 2, 0);
+        cart.chr_write(0x0000, 0x33);
+        for bank in 1..4 {
+            cart.cpu_write(0x8000, bank, 0);
+            cart.chr_write(0x1000, 0x10 * bank);
+        }
+        for bank in 1..4 {
+            cart.cpu_write(0x8000, bank, 0);
+            assert_eq!(cart.chr_read(0x1000), 0x10 * bank, "bank {bank}");
+            assert_eq!(cart.chr_read(0x0000), 0x33, "$0000 fixed");
+        }
+        cart.cpu_write(0x8000, 0, 0);
+        assert_eq!(cart.chr_read(0x1000), 0x33, "bank 0, $0000's");
+    }
+
+    #[test]
+    fn cnrom_185s_chr_is_there_only_as_its_written_says() {
+        let mut cart = board(185, 2, 1);
+        assert_eq!(cart.chr_read(0x0012), 0xC0, "there at first");
+        cart.cpu_write(0x8000, 0x00, 0);
+        assert_eq!(cart.chr_read(0x0012), 0x13, "open bus, D0 pulled up");
+        cart.cpu_write(0x8000, 0x13, 0);
+        assert_eq!(cart.chr_read(0x0012), 0x13, "nor with $13");
+        cart.cpu_write(0x8000, 0x21, 0);
+        assert_eq!(cart.chr_read(0x0012), 0xC0);
+        cart.cpu_write(0x8020, 0x21, 0);
+        assert_eq!(cart.chr_read(0x0012), 0x13, "the ROM's 0 there winning");
+        // NES 2.0's submapper 5: there with bits 0 and 1 1. Written at
+        // $C000, the ROM's 1 there.
+        let mut cart =
+            Cartridge::new(&image(2, 1, [0x90, 0xB8, 0x50, 0, 0, 0, 0, 0, 0, 0])).unwrap();
+        assert_eq!(cart.chr_read(0x0012), 0xC0, "there at first");
+        cart.cpu_write(0xC000, 0x02, 0);
+        assert_eq!(cart.chr_read(0x0012), 0x13);
+        cart.cpu_write(0xC000, 0x05, 0);
+        assert_eq!(cart.chr_read(0x0012), 0xC0);
+    }
+
+    #[test]
+    fn bandais_have_a_16k_bank_and_an_8k_of_chr_and_152_its_one_screen() {
+        let mut cart = board(70, 8, 16);
+        cart.cpu_write(0x8000, 0xB5, 0);
+        assert_eq!(banks(&mut cart), (3, 7, 0xC5, 0xC5));
+        assert_eq!(cart.mirroring, Mirroring::Horizontal, "70's wired");
+        let mut cart = board(152, 8, 16);
+        cart.cpu_write(0x8000, 0xB5, 0);
+        assert_eq!(
+            (banks(&mut cart), cart.mirroring),
+            ((3, 7, 0xC5, 0xC5), Mirroring::SingleUpper)
+        );
+        cart.cpu_write(0x8000, 0x35, 0);
+        assert_eq!(cart.mirroring, Mirroring::SingleLower);
+    }
+
+    #[test]
+    fn sunsoft_2s_boards() {
+        // Mito Koumon's: the CHR bank's bit 3 in bit 7, the one screen in bit 3.
+        let mut cart = board(89, 8, 16);
+        cart.cpu_write(0x8000, 0x9D, 0);
+        assert_eq!(
+            (banks(&mut cart), cart.mirroring),
+            ((1, 7, 0xCD, 0xCD), Mirroring::SingleUpper)
+        );
+        // Fantasy Zone's: its CHR RAM there only with bit 0 set.
+        let mut cart = board(93, 8, 0);
+        cart.cpu_write(0x8000, 0x31, 0);
+        cart.chr_write(0x0123, 0x5A);
+        assert_eq!(
+            (cart.cpu_read(0x8020), cart.chr_read(0x0123)),
+            (Some(3), 0x5A)
+        );
+        cart.cpu_write(0x8000, 0x30, 0);
+        assert_eq!(cart.chr_read(0x0123), 0x23, "open bus");
+    }
+
     /// MMC3's CHR registers set: R0 to R5, each its value.
     fn mmc3_banks(cart: &mut Cartridge, inverted: bool, banks: [u8; 6]) {
         let invert = if inverted { 0x80 } else { 0 };
