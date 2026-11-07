@@ -27,11 +27,15 @@ const SETTLE: Duration = Duration::from_millis(150);
 const LIBRARY: [Action; 7] = [Action::Up, Action::Down, Action::Left, Action::Right, Action::A, Action::B, Action::Start];
 const SHOULDERS: [(&str, &str); 2] = [("leftshoulder", "previous"), ("rightshoulder", "next")];
 
-/// To be said before SDL starts, by anything using it for gamepads. SDL's own
-/// driver for Switch controllers, closing, leaves one in a mode Linux's
-/// driver doesn't read, dead to everything else until it's plugged in again:
-/// with that driver there, it's left to it, and SDL reads what it gives.
+/// To be said before SDL starts, by anything using it for gamepads: that
+/// buttons go by where they are; and SDL's own driver for Switch
+/// controllers, closing, leaves one in a mode Linux's driver doesn't read,
+/// dead to everything else until it's plugged in again: with that driver
+/// there, it's left to it, and SDL reads what it gives.
 pub fn prepare() {
+    // Buttons by where they are, not what they're labelled: a Nintendo
+    // pad's A, on the right, is an Xbox pad's B. The defaults are by where.
+    sdl2::hint::set("SDL_GAMECONTROLLER_USE_BUTTON_LABELS", "0");
     if Path::new("/sys/module/hid_nintendo").exists() {
         sdl2::hint::set("SDL_JOYSTICK_HIDAPI_SWITCH", "0");
         sdl2::hint::set("SDL_JOYSTICK_HIDAPI_JOY_CONS", "0");
