@@ -190,6 +190,30 @@ mod tests {
     }
 
     #[test]
+    fn turbo_presses_a_and_b_for_two_frames_and_lets_go_for_two() {
+        let (mut host, seen, _) = host("turbo");
+        seen.borrow_mut().gamepad = Gamepad {
+            turbo_a: true,
+            ..Gamepad::default()
+        };
+        seen.borrow_mut().gamepad_2 = Gamepad {
+            turbo_b: true,
+            b: true,
+            ..Gamepad::default()
+        };
+        let mut a = String::new();
+        for _ in 0..8 {
+            host.frame();
+            let nes = &host.cpu.memory;
+            a.push(if nes.gamepad.a { 'A' } else { '.' });
+            assert!(!nes.gamepad.turbo_a, "turbo given to the machine");
+            assert!(nes.gamepad_2.b, "B held as well, let go");
+        }
+        // Two pressed, two not, from wherever it starts.
+        assert!("AA..".repeat(3).contains(&a), "{a}");
+    }
+
+    #[test]
     fn f2_and_f4_and_their_notices_are_any_machines() {
         let (mut host, seen, state) = host("state");
         seen.borrow_mut().function_keys.push(4);
@@ -354,6 +378,8 @@ mod tests {
         right: false,
         a: false,
         b: false,
+        turbo_a: false,
+        turbo_b: false,
     };
     const NONE: Gamepad = Gamepad {
         select: false,
@@ -364,6 +390,8 @@ mod tests {
         right: false,
         a: false,
         b: false,
+        turbo_a: false,
+        turbo_b: false,
     };
 
     #[test]

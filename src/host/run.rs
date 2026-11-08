@@ -154,6 +154,8 @@ pub struct Host<M: Machine> {
     late: bool,
     left_out: bool,
     fast: u64,
+    /// The frames run, for turbo's pressing and letting go.
+    frames: u32,
     /// The menu, if it's up; how many frames Select and Start have been held
     /// together, and whether they're kept from the machine until they're
     /// let go; the Reset button's frames still to be held, as the menu has
@@ -184,6 +186,7 @@ impl<M: Machine> Host<M> {
             late: false,
             left_out: false,
             fast: 0,
+            frames: 0,
             menu: None,
             both_held: 0,
             holding_back: false,
@@ -544,14 +547,15 @@ impl<M: Machine> Host<M> {
         while let Some(key) = self.display.key() {
             self.cpu.memory.key(key);
         }
-        let mut gamepad = self.display.gamepad();
+        self.frames = self.frames.wrapping_add(1);
+        let mut gamepad = self.display.gamepad().turbo(self.frames);
         if self.menu_asked(&mut gamepad) && !self.display.text_only() {
             self.open_menu();
         }
         self.cpu.memory.input(Input {
             joystick: self.display.joystick(),
             gamepad,
-            gamepad_2: self.display.gamepad_2(),
+            gamepad_2: self.display.gamepad_2().turbo(self.frames),
             pointer: self.display.pointer(),
             key_down: self.display.key_down(),
         });

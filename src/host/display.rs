@@ -148,7 +148,8 @@ pub struct Pointer {
 }
 
 /// A gamepad as a console has it: its D-pad, its A and B, its Select and
-/// Start, each held or not.
+/// Start, each held or not; and its turbo A and B, held, which the host
+/// makes A and B pressed and let go by turns, as a turbo controller's are.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Gamepad {
     pub up: bool,
@@ -159,7 +160,29 @@ pub struct Gamepad {
     pub b: bool,
     pub select: bool,
     pub start: bool,
+    pub turbo_a: bool,
+    pub turbo_b: bool,
 }
+
+impl Gamepad {
+    /// As a machine's to have it, `frame` the host's count of them: its
+    /// turbo pressing A and B for TURBO_FRAMES, and letting go for as many.
+    pub fn turbo(self, frame: u32) -> Gamepad {
+        let pressed = frame / TURBO_FRAMES % 2 == 0;
+        Gamepad {
+            a: self.a || self.turbo_a && pressed,
+            b: self.b || self.turbo_b && pressed,
+            turbo_a: false,
+            turbo_b: false,
+            ..self
+        }
+    }
+}
+
+/// How long turbo holds a button, and lets it go: 15 presses a second, each
+/// seen by a game that reads its controller once a frame, and each letting
+/// go too.
+pub const TURBO_FRAMES: u32 = 2;
 
 /// A key as the host has it.
 #[derive(Clone, Copy, Debug, PartialEq)]

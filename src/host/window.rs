@@ -221,6 +221,8 @@ impl Window {
             b: held(Action::B),
             select: held(Action::Select),
             start: held(Action::Start),
+            turbo_a: held(Action::TurboA),
+            turbo_b: held(Action::TurboB),
         }
     }
 

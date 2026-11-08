@@ -155,6 +155,18 @@ mod tests {
     }
 
     #[test]
+    fn turbo_is_each_players_s_and_a_keys_and_the_east_and_north_buttons() {
+        let controls = Controls::default();
+        assert_eq!(controls.of(0, Action::TurboA), ["pad:b", "key:S"]);
+        assert_eq!(controls.of(0, Action::TurboB), ["pad:y", "key:A"]);
+        assert_eq!(
+            controls.of(1, Action::TurboA),
+            ["pad:b"],
+            "the second's gamepad"
+        );
+    }
+
+    #[test]
     fn bindings_are_said_for_people() {
         assert_eq!(said("key:Right Shift"), "RIGHT SHIFT");
         assert_eq!(said("pad:a"), "PAD A", "not to be taken for a key");

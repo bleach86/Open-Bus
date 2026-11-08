@@ -1,6 +1,6 @@
-//! What's pressed for what: for each player, each of the console's buttons;
-//! and for the first, the way back to the library, and fast-forward, held,
-//! what's bound to it. A binding's a word
+//! What's pressed for what: for each player, each of the console's buttons
+//! and turbo A and B; and for the first, the way back to the library, and
+//! fast-forward, held, what's bound to it. A binding's a word
 //! for what's held, the same for all of it: `key:X`, a key by the window's
 //! name for it; `pad:a`, a gamepad's button or `pad:lefty-`, a stick pushed
 //! that way, all on that player's gamepad.
@@ -23,11 +23,13 @@ pub enum Action {
     B,
     Select,
     Start,
+    TurboA,
+    TurboB,
     Library,
     FastForward,
 }
 
-pub const ACTIONS: [Action; 10] = [
+pub const ACTIONS: [Action; 12] = [
     Action::Up,
     Action::Down,
     Action::Left,
@@ -36,12 +38,15 @@ pub const ACTIONS: [Action; 10] = [
     Action::B,
     Action::Select,
     Action::Start,
+    Action::TurboA,
+    Action::TurboB,
     Action::Library,
     Action::FastForward,
 ];
 
-/// The console's own, each player's: the rest are the first player's only.
-pub const BUTTONS: usize = 8;
+/// Each player's: the console's buttons, and turbo. The rest are the first
+/// player's only.
+pub const BUTTONS: usize = 10;
 
 /// The file's word for an action.
 pub fn word(action: Action) -> &'static str {
@@ -54,6 +59,8 @@ pub fn word(action: Action) -> &'static str {
         Action::B => "b",
         Action::Select => "select",
         Action::Start => "start",
+        Action::TurboA => "turbo-a",
+        Action::TurboB => "turbo-b",
         Action::Library => "library",
         Action::FastForward => "fast",
     }
@@ -63,6 +70,8 @@ pub fn word(action: Action) -> &'static str {
 pub fn name(action: Action) -> String {
     match action {
         Action::FastForward => "FAST FORWARD".to_string(),
+        Action::TurboA => "TURBO A".to_string(),
+        Action::TurboB => "TURBO B".to_string(),
         _ => word(action).to_uppercase(),
     }
 }
@@ -85,7 +94,7 @@ pub fn is_stick(source: &str) -> bool {
     source.starts_with("pad:left") && source.ends_with(['+', '-'])
 }
 
-const GAMEPAD: [(Action, &str); 8] = [
+const GAMEPAD: [(Action, &str); 10] = [
     (Action::Up, "pad:dpup"),
     (Action::Down, "pad:dpdown"),
     (Action::Left, "pad:dpleft"),
@@ -94,6 +103,8 @@ const GAMEPAD: [(Action, &str); 8] = [
     (Action::B, "pad:x"),
     (Action::Select, "pad:back"),
     (Action::Start, "pad:start"),
+    (Action::TurboA, "pad:b"),
+    (Action::TurboB, "pad:y"),
 ];
 const STICK: [(Action, &str); 4] = [
     (Action::Up, "pad:lefty-"),
@@ -101,7 +112,7 @@ const STICK: [(Action, &str); 4] = [
     (Action::Left, "pad:leftx-"),
     (Action::Right, "pad:leftx+"),
 ];
-const KEYBOARD: [(Action, &str); 11] = [
+const KEYBOARD: [(Action, &str); 13] = [
     (Action::Up, "key:Up"),
     (Action::Down, "key:Down"),
     (Action::Left, "key:Left"),
@@ -111,6 +122,8 @@ const KEYBOARD: [(Action, &str); 11] = [
     (Action::Select, "key:Right Shift"),
     (Action::Select, "key:Tab"),
     (Action::Start, "key:Return"),
+    (Action::TurboA, "key:S"),
+    (Action::TurboB, "key:A"),
     (Action::Library, "key:F5"),
     (Action::FastForward, "key:`"),
 ];

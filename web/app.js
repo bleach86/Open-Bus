@@ -135,6 +135,9 @@ function showControlHelp() {
     );
 }
 
+/// What the dialog calls those whose names aren't words.
+const LABELS = { turboA: 'Turbo A', turboB: 'Turbo B', fast: 'Fast forward' };
+
 /// The dialog's rows, as they're bound now.
 function fillControls() {
     page('control-rows').replaceChildren(
@@ -142,7 +145,7 @@ function fillControls() {
             const item = document.createElement('li');
             const words = document.createElement('span');
             words.className = 'row-text';
-            words.textContent = action === 'fast' ? 'Fast forward' : action[0].toUpperCase() + action.slice(1);
+            words.textContent = LABELS[action] ?? action[0].toUpperCase() + action.slice(1);
             const note = document.createElement('small');
             note.textContent = controlsBound[controlsPlayer][action].map(bindings.said).join(', ') || 'Nothing';
             words.append(note);
@@ -1771,6 +1774,7 @@ function padState(pad) {
         a: button(0),
         b: button(west),
         east: button(1),
+        north: button(west === 3 ? 2 : 3),
         select: button(back),
         start: button(start),
         rightTrigger: raw ? push(5) > 0.5 : button(7),

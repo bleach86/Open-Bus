@@ -235,11 +235,12 @@ impl Emulator {
     }
 
     /// The controls as they are: each gamepad's a bit each, up, down, left,
-    /// right, A, B, Select, Start; and whether fast-forward's held.
+    /// right, A, B, Select, Start, turbo A and turbo B; and whether
+    /// fast-forward's held.
     pub fn controls(
         &self,
-        gamepad: u8,
-        gamepad_2: u8,
+        gamepad: u16,
+        gamepad_2: u16,
         x: f32,
         y: f32,
         buttons: u8,
@@ -247,8 +248,8 @@ impl Emulator {
         reset: bool,
         fast: bool,
     ) {
-        let pad = |bits: u8| {
-            let held = |bit: u8| bits >> bit & 1 != 0;
+        let pad = |bits: u16| {
+            let held = |bit: u16| bits >> bit & 1 != 0;
             Gamepad {
                 up: held(0),
                 down: held(1),
@@ -258,6 +259,8 @@ impl Emulator {
                 b: held(5),
                 select: held(6),
                 start: held(7),
+                turbo_a: held(8),
+                turbo_b: held(9),
             }
         };
         let page = &mut self.page.borrow_mut();

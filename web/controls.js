@@ -5,9 +5,23 @@
 // browsers differ; `pad:btn7` or `pad:axis2+` is what was pressed on it when
 // it was bound, whatever that may be. A stick always steers as the D-pad does.
 
-export const ACTIONS = ['up', 'down', 'left', 'right', 'a', 'b', 'select', 'start', 'library', 'fast'];
-/// The console's own, a bit each: the rest are the page's.
-export const BUTTONS = ACTIONS.slice(0, 8);
+export const ACTIONS = [
+    'up',
+    'down',
+    'left',
+    'right',
+    'a',
+    'b',
+    'select',
+    'start',
+    'turboA',
+    'turboB',
+    'library',
+    'fast',
+];
+/// The console's own and turbo, a bit each for the emulator: the rest are
+/// the page's.
+export const BUTTONS = ACTIONS.slice(0, 10);
 const STORED = 'controls';
 
 const padDefaults = {
@@ -19,6 +33,8 @@ const padDefaults = {
     b: 'pad:b',
     select: 'pad:select',
     start: 'pad:start',
+    turboA: 'pad:east',
+    turboB: 'pad:north',
 };
 const keyDefaults = {
     up: 'key:ArrowUp',
@@ -28,6 +44,8 @@ const keyDefaults = {
     a: 'key:KeyX',
     b: 'key:KeyZ',
     start: 'key:Enter',
+    turboA: 'key:KeyS',
+    turboB: 'key:KeyA',
 };
 
 /// As the page has always had them: the first player's on the keyboard too.
