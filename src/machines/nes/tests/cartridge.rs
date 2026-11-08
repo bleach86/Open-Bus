@@ -658,6 +658,102 @@ mod tests {
         assert_eq!(cart.mirroring, Mirroring::Horizontal);
     }
 
+    #[test]
+    fn tam_s1s_bank_is_at_c000_and_its_top_bits_its_nametables() {
+        let mut cart = board(97, 8, 2);
+        assert_eq!(
+            banks(&mut cart).0..=banks(&mut cart).1,
+            7..=7,
+            "the last, both"
+        );
+        for (value, mirroring) in [
+            (0x03, Mirroring::SingleLower),
+            (0x43, Mirroring::Horizontal),
+            (0x83, Mirroring::Vertical),
+            (0xC3, Mirroring::SingleUpper),
+        ] {
+            cart.cpu_write(0x8000, value, 0);
+            assert_eq!(
+                (cart.cpu_read(0x8020), cart.cpu_read(0xC020), cart.mirroring),
+                (Some(7), Some(3), mirroring)
+            );
+        }
+    }
+
+    #[test]
+    fn sunsoft_1_has_two_4k_banks_of_chr_written_at_6000() {
+        let mut cart = board(184, 2, 4);
+        cart.cpu_write(0x6000, 0x53, 0);
+        assert_eq!((cart.chr_read(0), cart.chr_read(0x1000)), (0xC1, 0xC2));
+    }
+
+    #[test]
+    fn irem_77s_chr_is_2k_of_rom_then_6k_of_ram() {
+        let mut cart = board(77, 8, 2);
+        assert_eq!(cart.mirroring, Mirroring::FourScreen);
+        cart.chr_write(0x0800, 0x77);
+        cart.chr_write(0x1FFF, 0x88);
+        cart.cpu_write(0x8000, 0x52, 0);
+        assert_eq!(
+            (
+                cart.cpu_read(0x8020),
+                cart.chr_read(0),
+                cart.chr_read(0x0800)
+            ),
+            (Some(4), 0xC1, 0x77),
+            "its 32K and 2K banks, its RAM as it was"
+        );
+        cart.chr_write(0x0000, 0x00);
+        assert_eq!((cart.chr_read(0), cart.chr_read(0x1FFF)), (0xC1, 0x88));
+    }
+
+    #[test]
+    fn caltrons_banks_are_in_the_address_and_its_inner_bits_only_sometimes() {
+        let mut cart = board(41, 16, 16);
+        cart.cpu_write(0x602D, 0, 0);
+        cart.cpu_write(0x8000, 0x03, 0);
+        assert_eq!(
+            (cart.cpu_read(0x8020), cart.chr_read(0), cart.mirroring),
+            (Some(10), 0xC7, Mirroring::Horizontal),
+            "its 32K bank 5, CHR 4 + 3"
+        );
+        cart.cpu_write(0x6000, 0, 0);
+        cart.cpu_write(0x8000, 0x02, 0);
+        assert_eq!(
+            (cart.chr_read(0), cart.mirroring),
+            (0xC3, Mirroring::Vertical),
+            "bank 0: not written"
+        );
+        cart.reset();
+        assert_eq!((cart.cpu_read(0x8020), cart.chr_read(0)), (Some(0), 0xC0));
+    }
+
+    #[test]
+    fn the_maxi_15s_registers_are_read_or_written_and_its_first_once() {
+        // Its ROM's $FF where its registers are, for nothing written to be
+        // lost to bus conflicts.
+        let mut image = image(8, 16, [0xA0, 0xE0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        for bank in image[16..16 + 8 * 0x4000].chunks_mut(0x4000) {
+            bank[0x3F80..=0x3F9F].fill(0xFF);
+            bank[0x3FE8..=0x3FF8].fill(0xFF);
+        }
+        let mut cart = Cartridge::new(&image).unwrap();
+        cart.cpu_write(0xFF80, 0x43, 0);
+        assert_eq!(
+            (cart.cpu_read(0x8020), cart.chr_read(0), cart.mirroring),
+            (Some(4), 0xC8, Mirroring::Vertical),
+            "as NINA-03, its 32K bank 2, CHR 8"
+        );
+        cart.cpu_read(0xFFE8);
+        assert_eq!(
+            (cart.cpu_read(0x8020), cart.chr_read(0)),
+            (Some(6), 0xCF),
+            "read, the ROM's $FF its second"
+        );
+        cart.cpu_write(0xFF80, 0xC0, 0);
+        assert_eq!(cart.mirroring, Mirroring::Vertical, "its first not again");
+    }
+
     /// MMC3's CHR registers set: R0 to R5, each its value.
     fn mmc3_banks(cart: &mut Cartridge, inverted: bool, banks: [u8; 6]) {
         let invert = if inverted { 0x80 } else { 0 };

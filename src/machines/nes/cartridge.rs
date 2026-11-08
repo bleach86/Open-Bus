@@ -186,6 +186,27 @@
 //! 4 to 7); bit 3 which 1K all four nametables are, or Holy Diver's (NES
 //! 2.0's submapper 3), vertical or horizontal.
 //!
+//! 97, Irem's TAM-S1: a 16K bank at $C000 (bits 0 to 3), the last fixed at
+//! $8000; bits 6 and 7 the nametables, one screen, horizontal, vertical,
+//! or the other screen. 184, Sunsoft-1: at $6000 up, two 4K banks of CHR,
+//! at $0000 (bits 0 to 2) and $1000 (bits 4 to 6, its top bit always set).
+//! 77, Irem's on Napoleon Senki, with bus conflicts: a 32K bank (bits 0 to
+//! 3) and a 2K bank of CHR ROM at $0000 (bits 4 to 7), 6K of CHR RAM after
+//! it; its own 4 screens of nametables.
+//!
+//! 41, Caltron's 6 in 1: its 32K bank, the CHR's 8K bank's top two bits,
+//! and its mirroring (A5: horizontal) in the address written at $6000 to
+//! $67FF; the CHR bank's bottom two in what's written at $8000 up, but
+//! only while the 32K bank's 4 to 7. All cleared by Reset, its menu again.
+//!
+//! 234, the Maxi 15: two registers, written or read, the ROM's what's
+//! there, with bus conflicts: the first ($FF80 to $FF9F) once only, until
+//! its low six bits are set, the second ($FFE8 to $FFF8) any time. As
+//! CNROM, the first's bits 0 to 3 its 32K bank, and its 0 and 1 with the
+//! second's 4 and 5 its CHR's 8K; as NINA-03, the first's bit 6 set, the
+//! first's bits 1 to 3 and the second's 0 its 32K, the first's 1 to 3 and
+//! the second's 4 to 6 its CHR. The first's bit 7 its mirroring, horizontal.
+//!
 //! 72, Jaleco's JF-17, and 92, JF-19: with bus conflicts, its banks taken
 //! only as a write's bits 7 and 6 rise, from the last's: 7 its PRG's 16K at
 //! $8000, the last fixed (bits 0 to 2); JF-19's at $C000, the first fixed
@@ -307,6 +328,49 @@ pub struct Jf17 {
     prg: u8,
     chr: u8,
     last: u8,
+}
+
+/// Caltron's 6 in 1's banks: its 32K, and its CHR's 8K.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Caltron {
+    prg: u8,
+    chr: u8,
+}
+
+/// The Maxi 15's two registers.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Maxi15 {
+    regs: [u8; 2],
+}
+
+impl Maxi15 {
+    /// `addr` read or written, `value` there: a register set if it's one
+    /// that can be; its mirroring then.
+    fn access(&mut self, addr: u16, value: u8) -> Option<Mirroring> {
+        match addr {
+            0xFF80..=0xFF9F if self.regs[0] & 0x3F == 0 => self.regs[0] = value,
+            0xFFE8..=0xFFF8 => self.regs[1] = value & 0x71,
+            _ => return None,
+        }
+        Some(if self.regs[0] & 0x80 != 0 {
+            Mirroring::Horizontal
+        } else {
+            Mirroring::Vertical
+        })
+    }
+
+    /// Its 32K bank, and its CHR's 8K.
+    fn banks(&self) -> (usize, usize) {
+        let [first, second] = self.regs.map(|reg| reg as usize);
+        if first & 0x40 != 0 {
+            (
+                (first & 0x0E) | (second & 1),
+                (first << 2) & 0x38 | (second >> 4) & 7,
+            )
+        } else {
+            (first & 0x0F, (first << 2) & 0x3C | (second >> 4) & 3)
+        }
+    }
 }
 
 /// NINA-001's registers: its 32K bank, and its two 4K banks of CHR.
@@ -444,12 +508,18 @@ pub enum Board {
     Jf16(u8),
     Jf17,
     Jf19,
+    TamS1,
+    Sunsoft184,
+    Irem77,
 }
 
 impl Board {
     /// Whether its one register's at $6000 up, where RAM would be.
     fn register_at_6000(self) -> bool {
-        matches!(self, Board::Jf13 | Board::Jaleco87 | Board::Jf11)
+        matches!(
+            self,
+            Board::Jf13 | Board::Jaleco87 | Board::Jf11 | Board::Sunsoft184
+        )
     }
 }
 
@@ -539,6 +609,8 @@ pub enum Mapper {
     Fds(Box<Fds>),
     Latch(u8),
     Jf17(Jf17),
+    Caltron(Caltron),
+    Maxi15(Maxi15),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -729,7 +801,11 @@ impl Cartridge {
             // Its CHR there at first, as it'd be with nothing written.
             185 if submapper >= 4 => Mapper::Latch(submapper & 3),
             185 | 93 => Mapper::Latch(1),
-            94 | 180 | 13 | 70 | 152 | 89 | 86 | 87 | 140 | 78 => Mapper::Latch(0),
+            94 | 180 | 13 | 70 | 152 | 89 | 86 | 87 | 140 | 78 | 184 | 77 => Mapper::Latch(0),
+            // The last 16K at $C000 too at first, as TAM-S1's is.
+            97 => Mapper::Latch(0x0F),
+            41 => Mapper::Caltron(Caltron::default()),
+            234 => Mapper::Maxi15(Maxi15::default()),
             72 => Mapper::Jf17(Jf17::default()),
             // The last 16K at $C000 at first, as JF-19's is.
             92 => Mapper::Jf17(Jf17 {
@@ -788,12 +864,22 @@ impl Cartridge {
             78 => Board::Jf16(submapper),
             72 => Board::Jf17,
             92 => Board::Jf19,
+            97 => Board::TamS1,
+            184 => Board::Sunsoft184,
+            77 => Board::Irem77,
             _ => Board::Plain,
+        };
+        // As these start: 77's own four screens; 41's and 234's registers
+        // all 0, vertical.
+        let mirroring = match number {
+            77 => Mirroring::FourScreen,
+            41 | 234 => Mirroring::Vertical,
+            _ => mirroring,
         };
         if board == Board::Cprom {
             chr_ram_size = chr_ram_size.max(0x4000);
         }
-        let has_ram = chr_rom.is_empty() || board == Board::Tqrom;
+        let has_ram = chr_rom.is_empty() || matches!(board, Board::Tqrom | Board::Irem77);
         let chr_ram = if has_ram {
             vec![0; chr_ram_size.max(CHR_BANK)]
         } else {
@@ -919,6 +1005,10 @@ impl Cartridge {
         if let Mapper::Active(active) = &mut self.mapper {
             *active = Active::default();
         }
+        if let Mapper::Caltron(caltron) = &mut self.mapper {
+            *caltron = Caltron::default();
+            self.mirroring = Mirroring::Vertical;
+        }
     }
 
     /// Where `addr`, $8000 up, is in the PRG ROM, as the mapper has its
@@ -933,11 +1023,16 @@ impl Cartridge {
             Mapper::Latch(_)
                 if matches!(
                     self.board,
-                    Board::Cprom | Board::Cnrom185(_) | Board::Jaleco87
+                    Board::Cprom | Board::Cnrom185(_) | Board::Jaleco87 | Board::Sunsoft184
                 ) =>
             {
                 addr - 0x8000
             }
+            Mapper::Latch(latch) if self.board == Board::Irem77 => {
+                (*latch as usize & 0x0F) * 0x8000 + (addr & 0x7FFF)
+            }
+            Mapper::Caltron(caltron) => caltron.prg as usize * 0x8000 + (addr & 0x7FFF),
+            Mapper::Maxi15(maxi) => maxi.banks().0 * 0x8000 + (addr & 0x7FFF),
             Mapper::Latch(latch) if matches!(self.board, Board::Jf13 | Board::Jf11) => {
                 ((*latch as usize >> 4) & 3) * 0x8000 + (addr & 0x7FFF)
             }
@@ -951,12 +1046,14 @@ impl Cartridge {
             }),
             Mapper::Latch(latch) if addr >= 0xC000 => in_16k(match self.board {
                 Board::Unrom180 => *latch as usize & 7,
+                Board::TamS1 => *latch as usize & 0x0F,
                 _ => last_16k,
             }),
             Mapper::Latch(latch) => in_16k(match self.board {
                 Board::Un1rom => (*latch as usize >> 2) & 7,
                 Board::Unrom180 => 0,
                 Board::Jf16(_) => *latch as usize & 7,
+                Board::TamS1 => last_16k,
                 _ => (*latch as usize >> 4) & 7,
             }),
             Mapper::Uxrom(bank) | Mapper::Camerica(bank) => in_16k(if addr < 0xC000 {
@@ -1070,6 +1167,8 @@ impl Cartridge {
             | Mapper::Fds(_) => addr,
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
             Mapper::Jf17(jf) => jf.chr as usize * CHR_BANK + addr,
+            Mapper::Caltron(caltron) => caltron.chr as usize * CHR_BANK + addr,
+            Mapper::Maxi15(maxi) => maxi.banks().1 * CHR_BANK + addr,
             Mapper::Latch(latch) => {
                 let latch = *latch as usize;
                 match self.board {
@@ -1080,6 +1179,10 @@ impl Cartridge {
                     Board::Jaleco87 => ((latch & 1) << 1 | (latch & 2) >> 1) * CHR_BANK + addr,
                     Board::Jf11 => (latch & 0x0F) * CHR_BANK + addr,
                     Board::Jf16(_) => (latch >> 4) * CHR_BANK + addr,
+                    Board::Sunsoft184 if addr < 0x1000 => (latch & 7) * 0x1000 + addr,
+                    Board::Sunsoft184 => (0x80 | (latch >> 4) & 7) * 0x1000 + (addr & 0x0FFF),
+                    Board::Irem77 if addr < 0x0800 => (latch >> 4) * 0x0800 + addr,
+                    Board::Irem77 => addr - 0x0800,
                     _ => addr,
                 }
             }
@@ -1129,6 +1232,7 @@ impl Cartridge {
             Mapper::Mmc3(mmc3) if self.board == Board::Tqrom => {
                 mmc3.chr_bank(addr as usize) & 0x40 != 0
             }
+            Mapper::Latch(_) if self.board == Board::Irem77 => addr >= 0x0800,
             _ => false,
         }
     }
@@ -1201,6 +1305,18 @@ impl Cartridge {
             },
             0x8000..=0xFFFF => match &self.mapper {
                 Mapper::Active(active) if active.chip == ACTIVE_NO_CHIP => None,
+                // Its registers read as written, its pages not to be kept
+                // for reads to miss them.
+                Mapper::Maxi15(_) => {
+                    let value = self.prg_rom[self.prg_offset(addr)];
+                    if let Mapper::Maxi15(maxi) = &mut self.mapper {
+                        if let Some(mirroring) = maxi.access(addr, value) {
+                            self.mirroring = mirroring;
+                            self.chr_pages = None; // a write's would be too
+                        }
+                    }
+                    Some(value)
+                }
                 _ => {
                     if self.prg_rom.len() % 0x1000 == 0 {
                         self.prg_pages = Some(std::array::from_fn(|page| {
@@ -1238,6 +1354,16 @@ impl Cartridge {
             if addr & 0xE100 == 0x4100 {
                 (banks.prg, banks.chr) = ((value >> 3) & 1, value & 7);
             }
+            return;
+        }
+        if let (0x6000..=0x67FF, Mapper::Caltron(caltron)) = (addr, &mut self.mapper) {
+            caltron.prg = addr as u8 & 7;
+            caltron.chr = (caltron.chr & 3) | (addr >> 1) as u8 & 0x0C;
+            self.mirroring = if addr & 0x20 != 0 {
+                Mirroring::Horizontal
+            } else {
+                Mirroring::Vertical
+            };
             return;
         }
         if let (0x6000..=0x7FFF, Mapper::Latch(latch)) = (addr, &mut self.mapper) {
@@ -1280,6 +1406,16 @@ impl Cartridge {
             | Mapper::Fds(_) => {}
             Mapper::Uxrom(bank) | Mapper::Cnrom(bank) => *bank = value,
             Mapper::Latch(_) if self.board.register_at_6000() => {}
+            Mapper::Caltron(caltron) => {
+                if caltron.prg >= 4 {
+                    caltron.chr = (caltron.chr & 0x0C) | (value & 3);
+                }
+            }
+            Mapper::Maxi15(maxi) => {
+                if let Some(mirroring) = maxi.access(addr, value & rom) {
+                    self.mirroring = mirroring;
+                }
+            }
             Mapper::Jf17(jf) => {
                 let value = value & rom;
                 if value & 0x80 != 0 && jf.last & 0x80 == 0 {
@@ -1292,10 +1428,18 @@ impl Cartridge {
             }
             Mapper::Latch(latch) => {
                 let value = match self.board {
-                    Board::Cnrom185(_) | Board::Jf16(_) => value & rom,
+                    Board::Cnrom185(_) | Board::Jf16(_) | Board::Irem77 => value & rom,
                     _ => value,
                 };
                 *latch = value;
+                if self.board == Board::TamS1 {
+                    self.mirroring = [
+                        Mirroring::SingleLower,
+                        Mirroring::Horizontal,
+                        Mirroring::Vertical,
+                        Mirroring::SingleUpper,
+                    ][value as usize >> 6];
+                }
                 if self.board == Board::Jf16(3) {
                     self.mirroring = if value & 0x08 != 0 {
                         Mirroring::Vertical
@@ -1621,7 +1765,7 @@ impl Cartridge {
         let moves = matches!(
             self.mapper,
             Mapper::Mmc2(_) | Mapper::Mmc5(_) | Mapper::Fds(_)
-        ) || self.board == Board::Tqrom
+        ) || matches!(self.board, Board::Tqrom | Board::Irem77)
             || self.chr_off(0).is_some();
         (!moves && chr > 0 && chr % 0x400 == 0)
             .then(|| std::array::from_fn(|page| self.chr_offset(page as u16 * 0x400) as u32))
@@ -1720,6 +1864,8 @@ impl Cartridge {
             Mapper::Fds(_) => (20, "FDS"),
             Mapper::Jf17(_) if self.board == Board::Jf19 => (92, "JALECO JF-19"),
             Mapper::Jf17(_) => (72, "JALECO JF-17"),
+            Mapper::Caltron(_) => (41, "CALTRON"),
+            Mapper::Maxi15(_) => (234, "MAXI 15"),
             Mapper::Latch(_) => match self.board {
                 Board::Un1rom => (94, "UN1ROM"),
                 Board::Unrom180 => (180, "UNROM"),
@@ -1732,6 +1878,9 @@ impl Cartridge {
                 Board::Jaleco87 => (87, "JALECO"),
                 Board::Jf11 => (140, "JALECO JF-11"),
                 Board::Jf16(3) => (78, "IREM IF-12"),
+                Board::TamS1 => (97, "IREM TAM-S1"),
+                Board::Sunsoft184 => (184, "SUNSOFT-1"),
+                Board::Irem77 => (77, "IREM"),
                 Board::Jf16(_) => (78, "JALECO JF-16"),
                 _ => (93, "SUNSOFT-2"),
             },
