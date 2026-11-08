@@ -1616,6 +1616,9 @@ function showScene() {
     drawScene(name, canvas, (sidebar + innerWidth) / 2 / scale);
 }
 showScene();
+// The page shown now, as it's to look: before, it was a browser's, with the
+// smooth scene.
+document.documentElement.classList.remove('loading');
 let sceneDue = null;
 addEventListener('resize', () => {
     clearTimeout(sceneDue);

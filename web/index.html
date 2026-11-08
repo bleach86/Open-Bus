@@ -390,8 +390,13 @@
           style.onload = style.onerror = loaded;
           document.head.append(style);
         });
-        document.documentElement.classList.remove('loading');
-        await import('./app.js');
+        // Shown once app.js has it as it's to look (its scene drawn, the
+        // desktop app's own look), or anyway, if it's failed.
+        try {
+          await import('./app.js');
+        } finally {
+          document.documentElement.classList.remove('loading');
+        }
       }
     </script>
   </body>
