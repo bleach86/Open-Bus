@@ -8,6 +8,7 @@ import { findCovers } from './covers.js';
 import * as bindings from './controls.js';
 import { artKey, isMedia, keyOf, plainTitle, tagsOf, takeArt, titleWords } from './art.js';
 import { drawScene } from './scenes.js';
+import { learnDetails, learnedDetails } from './details.js';
 
 /// The emulator's WebAssembly: the browser's only, the desktop app's games
 /// being the native emulator's, which sorts its ROMs too.
@@ -274,7 +275,9 @@ async function loadArt() {
 }
 
 /// Which shelf's showing.
+let shelfShowing = 'nes';
 function showShelf(name) {
+    shelfShowing = name;
     localStorage.setItem('shelf', name);
     page('nes').hidden = name !== 'nes';
     page('recent').hidden = name !== 'recent';
@@ -292,6 +295,7 @@ function showShelf(name) {
     const tab = document.querySelector(`.tabs button[data-tab="${name}"]`);
     page('shelf-name').textContent = (tab.querySelector('.tab-name') ?? tab).textContent;
     showMenu(false);
+    showSorts();
     // What a gamepad had, gone with the page it was on.
     if (padFocus && !focusable().includes(padFocus)) {
         padFocus = null;
@@ -340,6 +344,14 @@ async function refresh() {
     fillDisks(wanted);
     fillKept(wanted);
     showRoms();
+    showSorts();
+    learnDetails(
+        files.filter(isGame).flatMap((name) => {
+            const facts = factsOf.get(name);
+            return facts?.crc ? [{ name, crc: facts.crc, fds: facts.mapper.startsWith('MAPPER 20 ') }] : [];
+        }),
+        refresh,
+    );
     const missing = coverless().length;
     page('covers-wanted').hidden = !missing;
     page('coverless').textContent =
@@ -402,12 +414,47 @@ const noGames = native
 const found = (wanted, title, file, known) =>
     [title, file, known?.developer, known?.genre, known?.year].join(' ').toLowerCase().includes(wanted);
 
-/// `items` as the sort says, by title among those alike, those not known
-/// about last.
-function arranged(items, titleOf, knownOf) {
-    const way = page('sort').value;
-    const field = { newest: 'year', oldest: 'year', genre: 'genre', developer: 'developer', players: 'players' }[way];
+/// The ways a shelf can be sorted: by title; by what game lists say of its
+/// games, KNOWN; and Recent's and Favourites', by how they've been played.
+const SORTS = {
+    title: 'Title',
+    newest: 'Newest',
+    oldest: 'Oldest',
+    genre: 'Genre',
+    developer: 'Developer',
+    players: 'Players',
+    last: 'Last played',
+    most: 'Most played',
+};
+const KNOWN = { newest: 'year', oldest: 'year', genre: 'genre', developer: 'developer', players: 'players' };
+const PLAYED = ['last', 'most'];
+const keptShelf = (shelf) => shelf === 'recent' || shelf === 'favourites';
+const sortsOf = (shelf) => Object.keys(SORTS).filter((way) => keptShelf(shelf) || !PLAYED.includes(way));
+
+/// How `shelf`'s sorted: as it was last chosen for it; else Recent's by when
+/// last played, the rest by title.
+function sortOf(shelf) {
+    const way = localStorage.getItem(`sort-${shelf}`);
+    return sortsOf(shelf).includes(way) ? way : shelf === 'recent' ? 'last' : 'title';
+}
+
+/// Which of KNOWN's fields some of each shelf's games have, to be sorted
+/// by: as they were when it was last filled.
+const sortable = new Map();
+
+/// `shelf`'s `items` as its sort says, by title among those alike, those not
+/// known about last. Kept games, Recent's and Favourites', by when they were
+/// last played or for how long in all.
+function arranged(shelf, items, titleOf, knownOf) {
+    const way = sortOf(shelf);
+    const field = KNOWN[way];
+    const has = (name) => items.some((item) => knownOf(item)?.[name]);
+    sortable.set(shelf, new Set(Object.values(KNOWN).filter(has)));
     const byTitle = (a, b) => natural(titleOf(a), titleOf(b));
+    if (PLAYED.includes(way)) {
+        const played = way === 'last' ? ({ last }) => last ?? -1 : ({ seconds }) => seconds;
+        return [...items].sort((a, b) => played(b) - played(a) || byTitle(a, b));
+    }
     return [...items].sort((a, b) => {
         const [first, second] = [knownOf(a)?.[field], knownOf(b)?.[field]];
         if (!field || first === second) {
@@ -420,9 +467,29 @@ function arranged(items, titleOf, knownOf) {
     });
 }
 
-page('sort').value = localStorage.getItem('sort') ?? 'title';
+/// The sorts of the shelf showing, as it's sorted: those it has nothing to
+/// sort by greyed out, as a browser's games have till game lists come with
+/// them. Made again only when they've changed, not under a finger.
+function showSorts() {
+    const select = page('sort');
+    const known = sortable.get(shelfShowing) ?? new Set();
+    const ways = sortsOf(shelfShowing).map((way) => [way, way in KNOWN && !known.has(KNOWN[way])]);
+    const said = JSON.stringify(ways);
+    if (select.dataset.ways !== said) {
+        select.dataset.ways = said;
+        select.replaceChildren(
+            ...ways.map(([way, nothing]) => {
+                const option = new Option(SORTS[way], way);
+                option.disabled = nothing;
+                return option;
+            }),
+        );
+    }
+    select.value = sortOf(shelfShowing);
+}
+
 page('sort').onchange = () => {
-    localStorage.setItem('sort', page('sort').value);
+    localStorage.setItem(`sort-${shelfShowing}`, page('sort').value);
     refresh();
 };
 
@@ -446,11 +513,24 @@ function nesArt(name) {
 /// A game's title, by what's known of it, else its file.
 const titleOf = (name) => art.get(nesArt(name))?.title ?? plainTitle(name);
 
+/// What's known of a NES game: what a game list beside it said, else what's
+/// been learned of it from libretro's database.
+let learned = new Map();
+function nesKnown(name) {
+    const listed = art.get(nesArt(name));
+    const found = learned.get(name);
+    if (!found) {
+        return listed;
+    }
+    const details = ['year', 'genre', 'developer', 'players'].map((field) => [field, listed?.[field] ?? found[field]]);
+    return { ...listed, ...Object.fromEntries(details) };
+}
+
 function fillGames(wanted) {
     const all = files.filter(isGame);
-    const knownOf = (name) => art.get(nesArt(name));
+    const knownOf = nesKnown;
     const matches = (name) => found(wanted, titleOf(name), name, knownOf(name));
-    const shown = arranged(all.filter(matches), titleOf, knownOf);
+    const shown = arranged('nes', all.filter(matches), titleOf, knownOf);
     const list = page('games');
     list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : noGames;
     showCount('tab-nes', 'NES', shown.length);
@@ -469,7 +549,7 @@ function gameTile(name) {
         openGameSettings(name);
     };
     const key = nesArt(name);
-    const known = art.get(key);
+    const known = nesKnown(name);
     const button = document.createElement('button');
     button.className = 'play';
     const facts = factsOf.get(name);
@@ -521,6 +601,7 @@ const gameKey = (machine) => (machine.kind === 'nes' ? `nes\n${machine.game}` : 
 
 async function loadKept() {
     [kept, factsOf] = await Promise.all([keeper.keptGames(), keeper.gameFacts()]);
+    learned = learnedDetails();
     favoured = new Set(kept.filter(({ favourite }) => favourite).map(({ machine }) => gameKey(machine)));
 }
 
@@ -600,17 +681,23 @@ function settingsOfSelected() {
     }
 }
 
-/// The desktop app's own shelves: the games last played, the last first,
-/// when and for how long under each; and the favourites, sorted as the
-/// rest are. Those a search leaves out, not shown.
+/// The shelves of games kept of: those played, when and for how long under
+/// each; and the favourites; each sorted as it's chosen for it. Those a
+/// search leaves out, not shown.
 function fillKept(wanted) {
     const titled = ({ machine }) => (machine.kind === 'nes' ? titleOf(machine.game) : appleTitle(machine));
     const knownOf = ({ machine }) =>
-        machine.kind === 'nes' ? art.get(nesArt(machine.game)) : art.get(artFor(appleTitle(machine), ...machine.disks));
+        machine.kind === 'nes' ? nesKnown(machine.game) : art.get(artFor(appleTitle(machine), ...machine.disks));
     const filesOf = ({ machine }) => (machine.kind === 'nes' ? machine.game : machine.disks.join(' '));
     const shown = kept.filter((game) => found(wanted, titled(game), filesOf(game), knownOf(game)));
-    const recent = shown.filter(({ plays }) => plays > 0);
+    const recent = arranged(
+        'recent',
+        shown.filter(({ plays }) => plays > 0),
+        titled,
+        knownOf,
+    );
     const favourites = arranged(
+        'favourites',
         shown.filter(({ favourite }) => favourite),
         titled,
         knownOf,
@@ -1204,7 +1291,8 @@ function fillDisks(wanted) {
     const knownOf = (game) => art.get(artFor(diskTitle(game), ...game.disks));
     const matches = (game) => found(wanted, game.title, game.disks.join(' '), knownOf(game));
     const all = games(files.filter(isDisk));
-    const shown = arranged(all.filter(matches), (game) => knownOf(game)?.title ?? diskTitle(game), knownOf);
+    const titled = (game) => knownOf(game)?.title ?? diskTitle(game);
+    const shown = arranged('apple', all.filter(matches), titled, knownOf);
     const list = page('disks');
     list.nextElementSibling.textContent = wanted
         ? 'Nothing matches.'
