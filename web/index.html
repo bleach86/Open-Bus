@@ -56,6 +56,10 @@
 
       <div class="toolbar">
         <nav class="tabs" aria-label="Machines">
+          <button id="tab-recent" data-tab="recent" hidden>Recent</button>
+          <button id="tab-favourites" data-tab="favourites" hidden>
+            Favourites
+          </button>
           <button id="tab-nes" data-tab="nes">NES</button>
           <button id="tab-apple" data-tab="apple">Apple II</button>
           <button id="tab-settings" data-tab="settings" hidden>Settings</button>
@@ -91,6 +95,16 @@
 
       <section id="nes" class="shelf">
         <ul id="games" class="grid"></ul>
+        <p class="empty"></p>
+      </section>
+
+      <section id="recent" class="shelf" hidden>
+        <ul id="recent-games" class="grid"></ul>
+        <p class="empty"></p>
+      </section>
+
+      <section id="favourites" class="shelf" hidden>
+        <ul id="favourite-games" class="grid"></ul>
         <p class="empty"></p>
       </section>
 

@@ -265,6 +265,8 @@ async function loadArt() {
 function showShelf(name) {
     localStorage.setItem('shelf', name);
     page('nes').hidden = name !== 'nes';
+    page('recent').hidden = name !== 'recent';
+    page('favourites').hidden = name !== 'favourites';
     page('apple-shelf').hidden = name !== 'apple';
     page('settings').hidden = name !== 'settings';
     page('tools').hidden = name === 'settings';
@@ -290,10 +292,12 @@ for (const tab of document.querySelectorAll('.tabs button[data-tab]')) {
 /// write hidden.
 async function refresh() {
     files = (await names()).sort(natural);
+    await loadKept();
     chosen = chosen.filter((name) => files.includes(name));
     const wanted = page('filter').value.trim().toLowerCase();
     fillGames(wanted);
     fillDisks(wanted);
+    fillKept(wanted);
     showRoms();
     page('find').hidden = !coverless().length;
 }
@@ -419,7 +423,139 @@ function gameTile(name) {
         native ? playNatively({ kind: 'nes', game: name }) : start(() => Emulator.nes(name, 8), 'nes', [name]);
     button.append(cover(key, titleOf(name)), caption(titleOf(name), known, tagsOf(name)));
     item.append(button, removeButton(name));
+    if (native) {
+        item.append(starButton({ kind: 'nes', game: name }, titleOf(name)));
+    }
     return item;
+}
+
+/// The desktop app's games kept of, favourites and those played, the last
+/// played first; and which are favourites, by `gameKey`. Loaded as the
+/// library's refreshed, its files known by then.
+let kept = [];
+let favoured = new Set();
+const gameKey = (machine) => (machine.kind === 'nes' ? `nes\n${machine.game}` : `apple\n${machine.disks.join('\n')}`);
+
+async function loadKept() {
+    if (native) {
+        kept = await native.keptGames();
+        favoured = new Set(kept.filter(({ favourite }) => favourite).map(({ machine }) => gameKey(machine)));
+    }
+}
+
+/// A game's star, in the desktop app: lit if it's a favourite, and pressed,
+/// made one, or not.
+function starButton(machine, title) {
+    const on = favoured.has(gameKey(machine));
+    const star = document.createElement('button');
+    star.className = on ? 'star on' : 'star';
+    star.textContent = on ? '★' : '☆';
+    star.title = `${on ? 'Not a favourite' : 'A favourite'}: ${title}`;
+    star.setAttribute('aria-label', star.title);
+    star.setAttribute('aria-pressed', on);
+    star.onclick = async () => {
+        await native.favourite(machine, !on);
+        refresh();
+    };
+    return star;
+}
+
+/// The desktop app's own shelves: the games last played, the last first,
+/// when and for how long under each; and the favourites, sorted as the
+/// rest are. Those a search leaves out, not shown.
+function fillKept(wanted) {
+    if (!native) {
+        return;
+    }
+    const titled = ({ machine }) => (machine.kind === 'nes' ? titleOf(machine.game) : appleTitle(machine));
+    const knownOf = ({ machine }) =>
+        machine.kind === 'nes' ? art.get(nesArt(machine.game)) : art.get(artFor(appleTitle(machine), ...machine.disks));
+    const filesOf = ({ machine }) => (machine.kind === 'nes' ? machine.game : machine.disks.join(' '));
+    const shown = kept.filter((game) => found(wanted, titled(game), filesOf(game), knownOf(game)));
+    const recent = shown.filter(({ plays }) => plays > 0);
+    const favourites = arranged(
+        shown.filter(({ favourite }) => favourite),
+        titled,
+        knownOf,
+    );
+    for (const [list, onShelf, tab, name, none] of [
+        ['recent-games', recent, 'tab-recent', 'Recent', 'The games you play come here, the last played first.'],
+        ['favourite-games', favourites, 'tab-favourites', 'Favourites', 'Star a game, on its shelf, to keep it here.'],
+    ]) {
+        page(list).replaceChildren(...onShelf.map((game) => keptTile(game, list === 'recent-games')));
+        page(list).nextElementSibling.textContent = wanted ? 'Nothing matches.' : none;
+        showCount(tab, name, onShelf.length);
+    }
+}
+
+/// A kept game's tile: a NES game's as on its shelf; an Apple game's started
+/// at once. Played, when last and for how long in all in place of its facts.
+function keptTile({ machine, seconds, last }, played) {
+    const item = machine.kind === 'nes' ? gameTile(machine.game) : appleTile(machine);
+    if (played) {
+        const words = item.querySelector('.caption');
+        const line = words.querySelector('.facts') ?? words.appendChild(document.createElement('span'));
+        line.className = 'facts';
+        line.textContent = `${whenPlayed(last)} · ${howLong(seconds)}`;
+    }
+    return item;
+}
+
+/// What an Apple game kept of is called: its disks' game's, or each's.
+function appleTitle(machine) {
+    return games(machine.disks).map(diskTitle).join(' + ');
+}
+
+/// An Apple game of disks, kept of: started at once, on the model and the
+/// cards it was last started with, or as the Apple shelf has them now.
+function appleTile(machine) {
+    const title = appleTitle(machine);
+    const item = document.createElement('li');
+    item.className = 'tile';
+    const button = document.createElement('button');
+    button.className = 'play';
+    button.dataset.tip = [title, ...machine.disks].join('\n');
+    button.onclick = () => {
+        const model = machine.model ?? page('model').value;
+        const roms = model === 'apple2' ? (machine.roms ?? plusRom() ?? '') : '';
+        const mockingboards = machine.mockingboards ?? Number(page('mockingboards').value);
+        playNatively({ kind: 'apple', model, roms, disks: machine.disks, mockingboards });
+    };
+    const key = artFor(title, ...machine.disks);
+    const media = machine.disks.every(isVolume) ? 'hard' : 'floppy';
+    button.append(cover(key, title, media), caption(art.get(key)?.title ?? title, art.get(key)));
+    item.append(button, starButton(machine, title));
+    return item;
+}
+
+/// When a game was last played, `at` seconds since 1970: today, yesterday,
+/// days ago this week, or the day.
+function whenPlayed(at) {
+    const then = new Date(at * 1000);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const days = Math.ceil((today - then) / 86_400_000);
+    if (then >= today) {
+        return 'Today';
+    }
+    if (days <= 1) {
+        return 'Yesterday';
+    }
+    if (days < 7) {
+        return `${days} days ago`;
+    }
+    const year = then.getFullYear() === today.getFullYear() ? undefined : 'numeric';
+    return then.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year });
+}
+
+/// How long it's been played, `seconds` in all: in hours and minutes.
+function howLong(seconds) {
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 1) {
+        return 'under a minute';
+    }
+    const hours = Math.floor(minutes / 60);
+    return hours ? `${hours} h ${minutes % 60} min` : `${minutes} min`;
 }
 
 /// The shelf of games, however long, is only as many tiles as are in view
@@ -491,7 +627,7 @@ function navigationPressed() {
             left: state.stickX < -0.5,
             right: state.stickX > 0.5,
         };
-        for (const action of ['up', 'down', 'left', 'right', 'a', 'b', 'start']) {
+        for (const action of ['up', 'down', 'left', 'right', 'a', 'b', 'select', 'start']) {
             pressed[action] ||= steered[action] || boundHeld(0, action, pad, state);
         }
         pressed.previous ||= shoulders(pad, 4);
@@ -563,7 +699,7 @@ function focusable() {
     return [...all].filter(
         (element) =>
             !element.closest('#games') &&
-            !element.matches('.remove') &&
+            !element.matches('.remove, .star') &&
             !element.disabled &&
             element.getClientRects().length,
     );
@@ -629,6 +765,12 @@ function move(way) {
     } else if (way === 'down' && gamesShowing()) {
         backToShelf();
     }
+}
+
+/// Select pressed: the selected game's star, a favourite or not.
+function starSelected() {
+    const tile = padFocus ? padFocus.closest('.tile') : gamesShowing() && tiles.get(selectedGame);
+    tile?.querySelector('.star')?.click();
 }
 
 /// A press of confirm: the selected game started; or what's moved to
@@ -706,6 +848,8 @@ function navigate(now) {
     } else if (newly('start') && appleShowing()) {
         navigationWaits = true;
         page('apple').click();
+    } else if (newly('select')) {
+        starSelected();
     } else if (newly('previous')) {
         nextTab(-1);
     } else if (newly('next')) {
@@ -1001,6 +1145,9 @@ function diskTile(game, wanted) {
         item.append(remove);
     } else {
         item.append(removeButton(game.disks[0]));
+    }
+    if (native) {
+        item.append(starButton({ kind: 'apple', disks: game.disks }, title));
     }
     return item;
 }
@@ -1522,6 +1669,7 @@ if (native) {
     page('file-actions').append(document.querySelector('label.primary'));
     document.querySelector('header').hidden = true;
     page('tab-settings').hidden = false;
+    page('tab-recent').hidden = page('tab-favourites').hidden = false;
     addEventListener('contextmenu', (event) => event.preventDefault());
     native.whenDropped(({ folders, files: dropped }) => addNatively(folders, dropped).then(fillSettings));
     // The keys a menu bar would have, without one: Ctrl, or Cmd on a Mac,

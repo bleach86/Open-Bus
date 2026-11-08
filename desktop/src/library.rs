@@ -1,6 +1,7 @@
 //! The library as the app keeps it, in `library.sqlite` in its data folder:
 //! the folders added, the files hidden, and what's been found, every file in
-//! `library` and in the folders, with its size. A change is to the rows it
+//! `library` and in the folders, with its size; and of the games, those that
+//! are favourites, and those played, how often, for how long, and when last. A change is to the rows it
 //! changes, not all of them; and a look through the folders that finds them
 //! as they were changes nothing. What was kept before, in `settings.json`
 //! and `files.json`, is taken in the first time, and they're left as `.old`.
@@ -42,6 +43,14 @@ const SCHEMA: &str = "
         size INTEGER NOT NULL,
         own INTEGER NOT NULL,
         UNIQUE (path, own)
+    );
+    CREATE TABLE IF NOT EXISTS games (
+        key TEXT PRIMARY KEY,
+        machine TEXT NOT NULL,
+        favourite INTEGER NOT NULL DEFAULT 0,
+        plays INTEGER NOT NULL DEFAULT 0,
+        seconds INTEGER NOT NULL DEFAULT 0,
+        last INTEGER
     );
 ";
 
@@ -267,6 +276,65 @@ impl Library {
         Ok(changed)
     }
 
+    /// `machine` played, started at `started` (seconds since 1970) and for
+    /// `seconds`: once more, for longer, and how it was started kept.
+    pub fn played(&self, machine: &Value, started: u64, seconds: u64) -> Result<(), String> {
+        let Some((key, kept)) = game(machine) else {
+            return Ok(());
+        };
+        let db = self.lock()?;
+        db.execute(
+            "INSERT INTO games (key, machine, plays, seconds, last) VALUES (?1, ?2, 1, ?3, ?4)
+             ON CONFLICT (key) DO UPDATE SET
+                 machine = ?2, plays = plays + 1, seconds = seconds + ?3, last = ?4",
+            params![key, kept.to_string(), seconds as i64, started as i64],
+        )
+        .map(|_| ())
+        .map_err(said)
+    }
+
+    /// `machine` a favourite, `on`, or not. How it was last started, if it
+    /// has been, kept: a favourite started is started as that was.
+    pub fn favour(&self, machine: &Value, on: bool) -> Result<(), String> {
+        let Some((key, kept)) = game(machine) else {
+            return Err("not a game".to_string());
+        };
+        let db = self.lock()?;
+        db.execute(
+            "INSERT INTO games (key, machine, favourite) VALUES (?1, ?2, ?3)
+             ON CONFLICT (key) DO UPDATE SET favourite = ?3",
+            params![key, kept.to_string(), on],
+        )
+        .map(|_| ())
+        .map_err(said)
+    }
+
+    /// The games that are favourites, or have been played: each, how it's
+    /// started, whether it's a favourite, how often and how long it's been
+    /// played, and when last; the last played first.
+    pub fn games(&self) -> Result<Vec<Value>, String> {
+        let db = self.lock()?;
+        let mut statement = db
+            .prepare(
+                "SELECT machine, favourite, plays, seconds, last FROM games
+                 WHERE favourite = 1 OR plays > 0 ORDER BY last DESC NULLS LAST, key",
+            )
+            .map_err(said)?;
+        let rows = statement
+            .query_map([], |row| {
+                let machine: String = row.get(0)?;
+                Ok(json!({
+                    "machine": serde_json::from_str::<Value>(&machine).unwrap_or(Value::Null),
+                    "favourite": row.get::<_, bool>(1)?,
+                    "plays": row.get::<_, i64>(2)?,
+                    "seconds": row.get::<_, i64>(3)?,
+                    "last": row.get::<_, Option<i64>>(4)?,
+                }))
+            })
+            .map_err(said)?;
+        rows.collect::<Result<_, _>>().map_err(said)
+    }
+
     /// All that's been found, as the page has it: `root`, where the app's
     /// library is, and each section's files, a path and a size each.
     pub fn found(&self, root: &str) -> Result<Value, String> {
@@ -282,6 +350,40 @@ impl Library {
             "library": listed(Section::Library)?,
             "folders": listed(Section::Folders)?,
         }))
+    }
+}
+
+/// A game as it's kept, of what the page started, or would start: a NES's
+/// game; an Apple's disks, and the model, its ROMs and Mockingboards it was
+/// last started with, if it has been. By its files, that are what it is.
+pub fn game(machine: &Value) -> Option<(String, Value)> {
+    let text = |field: &str| machine[field].as_str().map(str::to_string);
+    match machine["kind"].as_str()? {
+        "nes" => {
+            let game = text("game")?;
+            Some((
+                format!("nes\n{game}"),
+                json!({ "kind": "nes", "game": game }),
+            ))
+        }
+        "apple" => {
+            let disks: Vec<String> = machine["disks"]
+                .as_array()?
+                .iter()
+                .filter_map(|disk| disk.as_str().map(str::to_string))
+                .collect();
+            if disks.is_empty() {
+                return None;
+            }
+            let mut kept = json!({ "kind": "apple", "disks": disks });
+            for field in ["model", "roms", "mockingboards"] {
+                if !machine[field].is_null() {
+                    kept[field] = machine[field].clone();
+                }
+            }
+            Some((format!("apple\n{}", disks.join("\n")), kept))
+        }
+        _ => None,
     }
 }
 
@@ -458,6 +560,66 @@ mod tests {
         assert!(
             !library.forget_under(Path::new("/g/nes2")).unwrap(),
             "nothing left"
+        );
+    }
+
+    #[test]
+    fn a_game_played_is_kept_with_how_often_how_long_and_when() {
+        let library = Library::in_memory().unwrap();
+        let nes = json!({ "kind": "nes", "game": "/g/a.zip", "fullscreen": true, "ram": "zeros" });
+        library.played(&nes, 1000, 60).unwrap();
+        library.played(&nes, 5000, 30).unwrap();
+        let apple = json!({ "kind": "apple", "model": "apple2ee", "disks": ["/d/1.dsk", "/d/2.dsk"], "mockingboards": 1 });
+        library.played(&apple, 3000, 10).unwrap();
+        library
+            .played(&json!({ "kind": "controls" }), 9000, 5)
+            .unwrap();
+        assert_eq!(
+            library.games().unwrap(),
+            [
+                json!({ "machine": { "kind": "nes", "game": "/g/a.zip" }, "favourite": false, "plays": 2, "seconds": 90, "last": 5000 }),
+                json!({ "machine": { "kind": "apple", "model": "apple2ee", "disks": ["/d/1.dsk", "/d/2.dsk"], "mockingboards": 1 }, "favourite": false, "plays": 1, "seconds": 10, "last": 3000 }),
+            ],
+            "the last played first, how each was started and none of its settings, and no controls"
+        );
+    }
+
+    #[test]
+    fn a_favourite_keeps_how_it_was_last_started() {
+        let library = Library::in_memory().unwrap();
+        let disks = json!({ "kind": "apple", "disks": ["/d/1.dsk"] });
+        library.favour(&disks, true).unwrap();
+        let games = library.games().unwrap();
+        assert_eq!(
+            (games.len(), &games[0]["last"]),
+            (1, &json!(null)),
+            "never played"
+        );
+        library
+            .played(&json!({ "kind": "apple", "model": "apple2", "roms": "/r/plus.rom", "disks": ["/d/1.dsk"] }), 10, 1)
+            .unwrap();
+        library.favour(&disks, true).unwrap();
+        let games = library.games().unwrap();
+        assert_eq!(games[0]["machine"]["model"], "apple2", "as it was started");
+        assert_eq!(games[0]["favourite"], true);
+        library.favour(&disks, false).unwrap();
+        assert_eq!(
+            library.games().unwrap()[0]["favourite"],
+            false,
+            "still played"
+        );
+        library
+            .favour(&json!({ "kind": "nes", "game": "/g/b.zip" }), false)
+            .unwrap();
+        assert_eq!(
+            library.games().unwrap().len(),
+            1,
+            "neither a favourite nor played"
+        );
+        assert!(
+            library
+                .favour(&json!({ "kind": "controls" }), true)
+                .is_err()
         );
     }
 

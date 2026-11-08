@@ -23,14 +23,16 @@ const PUSHED: f32 = 0.5;
 const LOOK_EVERY: Duration = Duration::from_millis(4);
 const SETTLE: Duration = Duration::from_millis(150);
 
-/// What the library moves by, as it's bound, and its shoulders and triggers.
-const LIBRARY: [Action; 7] = [
+/// What the library moves by, as it's bound (Select a game's star), and its
+/// shoulders and triggers.
+const LIBRARY: [Action; 8] = [
     Action::Up,
     Action::Down,
     Action::Left,
     Action::Right,
     Action::A,
     Action::B,
+    Action::Select,
     Action::Start,
 ];
 const SHOULDERS: [(&str, &str); 4] = [

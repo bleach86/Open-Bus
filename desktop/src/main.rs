@@ -33,7 +33,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{
     AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewWindow,
@@ -446,6 +446,19 @@ fn look_again(app: &AppHandle) -> Result<bool, String> {
     library(app).replace(own, added)
 }
 
+/// The games that are favourites, or have been played, as the library keeps
+/// them.
+#[tauri::command(async)]
+fn kept_games(app: AppHandle) -> Result<Vec<Value>, String> {
+    library(&app).games()
+}
+
+/// `machine`, a game as the page would start it, a favourite, `on`, or not.
+#[tauri::command(async)]
+fn favourite(app: AppHandle, machine: Value, on: bool) -> Result<(), String> {
+    library(&app).favour(&machine, on)
+}
+
 /// What's been found, as it was last looked for.
 #[tauri::command(async)]
 fn known_files(app: AppHandle) -> Result<Value, String> {
@@ -672,6 +685,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
         start_pads(&app);
         e.to_string()
     })?;
+    let (started, since) = (SystemTime::now(), Instant::now());
     thread::spawn(move || {
         thread::sleep(OVERLAP);
         if matches!(game.try_wait(), Ok(None)) {
@@ -682,6 +696,13 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
             let _ = stderr.read_to_string(&mut said);
         }
         let failed = !game.wait().is_ok_and(|status| status.success());
+        // Played, if it didn't fail: once more, and for so long.
+        if !failed {
+            let at = started
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |at| at.as_secs());
+            let _ = self::library(&app).played(&machine, at, since.elapsed().as_secs());
+        }
         let _ = window.show();
         let _ = window.set_focus();
         let _ = app.emit("game-ended", failed.then(|| complaint(&said, &first_file)));
@@ -886,7 +907,9 @@ fn main() {
             sort_roms,
             fullscreen,
             quit,
-            add_folder_files
+            add_folder_files,
+            kept_games,
+            favourite
         ])
         .run(tauri::generate_context!())
         .expect("couldn't open the window");

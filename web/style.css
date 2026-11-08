@@ -566,6 +566,42 @@ ul {
 .tile .remove:focus-visible {
   opacity: 1;
 }
+/* A game's star, in the corner opposite its remove button: there on hover,
+   and always once it's a favourite. A disk's drive, there too, beside it. */
+.tile .star {
+  position: absolute;
+  top: 0.2rem;
+  left: 0.2rem;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #0d0221c0;
+  color: var(--text);
+  font:
+    0.95rem/1 system-ui,
+    sans-serif;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.tile:hover .star,
+.tile .star:focus-visible,
+.tile .star.on,
+.tile.selected .star {
+  opacity: 1;
+}
+.tile .star.on {
+  color: var(--gold);
+  text-shadow: 0 0 6px var(--gold);
+}
+.tile .star:hover {
+  background: #0d0221e0;
+  box-shadow: none;
+}
+.tile:has(.star) .drive {
+  left: 2rem;
+}
 .tile .remove:hover {
   background: #0d0221e0;
 }
@@ -1577,8 +1613,12 @@ body.pointer-gone * {
 .pointer-gone .play[data-tip]::after {
   display: none;
 }
-.pointer-gone .tile:hover .remove {
+.pointer-gone .tile:hover .remove,
+.pointer-gone .tile:hover .star:not(.on) {
   visibility: hidden;
+}
+.pointer-gone .tile.selected .star {
+  visibility: visible;
 }
 
 /* The TV layout: a quarter bigger throughout, and fewer, bigger games across,

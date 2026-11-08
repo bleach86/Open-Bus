@@ -174,15 +174,35 @@ export async function keepArt(art) {
 /// A machine started on the native emulator, the app's window going as its
 /// comes: `game`, for the NES; for the Apple, `model`, `roms`, `disks` and
 /// `mockingboards`.
-export const play = (machine) =>
-    invoke('play', {
-        machine: {
-            ...machine,
-            game: where.get(machine.game),
-            roms: where.get(machine.roms),
-            disks: machine.disks?.map((disk) => where.get(disk)),
-        },
+export const play = (machine) => invoke('play', { machine: pathed(machine) });
+
+/// A machine as the page has one, by names, as the app has it, by paths.
+const pathed = (machine) => ({
+    ...machine,
+    game: where.get(machine.game),
+    roms: where.get(machine.roms),
+    disks: machine.disks?.map((disk) => where.get(disk)),
+});
+
+/// The games the app keeps of, favourites and those played, by the page's
+/// names: those whose files aren't in the library now left out.
+export async function keptGames() {
+    const names = new Map([...where].map(([name, path]) => [path, name]));
+    return (await invoke('kept_games')).flatMap(({ machine, ...kept }) => {
+        if (machine?.kind === 'nes') {
+            const game = names.get(machine.game);
+            return game ? [{ ...kept, machine: { kind: 'nes', game } }] : [];
+        }
+        const disks = machine?.kind === 'apple' ? machine.disks.map((disk) => names.get(disk)) : [];
+        if (!disks.length || !disks.every(Boolean)) {
+            return [];
+        }
+        return [{ ...kept, machine: { ...machine, disks, roms: names.get(machine.roms) } }];
     });
+}
+
+/// `machine`, by the page's names, a favourite, `on`, or not.
+export const favourite = (machine, on) => invoke('favourite', { machine: pathed(machine), on });
 
 /// The machines' ROMs among the files at `paths`, put into the library by
 /// the emulator: `held`, those with any, `roms`, and the II+'s `chips`.
