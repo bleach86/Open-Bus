@@ -200,6 +200,27 @@ mod tests {
         Cartridge::new(&image).unwrap()
     }
 
+    /// As `board`, but NES 2.0's, with `submapper`.
+    fn board_of(number: u8, submapper: u8, prg: u8, chr: u8) -> Cartridge {
+        let flags = [
+            number << 4,
+            number & 0xF0 | 0x08,
+            submapper << 4,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+        let mut image = image(prg, chr, flags);
+        for page in image[16..16 + prg as usize * 0x4000].chunks_mut(0x100) {
+            page[..16].fill(0xFF);
+        }
+        Cartridge::new(&image).unwrap()
+    }
+
     /// What's at $8020 and $C020 and in the CHR at $0000 and $1000.
     fn banks(cart: &mut Cartridge) -> (u8, u8, u8, u8) {
         (
@@ -570,6 +591,71 @@ mod tests {
         );
         cart.cpu_write(0x8000, 0x30, 0);
         assert_eq!(cart.chr_read(0x0123), 0x23, "open bus");
+    }
+
+    #[test]
+    fn jf_17s_banks_are_taken_as_bits_7_and_6_rise() {
+        let mut cart = board(72, 8, 16);
+        cart.cpu_write(0x8000, 0xC3, 0);
+        assert_eq!(banks(&mut cart), (3, 7, 0xC3, 0xC3), "both rising");
+        cart.cpu_write(0x8000, 0xC5, 0);
+        assert_eq!(banks(&mut cart), (3, 7, 0xC3, 0xC3), "neither rising");
+        cart.cpu_write(0x8000, 0x05, 0);
+        cart.cpu_write(0x8000, 0x85, 0);
+        assert_eq!(
+            banks(&mut cart),
+            (5, 7, 0xC3, 0xC3),
+            "bit 7 rising, its PRG"
+        );
+        cart.cpu_write(0x8020, 0xC4, 0);
+        assert_eq!(banks(&mut cart).2, 0xC3, "the ROM's 0 there winning");
+    }
+
+    #[test]
+    fn jf_19s_bank_is_at_c000_the_first_fixed() {
+        let mut cart = board(92, 8, 16);
+        assert_eq!(banks(&mut cart).1, 7, "the last at first");
+        cart.cpu_write(0x8000, 0x83, 0);
+        assert_eq!(banks(&mut cart), (0, 3, 0xC0, 0xC0));
+    }
+
+    #[test]
+    fn jalecos_registers_at_6000() {
+        // JF-13: a 32K bank, its CHR's bit 2 in bit 6; nothing at $7000 up
+        // or $8000 up.
+        let mut cart = board(86, 8, 16);
+        cart.cpu_write(0x6000, 0x62, 0);
+        assert_eq!(banks(&mut cart), (4, 5, 0xC6, 0xC6));
+        cart.cpu_write(0x7000, 0x00, 0);
+        cart.cpu_write(0x8000, 0x00, 0);
+        assert_eq!(banks(&mut cart), (4, 5, 0xC6, 0xC6));
+        // 87: its CHR's bits the other way round.
+        let mut cart = board(87, 2, 4);
+        cart.cpu_write(0x6000, 0x01, 0);
+        assert_eq!(cart.chr_read(0), 0xC2);
+        cart.cpu_write(0x7FFF, 0x02, 0);
+        assert_eq!(cart.chr_read(0), 0xC1);
+        // JF-11 and JF-14: a 32K bank and an 8K of CHR.
+        let mut cart = board(140, 8, 16);
+        cart.cpu_write(0x6000, 0x35, 0);
+        assert_eq!(banks(&mut cart), (6, 7, 0xC5, 0xC5));
+    }
+
+    #[test]
+    fn jf_16s_bit_3_its_one_screen_but_holy_divers_its_mirroring() {
+        let mut cart = board(78, 8, 16);
+        cart.cpu_write(0x8000, 0x5B, 0);
+        assert_eq!(
+            (banks(&mut cart), cart.mirroring),
+            ((3, 7, 0xC5, 0xC5), Mirroring::SingleUpper)
+        );
+        cart.cpu_write(0x8000, 0x53, 0);
+        assert_eq!(cart.mirroring, Mirroring::SingleLower);
+        let mut cart = board_of(78, 3, 8, 16);
+        cart.cpu_write(0x8000, 0x08, 0);
+        assert_eq!(cart.mirroring, Mirroring::Vertical);
+        cart.cpu_write(0x8000, 0x00, 0);
+        assert_eq!(cart.mirroring, Mirroring::Horizontal);
     }
 
     /// MMC3's CHR registers set: R0 to R5, each its value.

@@ -176,6 +176,22 @@
 //! and bit 7 the CHR bank's bit 3. 93, Sunsoft-2 on Fantasy Zone: a 16K bank
 //! (bits 4 to 6), its CHR RAM there only with bit 0 set.
 //!
+//! Jaleco's: 86, JF-13, a register at $6000 up to $6FFF, a 32K bank (bits
+//! 4 and 5) and an 8K bank of CHR (bits 0 and 1, and 6 its bit 2); its
+//! sound at $7000 up, a speech chip, not here. 87, its CHR's 8K bank in
+//! bits 0 and 1 the other way round, written at $6000 up. 140, JF-11 and
+//! JF-14: at $6000 up, a 32K bank (bits 4 and 5) and an 8K of CHR (bits 0
+//! to 3). 78, JF-16 and Irem's IF-12 on Holy Diver, with bus conflicts: a
+//! 16K bank at $8000 (bits 0 to 2), the last fixed, and an 8K of CHR (bits
+//! 4 to 7); bit 3 which 1K all four nametables are, or Holy Diver's (NES
+//! 2.0's submapper 3), vertical or horizontal.
+//!
+//! 72, Jaleco's JF-17, and 92, JF-19: with bus conflicts, its banks taken
+//! only as a write's bits 7 and 6 rise, from the last's: 7 its PRG's 16K at
+//! $8000, the last fixed (bits 0 to 2); JF-19's at $C000, the first fixed
+//! (bits 0 to 3); 6 its CHR's 8K (bits 0 to 3). Their speech chips not
+//! here.
+//!
 //! Bus conflicts: on a board whose register is written with its ROM still
 //! driving the bus, the bits it holds low win; the register's given what
 //! was written ANDed with the ROM's byte there.
@@ -282,6 +298,15 @@ impl Banks {
             conflicts,
         }
     }
+}
+
+/// Jaleco's JF-17's and JF-19's banks, and what was last written, their
+/// bits 7 and 6 latching them as they rise.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Jf17 {
+    prg: u8,
+    chr: u8,
+    last: u8,
 }
 
 /// NINA-001's registers: its 32K bank, and its two 4K banks of CHR.
@@ -412,6 +437,20 @@ pub enum Board {
     Bandai152,
     Sunsoft89,
     Sunsoft93,
+    Jf13,
+    Jaleco87,
+    Jf11,
+    /// 78's, its submapper saying if it's Holy Diver's.
+    Jf16(u8),
+    Jf17,
+    Jf19,
+}
+
+impl Board {
+    /// Whether its one register's at $6000 up, where RAM would be.
+    fn register_at_6000(self) -> bool {
+        matches!(self, Board::Jf13 | Board::Jaleco87 | Board::Jf11)
+    }
 }
 
 impl Board {
@@ -499,6 +538,7 @@ pub enum Mapper {
     Active(Active),
     Fds(Box<Fds>),
     Latch(u8),
+    Jf17(Jf17),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -689,7 +729,13 @@ impl Cartridge {
             // Its CHR there at first, as it'd be with nothing written.
             185 if submapper >= 4 => Mapper::Latch(submapper & 3),
             185 | 93 => Mapper::Latch(1),
-            94 | 180 | 13 | 70 | 152 | 89 => Mapper::Latch(0),
+            94 | 180 | 13 | 70 | 152 | 89 | 86 | 87 | 140 | 78 => Mapper::Latch(0),
+            72 => Mapper::Jf17(Jf17::default()),
+            // The last 16K at $C000 at first, as JF-19's is.
+            92 => Mapper::Jf17(Jf17 {
+                prg: 0xFF,
+                ..Jf17::default()
+            }),
             9 | 10 => Mapper::Mmc2(Mmc2 {
                 prg: 0,
                 chr: [[0; 2]; 2],
@@ -736,6 +782,12 @@ impl Cartridge {
             152 => Board::Bandai152,
             89 => Board::Sunsoft89,
             93 => Board::Sunsoft93,
+            86 => Board::Jf13,
+            87 => Board::Jaleco87,
+            140 => Board::Jf11,
+            78 => Board::Jf16(submapper),
+            72 => Board::Jf17,
+            92 => Board::Jf19,
             _ => Board::Plain,
         };
         if board == Board::Cprom {
@@ -878,9 +930,25 @@ impl Cartridge {
         let in_16k = |bank: usize| bank * PRG_BANK + (addr & 0x3FFF);
         let offset = match &self.mapper {
             Mapper::Nrom | Mapper::Cnrom(_) => addr - 0x8000,
-            Mapper::Latch(_) if matches!(self.board, Board::Cprom | Board::Cnrom185(_)) => {
+            Mapper::Latch(_)
+                if matches!(
+                    self.board,
+                    Board::Cprom | Board::Cnrom185(_) | Board::Jaleco87
+                ) =>
+            {
                 addr - 0x8000
             }
+            Mapper::Latch(latch) if matches!(self.board, Board::Jf13 | Board::Jf11) => {
+                ((*latch as usize >> 4) & 3) * 0x8000 + (addr & 0x7FFF)
+            }
+            Mapper::Jf17(jf) if addr >= 0xC000 => in_16k(match self.board {
+                Board::Jf19 => jf.prg as usize,
+                _ => last_16k,
+            }),
+            Mapper::Jf17(jf) => in_16k(match self.board {
+                Board::Jf19 => 0,
+                _ => jf.prg as usize & 7,
+            }),
             Mapper::Latch(latch) if addr >= 0xC000 => in_16k(match self.board {
                 Board::Unrom180 => *latch as usize & 7,
                 _ => last_16k,
@@ -888,6 +956,7 @@ impl Cartridge {
             Mapper::Latch(latch) => in_16k(match self.board {
                 Board::Un1rom => (*latch as usize >> 2) & 7,
                 Board::Unrom180 => 0,
+                Board::Jf16(_) => *latch as usize & 7,
                 _ => (*latch as usize >> 4) & 7,
             }),
             Mapper::Uxrom(bank) | Mapper::Camerica(bank) => in_16k(if addr < 0xC000 {
@@ -1000,12 +1069,17 @@ impl Cartridge {
             | Mapper::Mmc5(_)
             | Mapper::Fds(_) => addr,
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
+            Mapper::Jf17(jf) => jf.chr as usize * CHR_BANK + addr,
             Mapper::Latch(latch) => {
                 let latch = *latch as usize;
                 match self.board {
                     Board::Cprom if addr >= 0x1000 => (latch & 3) * 0x1000 + (addr & 0x0FFF),
                     Board::Bandai70 | Board::Bandai152 => (latch & 0x0F) * CHR_BANK + addr,
                     Board::Sunsoft89 => ((latch & 7) | (latch & 0x80) >> 4) * CHR_BANK + addr,
+                    Board::Jf13 => ((latch & 3) | (latch >> 4) & 4) * CHR_BANK + addr,
+                    Board::Jaleco87 => ((latch & 1) << 1 | (latch & 2) >> 1) * CHR_BANK + addr,
+                    Board::Jf11 => (latch & 0x0F) * CHR_BANK + addr,
+                    Board::Jf16(_) => (latch >> 4) * CHR_BANK + addr,
                     _ => addr,
                 }
             }
@@ -1166,6 +1240,15 @@ impl Cartridge {
             }
             return;
         }
+        if let (0x6000..=0x7FFF, Mapper::Latch(latch)) = (addr, &mut self.mapper) {
+            if self.board.register_at_6000() {
+                // JF-13's sound at $7000 up, not here.
+                if !(self.board == Board::Jf13 && addr >= 0x7000) {
+                    *latch = value;
+                }
+                return;
+            }
+        }
         if let 0x6000..=0x7FFF = addr {
             if let Mapper::Nina001(nina) = &mut self.mapper {
                 match addr {
@@ -1196,14 +1279,35 @@ impl Cartridge {
             | Mapper::Mmc5(_)
             | Mapper::Fds(_) => {}
             Mapper::Uxrom(bank) | Mapper::Cnrom(bank) => *bank = value,
+            Mapper::Latch(_) if self.board.register_at_6000() => {}
+            Mapper::Jf17(jf) => {
+                let value = value & rom;
+                if value & 0x80 != 0 && jf.last & 0x80 == 0 {
+                    jf.prg = value & 0x0F;
+                }
+                if value & 0x40 != 0 && jf.last & 0x40 == 0 {
+                    jf.chr = value & 0x0F;
+                }
+                jf.last = value;
+            }
             Mapper::Latch(latch) => {
-                *latch = match self.board {
-                    Board::Cnrom185(_) => value & rom,
+                let value = match self.board {
+                    Board::Cnrom185(_) | Board::Jf16(_) => value & rom,
                     _ => value,
                 };
+                *latch = value;
+                if self.board == Board::Jf16(3) {
+                    self.mirroring = if value & 0x08 != 0 {
+                        Mirroring::Vertical
+                    } else {
+                        Mirroring::Horizontal
+                    };
+                }
                 let upper = match self.board {
                     Board::Bandai152 => Some(value & 0x80 != 0),
-                    Board::Sunsoft89 => Some(value & 0x08 != 0),
+                    Board::Sunsoft89 | Board::Jf16(_) if self.board != Board::Jf16(3) => {
+                        Some(value & 0x08 != 0)
+                    }
                     _ => None,
                 };
                 if let Some(upper) = upper {
@@ -1614,6 +1718,8 @@ impl Cartridge {
             Mapper::Nina03(_) => (79, "NINA-03"),
             Mapper::Active(_) => (228, "ACTIVE"),
             Mapper::Fds(_) => (20, "FDS"),
+            Mapper::Jf17(_) if self.board == Board::Jf19 => (92, "JALECO JF-19"),
+            Mapper::Jf17(_) => (72, "JALECO JF-17"),
             Mapper::Latch(_) => match self.board {
                 Board::Un1rom => (94, "UN1ROM"),
                 Board::Unrom180 => (180, "UNROM"),
@@ -1622,6 +1728,11 @@ impl Cartridge {
                 Board::Bandai70 => (70, "BANDAI"),
                 Board::Bandai152 => (152, "BANDAI"),
                 Board::Sunsoft89 => (89, "SUNSOFT-2"),
+                Board::Jf13 => (86, "JALECO JF-13"),
+                Board::Jaleco87 => (87, "JALECO"),
+                Board::Jf11 => (140, "JALECO JF-11"),
+                Board::Jf16(3) => (78, "IREM IF-12"),
+                Board::Jf16(_) => (78, "JALECO JF-16"),
                 _ => (93, "SUNSOFT-2"),
             },
             Mapper::Quattro(_) => (232, "QUATTRO"),
