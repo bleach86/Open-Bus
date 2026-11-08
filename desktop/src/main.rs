@@ -1,7 +1,7 @@
 //! Open Bus as a desktop app: the web page's library, in a window of its
 //! own, its files on the disk rather than in a browser's storage. A folder
-//! added is only remembered, in `settings.json` in the app's data folder,
-//! and looked through each time: its games stay where they are, and a game
+//! added is only remembered, in `library.sqlite` in the app's data folder
+//! (library.rs), and looked through each time: its games stay where they are, and a game
 //! removed from the library is hidden, its file never touched. Files added
 //! one by one are copied to `library` there, and may be deleted; the ROMs a
 //! machine needs too. The covers and what's known of the games are in `art`.
@@ -10,8 +10,8 @@
 //! is checked to be in `library` or in a folder that's been added.
 //!
 //! Looking through the folders takes a while, on a NAS, so what it found is
-//! kept, in `files.json`, for the page to show at once when it starts: it
-//! looks again behind that, and only says if anything's changed.
+//! kept there too, for the page to show at once when it starts: it looks
+//! again behind that, and only says if anything's changed.
 //!
 //! A game's the native emulator, `cpu_emu`, as a process of its own, as
 //! EmulationStation has it: it opens where the window is, that going away
@@ -21,6 +21,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod library;
+
+use library::{Found, Library, Section, entry};
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 use serde_json::{Value, json};
@@ -129,40 +132,21 @@ fn keep_file(app: AppHandle, request: Request<'_>) -> Result<String, String> {
 #[derive(Default)]
 struct Dropped(Mutex<Vec<PathBuf>>);
 
-/// The folders added, and the files hidden: from `settings.json`.
-fn settings(app: &AppHandle) -> Result<Value, String> {
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("settings.json");
-    Ok(match fs::read(path) {
-        Ok(text) => serde_json::from_slice(&text).map_err(|e| e.to_string())?,
-        Err(_) => json!({ "folders": [], "hidden": [] }),
-    })
+/// What the app keeps of its library.
+fn library(app: &AppHandle) -> tauri::State<'_, Library> {
+    app.state::<Library>()
 }
 
-fn save_settings(app: &AppHandle, settings: &Value) -> Result<(), String> {
-    let path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("settings.json");
-    write(&path, settings.to_string().as_bytes())
-}
-
-fn listed(settings: &Value, field: &str) -> Vec<String> {
-    settings[field].as_array().map_or(Vec::new(), |list| {
-        list.iter()
-            .filter_map(|item| item.as_str().map(String::from))
-            .collect()
-    })
+/// A file found as the page has one: its path, and its size.
+fn as_entry((path, size): &Found) -> Value {
+    json!({ "path": path, "size": size })
 }
 
 /// `path`, if it's somewhere the page may go: `library`, or a folder added.
 fn allowed(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
     let real = fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
-    let mut places = listed(&settings(app)?, "folders")
+    let mut places = library(app)
+        .folders()?
         .into_iter()
         .map(PathBuf::from)
         .collect::<Vec<_>>();
@@ -184,7 +168,7 @@ fn allowed(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
 
 /// All the files under `folder`, with their sizes; not those in folders
 /// that aren't anyone's games: a hidden one, or a NAS's own, as @eaDir is.
-fn walk(folder: &Path, found: &mut Vec<Value>) {
+fn walk(folder: &Path, found: &mut Vec<Found>) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
     };
@@ -198,20 +182,14 @@ fn walk(folder: &Path, found: &mut Vec<Value>) {
             }
         } else if !path.to_string_lossy().ends_with(".part") {
             let size = entry.metadata().map_or(0, |data| data.len());
-            found.push(json!({ "path": path.to_string_lossy(), "size": size }));
+            found.push((path.to_string_lossy().into_owned(), size));
         }
     }
 }
 
 /// `folder` remembered.
 fn remember(app: &AppHandle, folder: &str) -> Result<(), String> {
-    let mut kept = settings(app)?;
-    if !listed(&kept, "folders").iter().any(|known| known == folder) {
-        kept["folders"]
-            .as_array_mut()
-            .ok_or("bad settings")?
-            .push(json!(folder));
-        save_settings(app, &kept)?;
+    if library(app).add_folder(folder)? {
         watch_folders(app);
     }
     Ok(())
@@ -220,21 +198,11 @@ fn remember(app: &AppHandle, folder: &str) -> Result<(), String> {
 /// What Settings shows: the folders, the hidden, and the app's own folder.
 #[tauri::command(async)]
 fn library_settings(app: AppHandle) -> Result<Value, String> {
-    let kept = settings(&app)?;
+    let kept = library(&app);
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(
-        json!({ "folders": listed(&kept, "folders"), "hidden": listed(&kept, "hidden"), "data": data.to_string_lossy() }),
+        json!({ "folders": kept.folders()?, "hidden": kept.hidden()?, "data": data.to_string_lossy() }),
     )
-}
-
-/// `path` gone from `field` of the settings.
-fn take_out(app: &AppHandle, field: &str, path: &str) -> Result<(), String> {
-    let mut kept = settings(app)?;
-    kept[field]
-        .as_array_mut()
-        .ok_or("bad settings")?
-        .retain(|item| item != path);
-    save_settings(app, &kept)
 }
 
 /// The kinds of file the library has, a game's or a disk's: what's worth a
@@ -251,9 +219,7 @@ struct Watching(Mutex<Option<Debouncer<RecommendedWatcher>>>);
 /// The folders added watched, as they are now: what was watching them before
 /// stopped.
 fn watch_folders(app: &AppHandle) {
-    let folders = settings(app)
-        .map(|kept| listed(&kept, "folders"))
-        .unwrap_or_default();
+    let folders = library(app).folders().unwrap_or_default();
     let seeing = app.clone();
     let watching = new_debouncer(
         Duration::from_millis(800),
@@ -297,46 +263,29 @@ fn passed_over(path: &Path, folders: &[String]) -> bool {
 /// with games in it, put with what's been found; each that's gone, and all
 /// that was under it, taken out. The page told, if anything changed.
 fn seen(app: &AppHandle, paths: Vec<PathBuf>) {
-    let Ok(kept) = settings(app) else { return };
-    let (folders, hidden) = (listed(&kept, "folders"), listed(&kept, "hidden"));
+    let kept = library(app);
+    let Ok(folders) = kept.folders() else { return };
     let game = |path: &Path| {
         path.extension()
             .is_some_and(|kind| GAMES.contains(&kind.to_string_lossy().to_lowercase().as_str()))
     };
     let mut changed = false;
-    let _ = change_found(app, |found| {
-        let Some(list) = found["folders"].as_array_mut() else {
-            return;
-        };
-        for path in paths.iter().filter(|path| !passed_over(path, &folders)) {
-            let mut came = Vec::new();
-            if path.is_dir() {
-                walk(path, &mut came);
-            } else if path.is_file() {
-                if game(path) {
-                    let size = fs::metadata(path).map_or(0, |data| data.len());
-                    came.push(json!({ "path": path.to_string_lossy(), "size": size }));
-                }
-            } else {
-                let before = list.len();
-                list.retain(|entry| {
-                    !entry["path"]
-                        .as_str()
-                        .is_some_and(|file| Path::new(file).starts_with(path))
-                });
-                changed |= list.len() != before;
-                continue;
-            }
-            for entry in came {
-                let file = entry["path"].as_str().unwrap_or_default().to_string();
-                let known = list.iter().any(|known| known["path"] == entry["path"]);
-                if game(Path::new(&file)) && !known && !hidden.contains(&file) {
-                    list.push(entry);
-                    changed = true;
-                }
-            }
+    for path in paths.iter().filter(|path| !passed_over(path, &folders)) {
+        let mut came = Vec::new();
+        if path.is_dir() {
+            walk(path, &mut came);
+        } else if path.is_file() {
+            let size = fs::metadata(path).map_or(0, |data| data.len());
+            came.push((path.to_string_lossy().into_owned(), size));
+        } else {
+            changed |= kept.forget_under(path).unwrap_or(false);
+            continue;
         }
-    });
+        came.retain(|(file, _)| game(Path::new(file)));
+        changed |= kept
+            .add(Section::Folders, came)
+            .is_ok_and(|added| !added.is_empty());
+    }
     if changed {
         let _ = app.emit("files-changed", ());
     }
@@ -378,52 +327,15 @@ fn look_over_network(app: AppHandle) {
     thread::spawn(move || {
         loop {
             thread::sleep(NETWORK_LOOK);
-            let folders = settings(&app)
-                .map(|kept| listed(&kept, "folders"))
-                .unwrap_or_default();
+            let folders = library(&app).folders().unwrap_or_default();
             if !folders.iter().any(|folder| on_network(folder)) {
                 continue;
             }
-            let before = known_files(app.clone()).unwrap_or(Value::Null);
-            if all_files(app.clone()).is_ok_and(|now| now != before) {
+            if look_again(&app).is_ok_and(|changed| changed) {
                 let _ = app.emit("files-changed", ());
             }
         }
     });
-}
-
-/// What `all_files` last found, to be changed by `change`, as one thing's
-/// done that changes it, so that it's not all looked for again for that.
-fn change_found(app: &AppHandle, change: impl FnOnce(&mut Value)) -> Result<(), String> {
-    let file = found_files(app)?;
-    let mut found = fs::read(&file).ok().and_then(|text| serde_json::from_slice(&text).ok()).unwrap_or_else(|| {
-        json!({ "root": folder(app, "library").map(|path| path.to_string_lossy().into_owned()).unwrap_or_default(), "library": [], "folders": [] })
-    });
-    change(&mut found);
-    write(&file, found.to_string().as_bytes())
-}
-
-/// `entries`, files found, with what was found before, in `section`, the
-/// library's or the folders': those hidden, or that are there already, left
-/// out. What's put there.
-fn add_found(app: &AppHandle, section: &str, entries: Vec<Value>) -> Result<Vec<Value>, String> {
-    let hidden = listed(&settings(app)?, "hidden");
-    let mut added = Vec::new();
-    change_found(app, |found| {
-        let Some(list) = found[section].as_array_mut() else {
-            return;
-        };
-        for entry in entries {
-            let path = entry["path"].as_str().unwrap_or_default();
-            if !hidden.iter().any(|hidden| hidden == path)
-                && !list.iter().any(|known| known["path"] == entry["path"])
-            {
-                list.push(entry.clone());
-                added.push(entry);
-            }
-        }
-    })?;
-    Ok(added)
 }
 
 /// A folder's files, as `folder_files` found them, ROMs taken out, now with
@@ -431,55 +343,43 @@ fn add_found(app: &AppHandle, section: &str, entries: Vec<Value>) -> Result<Vec<
 #[tauri::command(async)]
 fn add_folder_files(app: AppHandle, entries: Vec<Value>) -> Result<Vec<Value>, String> {
     let allowed_entries = entries
-        .into_iter()
-        .filter(|entry| {
-            entry["path"]
-                .as_str()
-                .is_some_and(|path| allowed(&app, path).is_ok())
-        })
+        .iter()
+        .filter_map(entry)
+        .filter(|(path, _)| allowed(&app, path).is_ok())
         .collect();
-    add_found(&app, "folders", allowed_entries)
+    let added = library(&app).add(Section::Folders, allowed_entries)?;
+    Ok(added.iter().map(as_entry).collect())
 }
 
 /// A folder no longer looked in: its files are left as they are, and what was
 /// found in it's forgotten, not all looked for again.
 #[tauri::command(async)]
 fn remove_folder(app: AppHandle, path: String) -> Result<(), String> {
-    take_out(&app, "folders", &path)?;
+    library(&app).remove_folder(&path)?;
     watch_folders(&app);
-    let inside = Path::new(&path).to_path_buf();
-    change_found(&app, |found| {
-        if let Some(list) = found["folders"].as_array_mut() {
-            list.retain(|entry| {
-                !entry["path"]
-                    .as_str()
-                    .is_some_and(|file| Path::new(file).starts_with(&inside))
-            });
-        }
-    })
+    Ok(())
 }
 
-/// Games hidden, back: out of `settings.json`'s hidden, and into what's
-/// been found, in `files.json`, as a folder's are, without its folders being
-/// looked through again. What's still there of them, as `all_files` has a
+/// Games hidden, back: no longer hidden, and with what's been found, as a
+/// folder's are, without its folders being looked through again. What's still there of them, as `all_files` has a
 /// folder's files.
 #[tauri::command(async)]
 fn restore_hidden(app: AppHandle, paths: Vec<String>) -> Result<Vec<Value>, String> {
-    let mut kept = settings(&app)?;
-    kept["hidden"]
-        .as_array_mut()
-        .ok_or("bad settings")?
-        .retain(|item| !paths.iter().any(|path| item == path));
-    save_settings(&app, &kept)?;
-    let back: Vec<Value> = paths
+    let kept = library(&app);
+    kept.unhide(&paths)?;
+    let back = paths
         .iter()
         .filter_map(|path| {
             fs::metadata(path)
                 .ok()
-                .map(|file| json!({ "path": path, "size": file.len() }))
+                .map(|file| (path.clone(), file.len()))
         })
         .collect();
-    add_found(&app, "folders", back)
+    Ok(kept
+        .add(Section::Folders, back)?
+        .iter()
+        .map(as_entry)
+        .collect())
 }
 
 /// A folder chosen, and remembered: its path, if one was.
@@ -524,42 +424,32 @@ fn take_dropped(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
 fn folder_files(app: AppHandle, folder: String) -> Result<Vec<Value>, String> {
     let mut found = Vec::new();
     walk(&allowed(&app, &folder)?, &mut found);
-    Ok(found)
+    Ok(found.iter().map(as_entry).collect())
 }
 
 /// Every file there is: `library`'s, and the added folders', the hidden left
 /// out, as paths: which first, and whether it's a folder's, for the page.
 #[tauri::command(async)]
 fn all_files(app: AppHandle) -> Result<Value, String> {
-    let kept = settings(&app)?;
-    let hidden = listed(&kept, "hidden");
-    let mut library = Vec::new();
-    walk(&folder(&app, "library")?, &mut library);
+    look_again(&app)?;
+    known_files(app)
+}
+
+/// Everything looked through again, and kept: whether it's changed.
+fn look_again(app: &AppHandle) -> Result<bool, String> {
+    let mut own = Vec::new();
+    walk(&folder(app, "library")?, &mut own);
     let mut added = Vec::new();
-    for place in listed(&kept, "folders") {
+    for place in library(app).folders()? {
         walk(Path::new(&place), &mut added);
     }
-    added.retain(|file| !hidden.iter().any(|path| file["path"] == *path));
-    let found = json!({ "root": folder(&app, "library")?.to_string_lossy(), "library": library, "folders": added });
-    write(&found_files(&app)?, found.to_string().as_bytes())?;
-    Ok(found)
+    library(app).replace(own, added)
 }
 
-fn found_files(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("files.json"))
-}
-
-/// What `all_files` last found, if it's looked yet.
+/// What's been found, as it was last looked for.
 #[tauri::command(async)]
 fn known_files(app: AppHandle) -> Result<Value, String> {
-    Ok(fs::read(found_files(&app)?)
-        .ok()
-        .and_then(|text| serde_json::from_slice(&text).ok())
-        .unwrap_or(Value::Null))
+    library(&app).found(&folder(&app, "library")?.to_string_lossy())
 }
 
 /// A file of `library` deleted; one of a folder's, only hidden: it's yours.
@@ -573,12 +463,7 @@ fn forget_path(app: AppHandle, path: String) -> Result<(), String> {
         }
         return Ok(());
     }
-    let mut kept = settings(&app)?;
-    kept["hidden"]
-        .as_array_mut()
-        .ok_or("bad settings")?
-        .push(json!(path));
-    save_settings(&app, &kept)
+    library(&app).hide(&path)
 }
 
 /// A game's art's file, by a hash of its key, which can be any text.
@@ -849,10 +734,14 @@ fn sort_roms(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
             let path = library.join(name);
             fs::metadata(&path)
                 .ok()
-                .map(|file| json!({ "path": path.to_string_lossy(), "size": file.len() }))
+                .map(|file| (path.to_string_lossy().into_owned(), file.len()))
         })
         .collect();
-    let kept = add_found(&app, "library", written)?;
+    let kept: Vec<Value> = self::library(&app)
+        .add(Section::Library, written)?
+        .iter()
+        .map(as_entry)
+        .collect();
     Ok(json!({ "held": of("held "), "roms": of("rom "), "chips": chips, "kept": kept }))
 }
 
@@ -966,6 +855,8 @@ fn main() {
                         settings.set_enable_smooth_scrolling(false);
                     }
                 })?;
+            let data = app.path().app_data_dir()?;
+            app.manage(Library::open(&data)?);
             start_pads(app.handle());
             watch_folders(app.handle());
             look_over_network(app.handle().clone());
