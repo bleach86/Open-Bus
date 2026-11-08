@@ -21,12 +21,21 @@ const {
     written_files,
     changed_files,
     take_changed_parts,
+    nes_facts,
+    rewind,
 } = native ? {} : await import('./pkg/cpu_emu.js');
+
+/// What's kept of the games, favourites, plays, their own settings and what's
+/// known of them: the desktop app's library database, or this browser's.
+const keeper = native ?? (await import('./kept.js'));
 
 const page = (id) => document.getElementById(id);
 /// What the library scrolls in: in the desktop app, the library itself, its
 /// scrollbar over the scene behind it; in a browser, the page.
 const scroller = native ? page('library') : document.scrollingElement;
+/// Too narrow for the sidebar beside the shelf, as a phone is: it's slid in
+/// over it, by the menu button. As style.css has it.
+const PHONE = '(max-width: 39.99rem)';
 const IIE_ROMS = {
     apple2ee: [
         'Apple IIe Enhanced ROM Pages C0-DF - 342-0304-A - 1984.bin',
@@ -46,6 +55,10 @@ const FDS_BIOS = 'disksys.rom';
 const kind = (name) => name.split('.').pop().toLowerCase();
 const isGame = (name) => ['nes', 'fds', 'zip'].includes(kind(name));
 const isDisk = (name) => ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'].includes(kind(name));
+/// Whether there's anything to play; and the shelf to show of it first, the
+/// NES's unless there are only disks.
+const hasGames = () => files.some(isGame) || files.some(isDisk);
+const gamesShelf = () => (files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple');
 const isOurs = (name) => ['srm', 'state', 'resume'].includes(kind(name));
 const isRom = (name) =>
     kind(name) === 'rom' || DISK_II_ROMS.includes(name) || Object.values(IIE_ROMS).flat().includes(name);
@@ -196,7 +209,6 @@ function openControls() {
     page('controls-dialog').showModal();
 }
 
-page('open-controls').onclick = openControls;
 page('game-controls').onclick = openControls;
 page('controls-done').onclick = () => page('controls-dialog').close();
 page('controls-reset').onclick = () => {
@@ -277,6 +289,9 @@ function showShelf(name) {
     for (const tab of document.querySelectorAll('.tabs button[data-tab]')) {
         tab.classList.toggle('on', tab.dataset.tab === name);
     }
+    const tab = document.querySelector(`.tabs button[data-tab="${name}"]`);
+    page('shelf-name').textContent = (tab.querySelector('.tab-name') ?? tab).textContent;
+    showMenu(false);
     // What a gamepad had, gone with the page it was on.
     if (padFocus && !focusable().includes(padFocus)) {
         padFocus = null;
@@ -287,6 +302,32 @@ function showShelf(name) {
 for (const tab of document.querySelectorAll('.tabs button[data-tab]')) {
     tab.onclick = () => showShelf(tab.dataset.tab);
 }
+
+/// The shelves, on a phone: the sidebar slid in over the shelf by the menu
+/// button, and out again by a shelf chosen, a tap beside it, or Esc.
+function showMenu(open) {
+    const sidebar = page('sidebar');
+    const was = sidebar.classList.contains('open');
+    sidebar.classList.toggle('open', open);
+    page('menu').setAttribute('aria-expanded', open);
+    if (open) {
+        sidebar.querySelector('button.on')?.focus();
+    } else if (was && sidebar.contains(document.activeElement)) {
+        page('menu').focus();
+    }
+}
+page('menu').onclick = () => showMenu(!page('sidebar').classList.contains('open'));
+page('shade').onclick = () => showMenu(false);
+addEventListener(
+    'keydown',
+    (event) => {
+        if (event.code === 'Escape' && page('sidebar').classList.contains('open')) {
+            event.stopImmediatePropagation();
+            showMenu(false);
+        }
+    },
+    true,
+);
 
 /// The files, in order, those a filter hides left out; those the machines
 /// write hidden.
@@ -299,7 +340,12 @@ async function refresh() {
     fillDisks(wanted);
     fillKept(wanted);
     showRoms();
-    page('find').hidden = !coverless().length;
+    const missing = coverless().length;
+    page('covers-wanted').hidden = !missing;
+    page('coverless').textContent =
+        `${missing === 1 ? '1 game has' : `${missing} games have`} no cover. Open Bus can look online for them: ` +
+        "boxes from libretro's set on GitHub, and Apple II title screens from the Internet Archive. Your games stay here.";
+    learnFacts();
 }
 
 /// The games with no cover, as `findCovers` wants them.
@@ -349,7 +395,7 @@ const artFor = (title, ...names) =>
 /// What's said of an empty shelf.
 const noGames = native
     ? 'No games yet. Add a folder of them in Settings.'
-    : 'No games yet. Add .nes, .fds or .zip files, or a folder of them.';
+    : 'No games yet. Add .nes, .fds or .zip files in Settings, or drop them here.';
 
 /// Whether what's searched for is in a game's title, file, or what's known
 /// of it.
@@ -382,10 +428,13 @@ page('sort').onchange = () => {
 
 /// A tab's name, and how many it holds beside it.
 function showCount(tab, name, count) {
+    const label = document.createElement('span');
+    label.className = 'tab-name';
+    label.textContent = name;
     const tally = document.createElement('span');
     tally.className = 'tally';
     tally.textContent = count;
-    page(tab).replaceChildren(name, ...(count ? [tally] : []));
+    page(tab).replaceChildren(label, ...(count ? [tally] : []));
 }
 
 /// Whose art a NES game has: its own, or one of its title's.
@@ -415,12 +464,10 @@ function gameTile(name) {
     const item = document.createElement('li');
     item.className = 'tile';
     item.dataset.game = name;
-    if (native) {
-        item.oncontextmenu = (event) => {
-            event.preventDefault();
-            openGameSettings(name);
-        };
-    }
+    item.oncontextmenu = (event) => {
+        event.preventDefault();
+        openGameSettings(name);
+    };
     const key = nesArt(name);
     const known = art.get(key);
     const button = document.createElement('button');
@@ -436,39 +483,54 @@ function gameTile(name) {
     ]
         .filter(Boolean)
         .join('\n');
-    button.onclick = () =>
-        native ? playNatively({ kind: 'nes', game: name }) : start(() => Emulator.nes(name, 8), 'nes', [name]);
+    button.onclick = () => playGame({ kind: 'nes', game: name });
     // One the emulator says won't load, greyed out, and why it won't said.
     if (facts?.problem) {
         item.classList.add('unplayable');
         button.onclick = () => say(`${titleOf(name)} won't load: ${facts.problem}.`, true);
     }
     button.append(cover(key, titleOf(name)), caption(titleOf(name), known, tagsOf(name)));
-    item.append(button, removeButton(name));
-    if (native) {
-        item.append(starButton({ kind: 'nes', game: name }, titleOf(name)));
-    }
+    item.append(button, removeButton(name), starButton({ kind: 'nes', game: name }, titleOf(name)));
     return item;
 }
 
-/// The desktop app's games kept of, favourites and those played, the last
-/// played first; and which are favourites, by `gameKey`. Loaded as the
-/// library's refreshed, its files known by then.
+/// A game started: in the desktop app, on the native emulator; here, a NES
+/// game with what's chosen of it, an Apple's disks as they were.
+async function playGame(machine) {
+    if (native) {
+        playNatively(machine);
+    } else if (machine.kind === 'nes') {
+        const chosen = await keeper.gameSettings(machine);
+        const of = (name) => chosen[name] ?? '';
+        const ram = of('ram') || page('power-on-ram').value;
+        rewind(page('rewind').checked);
+        const nes = () => Emulator.nes(machine.game, 8, of('region'), of('console'), of('port2'), ram);
+        start(nes, 'nes', [machine.game], machine);
+    } else {
+        const { model, roms, disks, mockingboards } = machine;
+        start(() => Emulator.apple(model, roms, disks, mockingboards), 'apple', disks, machine);
+    }
+}
+
+/// The games kept of, favourites and those played, the last played first;
+/// and which are favourites, by `gameKey`. Loaded as the library's
+/// refreshed, its files known by then.
 let kept = [];
 let favoured = new Set();
 const gameKey = (machine) => (machine.kind === 'nes' ? `nes\n${machine.game}` : `apple\n${machine.disks.join('\n')}`);
 
 async function loadKept() {
-    if (native) {
-        [kept, factsOf] = await Promise.all([native.keptGames(), native.gameFacts()]);
-        favoured = new Set(kept.filter(({ favourite }) => favourite).map(({ machine }) => gameKey(machine)));
-    }
+    [kept, factsOf] = await Promise.all([keeper.keptGames(), keeper.gameFacts()]);
+    favoured = new Set(kept.filter(({ favourite }) => favourite).map(({ machine }) => gameKey(machine)));
 }
 
-/// What the emulator's said of each NES game, in the desktop app, by name:
-/// its mapper, and why it won't load, if it won't. Loaded with `kept`.
+/// What the emulator's said of each NES game, by name: its mapper, and why
+/// it won't load, if it won't. Loaded with `kept`. The desktop app learns
+/// it, and says when it has; here, the WebAssembly's asked of each game, in
+/// the background, those it hasn't been yet.
 let factsOf = new Map();
 native?.whenFactsChange(() => refresh());
+const learnFacts = () => native || keeper.learnFacts(files.filter(isGame), bytes, nes_facts, refresh);
 
 /// A game's star, in the desktop app: lit if it's a favourite, and pressed,
 /// made one, or not.
@@ -481,7 +543,7 @@ function starButton(machine, title) {
     star.setAttribute('aria-label', star.title);
     star.setAttribute('aria-pressed', on);
     star.onclick = async () => {
-        await native.favourite(machine, !on);
+        await keeper.favourite(machine, !on);
         refresh();
     };
     return star;
@@ -492,7 +554,7 @@ function starButton(machine, title) {
 /// automatic would be, if it's known.
 async function openGameSettings(name) {
     const machine = { kind: 'nes', game: name };
-    const chosen = await native.gameSettings(machine);
+    const chosen = await keeper.gameSettings(machine);
     const dialog = page('game-settings');
     const facts = factsOf.get(name);
     page('game-settings-title').textContent = titleOf(name);
@@ -509,14 +571,14 @@ async function openGameSettings(name) {
         }
         select.value = chosen[setting] ?? '';
         select.onchange = () =>
-            native.chooseSettings(
+            keeper.chooseSettings(
                 machine,
                 Object.fromEntries(selects.filter(({ value }) => value).map((one) => [one.dataset.setting, one.value])),
             );
     }
     page('game-settings-play').onclick = () => {
         dialog.close();
-        playNatively(machine);
+        playGame(machine);
     };
     page('game-settings-close').onclick = () => dialog.close();
     dialog.showModal();
@@ -533,7 +595,7 @@ const settingsOpen = () => page('game-settings').open;
 /// Start pressed on a NES game: its own settings.
 function settingsOfSelected() {
     const tile = padFocus ? padFocus.closest('.tile') : gamesShowing() && tiles.get(selectedGame);
-    if (native && tile?.dataset.game) {
+    if (tile?.dataset.game) {
         openGameSettings(tile.dataset.game);
     }
 }
@@ -542,9 +604,6 @@ function settingsOfSelected() {
 /// when and for how long under each; and the favourites, sorted as the
 /// rest are. Those a search leaves out, not shown.
 function fillKept(wanted) {
-    if (!native) {
-        return;
-    }
     const titled = ({ machine }) => (machine.kind === 'nes' ? titleOf(machine.game) : appleTitle(machine));
     const knownOf = ({ machine }) =>
         machine.kind === 'nes' ? art.get(nesArt(machine.game)) : art.get(artFor(appleTitle(machine), ...machine.disks));
@@ -597,7 +656,7 @@ function appleTile(machine) {
         const model = machine.model ?? page('model').value;
         const roms = model === 'apple2' ? (machine.roms ?? plusRom() ?? '') : '';
         const mockingboards = machine.mockingboards ?? Number(page('mockingboards').value);
-        playNatively({ kind: 'apple', model, roms, disks: machine.disks, mockingboards });
+        playGame({ kind: 'apple', model, roms, disks: machine.disks, mockingboards });
     };
     const key = artFor(title, ...machine.disks);
     const media = machine.disks.every(isVolume) ? 'hard' : 'floppy';
@@ -782,7 +841,8 @@ function focusable() {
             !element.closest('#games') &&
             !element.matches('.remove, .star') &&
             !element.disabled &&
-            element.getClientRects().length,
+            (element.checkVisibility?.({ visibilityProperty: true, checkVisibilityCSS: true }) ??
+                element.getClientRects().length > 0),
     );
 }
 
@@ -1231,9 +1291,7 @@ function diskTile(game, wanted) {
     } else {
         item.append(removeButton(game.disks[0]));
     }
-    if (native) {
-        item.append(starButton({ kind: 'apple', disks: game.disks }, title));
-    }
+    item.append(starButton({ kind: 'apple', disks: game.disks }, title));
     return item;
 }
 
@@ -1380,6 +1438,7 @@ function showRoms() {
 /// app, what's been taken out of them already: its `roms`, and the II+'s
 /// `chips`.
 async function add(given, dropped = [], sorted = null) {
+    const hadGames = hasGames();
     // Covers and game lists apart, and what's no use, as videos are.
     const artFiles = [...given, ...dropped].filter((file) => isMedia(file.name));
     const list = [...given].filter((file) => !isMedia(file.name));
@@ -1423,6 +1482,9 @@ async function add(given, dropped = [], sorted = null) {
         for (const [at, file] of usable.entries()) {
             say(`Adding ${at + 1} of ${usable.length}…`);
             await keep(nameOf(file), new Uint8Array(await file.arrayBuffer()));
+            if (!native) {
+                keeper.forgetFacts([nameOf(file)]);
+            }
         }
         const notes = [];
         const loose = usable.length - added.length;
@@ -1462,7 +1524,13 @@ async function add(given, dropped = [], sorted = null) {
     } catch (error) {
         say(`Couldn't add it: ${error}`, true);
     }
-    refresh();
+    await refresh();
+    // The first games: their shelf shown, not Settings, where they came from.
+    if (!hadGames && hasGames()) {
+        showShelf(gamesShelf());
+    } else if (!page('settings').hidden) {
+        fillSettings();
+    }
 }
 
 const fileOf = (entry) => new Promise((resolve, reject) => entry.file(resolve, reject));
@@ -1514,10 +1582,12 @@ async function addDropped(entries) {
     add(loose, inFolders);
 }
 
-page('add').onchange = async (event) => {
-    await add(event.target.files);
-    event.target.value = '';
-};
+for (const input of document.querySelectorAll('.add-files')) {
+    input.onchange = async (event) => {
+        await add(event.target.files);
+        event.target.value = '';
+    };
+}
 /// A folder chosen rather than dropped: its files by their paths, as a
 /// dropped one's are, those nearest the top first.
 page('add-folder').onchange = async (event) => {
@@ -1556,12 +1626,7 @@ page('apple').onclick = () => {
     const model = page('model').value;
     const mockingboards = Number(page('mockingboards').value);
     const roms = model === 'apple2' ? (plusRom() ?? '') : '';
-    const disks = chosen;
-    if (native) {
-        playNatively({ kind: 'apple', model, roms, disks, mockingboards });
-    } else {
-        start(() => Emulator.apple(model, roms, disks, mockingboards), 'apple', disks);
-    }
+    playGame({ kind: 'apple', model, roms, disks: chosen, mockingboards });
 };
 
 /// In the desktop app, a game's on the native emulator, not here: a game
@@ -1693,12 +1758,21 @@ const row = (text, detail, button, action) => {
     return item;
 };
 
-/// Settings, in the desktop app: the folders, what's hidden and the system
-/// files, as they are now.
+/// Settings: the system files, as they are now; and in the desktop app,
+/// the folders and what's hidden.
 async function fillSettings() {
-    if (!native) {
-        return;
+    const has = (name) => files.includes(name);
+    const appleFound = [...DISK_II_ROMS, ...IIE_ROMS.apple2ee].filter(has).length;
+    page('system-files').replaceChildren(
+        row('Disk System BIOS', has(FDS_BIOS) ? 'Found' : 'Missing: Disk System games need disksys.rom'),
+        row('Apple II ROMs', `${appleFound} of ${DISK_II_ROMS.length + IIE_ROMS.apple2ee.length} found`),
+    );
+    if (native) {
+        fillFolders();
     }
+}
+
+async function fillFolders() {
     const { folders, hidden, data } = await native.settings();
     const counted = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
     page('folders').replaceChildren(
@@ -1738,24 +1812,12 @@ async function fillSettings() {
         }),
     );
     page('restore-all').onclick = () => restoring(hidden, [...page('hidden-games').children]);
-    const has = (name) => files.includes(name);
-    const appleFound = [...DISK_II_ROMS, ...IIE_ROMS.apple2ee].filter(has).length;
-    page('system-files').replaceChildren(
-        row('Disk System BIOS', has(FDS_BIOS) ? 'Found' : 'Missing: Disk System games need disksys.rom'),
-        row('Apple II ROMs', `${appleFound} of ${DISK_II_ROMS.length + IIE_ROMS.apple2ee.length} found`),
-    );
     page('data-place').textContent = `Covers and system files are kept in ${data}`;
 }
 
 /// The desktop app's own way of looking: a window of its own, not a page.
 if (native) {
     document.documentElement.classList.add('native');
-    document.querySelector('nav.tabs').prepend(document.querySelector('h1'));
-    page('tools').append(page('find'));
-    page('file-actions').append(document.querySelector('label.primary'));
-    document.querySelector('header').hidden = true;
-    page('tab-settings').hidden = false;
-    page('tab-recent').hidden = page('tab-favourites').hidden = false;
     addEventListener('contextmenu', (event) => event.preventDefault());
     native.whenDropped(({ folders, files: dropped }) => addNatively(folders, dropped).then(fillSettings));
     // The keys a menu bar would have, without one: Ctrl, or Cmd on a Mac,
@@ -1780,9 +1842,7 @@ if (native) {
             shortcut();
         }
     });
-    page('open-controls').hidden = true;
     page('add-path').onclick = chooseFolder;
-    page('change-controls').onclick = () => playNatively({ kind: 'controls' });
     page('rescan').onclick = () => lookForChanges(true);
     page('quit-app').onclick = () => native.quit();
     native.whenFilesChange(async ({ came, went }) => {
@@ -1806,8 +1866,6 @@ if (native) {
         localStorage.setItem('fullscreen', target.checked ? 'yes' : 'no');
     page('performance-mode').checked = localStorage.getItem('performance') === 'yes';
     page('quick-resume').checked = localStorage.getItem('resume') === 'yes';
-    page('rewind').checked = localStorage.getItem('rewind') !== 'no';
-    page('rewind').onchange = ({ target }) => localStorage.setItem('rewind', target.checked ? 'yes' : 'no');
     page('tv-layout').checked = localStorage.getItem('tv') === 'yes';
     page('tv-layout').onchange = ({ target }) => {
         localStorage.setItem('tv', target.checked ? 'yes' : 'no');
@@ -1819,22 +1877,25 @@ if (native) {
     page('quick-resume').onchange = ({ target }) => localStorage.setItem('resume', target.checked ? 'yes' : 'no');
     page('performance-mode').onchange = ({ target }) =>
         localStorage.setItem('performance', target.checked ? 'yes' : 'no');
-    page('power-on-ram').value = localStorage.getItem('ram') ?? 'ones';
-    page('power-on-ram').onchange = ({ target }) => localStorage.setItem('ram', target.value);
-    page('background').value = localStorage.getItem('background') ?? 'sunset';
-    page('background').onchange = ({ target }) => {
-        localStorage.setItem('background', target.value);
-        showScene();
-    };
 }
+// The Settings of both: what's to be read once a game's started.
+page('change-controls').onclick = native ? () => playNatively({ kind: 'controls' }) : openControls;
+page('rewind').checked = localStorage.getItem('rewind') !== 'no';
+page('rewind').onchange = ({ target }) => localStorage.setItem('rewind', target.checked ? 'yes' : 'no');
+page('power-on-ram').value = localStorage.getItem('ram') ?? 'ones';
+page('power-on-ram').onchange = ({ target }) => localStorage.setItem('ram', target.value);
+page('background').value = localStorage.getItem('background') ?? 'sunset';
+page('background').onchange = ({ target }) => {
+    localStorage.setItem('background', target.value);
+    showScene();
+};
 
 /// The scene behind the library: the smooth one, or one in pixels, about as
 /// many lines tall as the NES's picture and scaled up by whole pixels, more
-/// of it to the sides in a wider window. The desktop app's chosen in
-/// Settings, and centred on the library, right of the sidebar; a browser's
-/// the sunset in pixels.
+/// of it to the sides in a wider window: as it's chosen in Settings, and
+/// centred on the library, right of the sidebar, if there's room for one.
 function showScene() {
-    const name = native ? page('background').value : 'sunset';
+    const name = page('background').value;
     const scene = page('scene');
     scene.classList.toggle('pixel', name !== 'smooth');
     let canvas = scene.querySelector('canvas');
@@ -1851,7 +1912,7 @@ function showScene() {
     canvas.height = Math.ceil(innerHeight / scale);
     canvas.style.width = `${canvas.width * scale}px`;
     canvas.style.height = `${canvas.height * scale}px`;
-    const sidebar = native ? document.querySelector('.tabs').getBoundingClientRect().width : 0;
+    const sidebar = matchMedia(PHONE).matches ? 0 : page('sidebar').getBoundingClientRect().width;
     drawScene(name, canvas, (sidebar + innerWidth) / 2 / scale);
 }
 showScene();
@@ -1886,8 +1947,8 @@ async function startAudio() {
 
 /// A machine made and run, `machine` nes or apple, `using` the games or
 /// disks it's given: the saves and ROMs and those put where it can open
-/// them, not the rest of the library.
-async function start(make, machine, using) {
+/// them, not the rest of the library. `game`, as it's kept, played from now.
+async function start(make, machine, using, game) {
     if (starting) {
         return;
     }
@@ -1900,6 +1961,7 @@ async function start(make, machine, using) {
             }
         }
         emulator = make();
+        playing = { game, since: Date.now() };
     } catch (error) {
         say(String(error), true);
         return;
@@ -1945,8 +2007,15 @@ async function saveWritten() {
     }
 }
 
+/// The game being played here, as it's kept, and since when.
+let playing = null;
+
 async function stop() {
     navigationWaits = true;
+    if (playing) {
+        keeper.played(playing.game, playing.since / 1000, (Date.now() - playing.since) / 1000);
+        playing = null;
+    }
     await saveWritten();
     emulator.free();
     emulator = null;
@@ -2259,15 +2328,15 @@ if (!native) {
 }
 await loadArt();
 await refresh();
-const firstShelf = native && !files.length ? 'settings' : files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple';
+// No games yet, and it starts in Settings, where they're added.
 const lastShelf = localStorage.getItem('shelf');
-showShelf(native && !files.length ? firstShelf : lastShelf && lastShelf !== 'settings' ? lastShelf : firstShelf);
+showShelf(!hasGames() ? 'settings' : lastShelf && lastShelf !== 'settings' ? lastShelf : gamesShelf());
 if (native) {
     // With nothing known yet, the folders may yet turn something up.
-    const startedEmpty = !files.length;
+    const startedEmpty = !hasGames();
     lookForChanges().then(() => {
-        if (startedEmpty && files.length) {
-            showShelf(files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple');
+        if (startedEmpty && hasGames()) {
+            showShelf(gamesShelf());
         }
     });
 }

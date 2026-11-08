@@ -19,50 +19,27 @@
         <div class="sun"></div>
         <div class="floor"></div>
       </div>
-      <header>
-        <div>
-          <h1>Open Bus</h1>
-          <p class="quiet">
-            Your games stay in this browser. Add them, or drop files or whole
-            folders anywhere on the page: covers and game lists beside them come
-            too.
-          </p>
-        </div>
-        <div class="actions">
-          <button
-            id="find"
-            hidden
-            title="Looks online for what's missing: boxes from libretro's set on GitHub, and Apple II title screens from the Internet Archive. Your games stay here."
-          >
-            Find covers
-          </button>
-          <button id="open-controls">Controls</button>
-          <label class="button" id="add-folder-button"
-            >Add folder<input
-              id="add-folder"
-              class="unseen"
-              type="file"
-              webkitdirectory
-              multiple
-          /></label>
-          <label class="button primary"
-            >Add files<input id="add" class="unseen" type="file" multiple
-          /></label>
-        </div>
-      </header>
       <div id="message" role="status" hidden>
         <span></span><button id="dismiss" aria-label="Dismiss">×</button>
       </div>
 
       <div class="toolbar">
-        <nav class="tabs" aria-label="Machines">
-          <button id="tab-recent" data-tab="recent" hidden>Recent</button>
-          <button id="tab-favourites" data-tab="favourites" hidden>
-            Favourites
-          </button>
+        <button
+          id="menu"
+          aria-controls="sidebar"
+          aria-expanded="false"
+          aria-label="Shelves"
+        >
+          <span aria-hidden="true">☰</span> <span id="shelf-name"></span>
+        </button>
+        <div id="shade"></div>
+        <nav id="sidebar" class="tabs" aria-label="Shelves">
+          <h1>Open Bus</h1>
+          <button id="tab-recent" data-tab="recent">Recent</button>
+          <button id="tab-favourites" data-tab="favourites">Favourites</button>
           <button id="tab-nes" data-tab="nes">NES</button>
           <button id="tab-apple" data-tab="apple">Apple II</button>
-          <button id="tab-settings" data-tab="settings" hidden>Settings</button>
+          <button id="tab-settings" data-tab="settings">Settings</button>
           <button id="quit-app" hidden>
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -109,59 +86,93 @@
       </section>
 
       <section id="settings" class="shelf settings" hidden>
-        <h2>Library folders</h2>
-        <p class="quiet">
-          Open Bus shows the games in these folders. Nothing is copied or moved,
-          and saves go beside each game.
-        </p>
-        <ul id="folders" class="rows"></ul>
-        <p class="row-actions" id="folder-actions">
-          <button id="add-path" class="primary">Add folder…</button>
-          <button id="rescan">Look for new games</button>
-        </p>
-
-        <h2>Hidden games</h2>
-        <p class="quiet">
-          Games you've removed from the library. Their files are still where
-          they were.
-        </p>
-        <details id="hidden-list" class="hidden-list">
-          <summary id="hidden-count"></summary>
-          <ul id="hidden-games" class="rows"></ul>
-          <p class="row-actions">
-            <button id="restore-all">Restore all</button>
+        <h2>Library</h2>
+        <div class="for-desktop">
+          <p class="quiet">
+            Open Bus shows the games in these folders. Nothing is copied or
+            moved, and saves go beside each game.
           </p>
-        </details>
-        <p id="nothing-hidden" class="quiet">Nothing's hidden.</p>
+          <ul id="folders" class="rows"></ul>
+          <p class="row-actions" id="folder-actions">
+            <button id="add-path" class="primary">Add folder…</button>
+            <button id="rescan">Look for new games</button>
+          </p>
+        </div>
+        <div class="for-browser">
+          <p class="quiet">
+            Your games stay in this browser. Add them, or drop files or whole
+            folders anywhere on the page: covers and game lists beside them come
+            too.
+          </p>
+          <p class="row-actions">
+            <label class="button primary"
+              >Add files<input class="unseen add-files" type="file" multiple
+            /></label>
+            <label class="button" id="add-folder-button"
+              >Add folder<input
+                id="add-folder"
+                class="unseen"
+                type="file"
+                webkitdirectory
+                multiple
+            /></label>
+          </p>
+        </div>
+
+        <div id="covers-wanted" hidden>
+          <h2>Covers</h2>
+          <p class="quiet" id="coverless"></p>
+          <p class="row-actions">
+            <button id="find">Find covers</button>
+          </p>
+        </div>
+
+        <div class="for-desktop">
+          <h2>Hidden games</h2>
+          <p class="quiet">
+            Games you've removed from the library. Their files are still where
+            they were.
+          </p>
+          <details id="hidden-list" class="hidden-list">
+            <summary id="hidden-count"></summary>
+            <ul id="hidden-games" class="rows"></ul>
+            <p class="row-actions">
+              <button id="restore-all">Restore all</button>
+            </p>
+          </details>
+          <p id="nothing-hidden" class="quiet">Nothing's hidden.</p>
+        </div>
 
         <h2>Games</h2>
-        <p class="row-actions">
-          <label class="check"
-            ><input id="tv-layout" type="checkbox" /> TV layout</label
-          >
-        </p>
-        <p class="quiet">
-          Everything bigger, for playing on a TV from across the room: the
-          library and its games fullscreen.
-        </p>
-        <p class="row-actions">
-          <label class="check"
-            ><input id="start-fullscreen" type="checkbox" /> Start games
-            fullscreen</label
-          >
-        </p>
-        <p class="quiet">
-          In a game, F11 switches between the window and fullscreen.
-        </p>
-        <p class="row-actions">
-          <label class="check"
-            ><input id="quick-resume" type="checkbox" /> Quick resume</label
-          >
-        </p>
-        <p class="quiet">
-          A game closed is saved as it was, and goes on from there next time.
-          F12 resets it, for a fresh start.
-        </p>
+        <div class="for-desktop">
+          <p class="row-actions">
+            <label class="check"
+              ><input id="tv-layout" type="checkbox" /> TV layout</label
+            >
+          </p>
+          <p class="quiet">
+            Everything bigger, for playing on a TV from across the room: the
+            library and its games fullscreen.
+          </p>
+          <p class="row-actions">
+            <label class="check"
+              ><input id="start-fullscreen" type="checkbox" /> Start games
+              fullscreen</label
+            >
+          </p>
+          <p class="quiet">
+            In a game, F11 switches between the window and fullscreen.
+          </p>
+          <p class="row-actions">
+            <label class="check"
+              ><input id="quick-resume" type="checkbox" /> Quick resume</label
+            >
+          </p>
+          <p class="quiet">
+            A game closed is saved as it was, and goes on from there next time.
+            F12 resets it, for a fresh start.
+          </p>
+        </div>
         <p class="row-actions">
           <label class="check"
             ><input id="rewind" type="checkbox" /> Rewind</label
@@ -171,16 +182,18 @@
           Hold Backspace, or a gamepad's left trigger, to go back through a NES
           game's last 30 seconds.
         </p>
-        <p class="row-actions">
-          <label class="check"
-            ><input id="performance-mode" type="checkbox" /> Performance
-            mode</label
-          >
-        </p>
-        <p class="quiet">
-          For slow computers: the NES draws a line at a time. Nearly all games
-          look the same, but a few effects won't be exact.
-        </p>
+        <div class="for-desktop">
+          <p class="row-actions">
+            <label class="check"
+              ><input id="performance-mode" type="checkbox" /> Performance
+              mode</label
+            >
+          </p>
+          <p class="quiet">
+            For slow computers: the NES draws a line at a time. Nearly all games
+            look the same, but a few effects won't be exact.
+          </p>
+        </div>
         <p class="row-actions">
           <label
             >RAM at power-on
@@ -209,9 +222,14 @@
 
         <h2>Controls</h2>
         <p class="quiet">
-          Keyboard and gamepad, for both players. In a game, tap Select and
-          Start together, or press F1, for a menu with this screen in it. To get
-          back here from a game, hold Select and Start, or press F5.
+          Keyboard and gamepad, for both players.
+          <span class="for-desktop"
+            >In a game, tap Select and Start together, or press F1, for a menu
+            with this screen in it. To get back here from a game, hold Select
+            and Start, or press F5.</span
+          ><span class="for-browser"
+            >In a game, its Controls button has this screen too.</span
+          >
         </p>
         <p class="row-actions">
           <button id="change-controls">Change controls…</button>
@@ -219,8 +237,12 @@
 
         <h2>System files</h2>
         <ul id="system-files" class="rows"></ul>
-        <p class="row-actions" id="file-actions"></p>
-        <p class="quiet hint" id="data-place"></p>
+        <p class="row-actions for-desktop">
+          <label class="button primary"
+            >Add files<input class="unseen add-files" type="file" multiple
+          /></label>
+        </p>
+        <p class="quiet hint for-desktop" id="data-place"></p>
       </section>
 
       <section id="apple-shelf" class="shelf" hidden>
@@ -406,7 +428,7 @@
             <option value="random">Random</option>
           </select></label
         >
-        <label
+        <label class="for-desktop"
           >Quick resume
           <select data-setting="resume">
             <option value="">As in Settings</option>
@@ -435,6 +457,7 @@
         'desktop.js',
         'disks.js',
         'files.js',
+        'kept.js',
         'scenes.js',
         'sound.js',
         'touch.js',

@@ -710,7 +710,12 @@ impl Machine for Nes {
 
 /// The iNES image at `path`, or in the zip there, the first in it.
 pub fn image(path: &Path) -> Result<Vec<u8>, String> {
-    let bytes = files::read(path).map_err(|e| e.to_string())?;
+    image_of(path, files::read(path).map_err(|e| e.to_string())?)
+}
+
+/// The iNES image in `bytes`, the file at `path`'s, or in the zip they are,
+/// the first in it.
+pub fn image_of(path: &Path, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     let zipped = path
         .extension()
         .is_some_and(|kind| kind.eq_ignore_ascii_case("zip"));
@@ -753,6 +758,12 @@ fn cartridge(image: &[u8], path: &Path) -> Result<Cartridge, String> {
 /// a Zapper's, then why it won't load, if it won't, and its path last, a tab
 /// between each. A Disk System's game, its BIOS not needed for this.
 pub fn facts(path: &Path) -> String {
+    facts_of(path, image(path))
+}
+
+/// `facts` of the game whose image is `image`, if it could be had, from the
+/// file at `path`.
+pub fn facts_of(path: &Path, image: Result<Vec<u8>, String>) -> String {
     let fact = |image: &[u8]| -> Result<[String; 4], String> {
         if fds::sides_of(image).is_some() {
             let crc = crc32(image);
@@ -776,7 +787,7 @@ pub fn facts(path: &Path) -> String {
             (cartridge.zapper as u8).to_string(),
         ])
     };
-    let [crc, mapper, famicom, zapper, problem] = match image(path).and_then(|image| fact(&image)) {
+    let [crc, mapper, famicom, zapper, problem] = match image.and_then(|image| fact(&image)) {
         Ok([crc, mapper, famicom, zapper]) => [crc, mapper, famicom, zapper, String::new()],
         Err(problem) => ["".into(), "".into(), "0".into(), "0".into(), problem],
     };

@@ -83,10 +83,9 @@ input[type="search"] {
 }
 button,
 .button {
-  font-family: var(--display);
+  font-family: system-ui, sans-serif;
   font-size: 0.82rem;
   font-weight: 500;
-  letter-spacing: 0.03em;
 }
 button,
 .button,
@@ -213,34 +212,10 @@ canvas:focus-visible {
   }
 }
 
+/* The library: the shelves down the left, a sidebar, and the shelf chosen
+   beside it, under its search and sort. */
 #library {
-  max-width: 92rem;
-  margin: 0 auto;
-  padding: 1.25rem;
-}
-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 0.75rem 1.5rem;
-}
-header > div:first-child {
-  flex: 1 1 22rem;
-}
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  flex: 0 1 30rem;
-}
-.actions input {
-  flex: 1 1 8rem;
-  min-width: 0;
-}
-.actions .button {
-  position: relative;
-  white-space: nowrap;
+  padding: 0 1rem 1rem 13.5rem;
 }
 #message {
   margin-top: 0.75rem;
@@ -255,37 +230,63 @@ header > div:first-child {
 #message.problem {
   color: var(--gold);
 }
-/* The tabs and the shelves of games: covers, side by side. */
+/* The sidebar: frosted glass over the scene. Nothing scrolls under it, so
+   it's blurred once, not as the games go by. */
 .tabs {
-  position: sticky;
-  top: 0;
-  z-index: 3;
+  position: fixed;
+  z-index: 4;
+  inset: 0 auto 0 0;
+  width: 12.5rem;
   display: flex;
-  gap: 0.25rem;
-  margin-top: 0.75rem;
-  height: 2.5rem;
-  padding-top: 0.35rem;
-  background: var(--night);
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.9rem 0.5rem;
+  overflow-y: auto;
+  background: linear-gradient(#ffffff10, #ffffff06), #0d022180;
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.4);
+  border-right: 1px solid #ffffff14;
+}
+.tabs h1 {
+  margin: 0 0 0.9rem 0.4rem;
+  font-size: 1.45rem;
 }
 .tabs button {
-  padding: 0.4rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  color: var(--text);
   background: none;
   border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  color: var(--quiet);
-  font-size: 0.85rem;
+  border-radius: 6px;
+  font:
+    500 0.9rem/1.3 system-ui,
+    sans-serif;
+  text-align: left;
 }
 .tabs button:hover {
-  background: none;
+  background: #ffffff10;
   box-shadow: none;
-  color: var(--text);
 }
 .tabs button.on {
-  color: var(--cyan);
-  border-bottom-color: var(--cyan);
-  text-shadow: 0 0 8px #22e6ffaa;
+  color: #fff;
+  background: #ffffff1f;
 }
+.tabs #tab-settings {
+  margin-top: auto;
+}
+.tabs #quit-app {
+  justify-content: flex-start;
+  gap: 0.5rem;
+  color: var(--quiet);
+}
+.tabs #quit-app svg {
+  width: 1em;
+  height: 1em;
+}
+/* The shelves of games: covers, side by side. */
 .tally {
   margin-left: 0.5em;
   padding: 0.05em 0.5em;
@@ -304,23 +305,21 @@ header > div:first-child {
   background: var(--cyan);
 }
 .shelf {
-  padding: 0.9rem;
-  background: #14062feb;
-  border: 1px solid #ff2a9d80;
-  border-radius: 4px;
+  margin-top: 0.9rem;
 }
+/* The Apple's choices, under the toolbar as the disks go by. */
 .fields {
   position: sticky;
-  top: 2.5rem;
+  top: 3.2rem;
   z-index: 2;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   gap: 0.5rem 1rem;
-  margin: -0.9rem -0.9rem 0.9rem;
+  margin: 0 0 0.9rem;
   padding: 0.7rem 0.9rem;
   background: #14062f;
-  border-bottom: 1px solid var(--line);
+  border-radius: 6px;
 }
 .fields label {
   display: flex;
@@ -714,10 +713,11 @@ details {
   margin: 0 0 0.8rem;
   font-size: 0.85rem;
 }
-/* On a phone the choices scroll away under the tabs, and Start stays. */
-@media (max-width: 40rem) {
+/* On a phone the choices' first row scrolls away under the toolbar, and
+   Start stays. */
+@media (max-width: 39.99rem) {
   .fields {
-    top: -1.9rem;
+    top: -1.3rem;
   }
 }
 summary {
@@ -1212,59 +1212,114 @@ body.dropping::after {
     sans-serif;
 }
 
-/* The tabs, search and sort: always there. */
+/* Search and sort: always there, over the shelf. On a phone, the menu
+   button too, for the sidebar, and a shade over the shelf while it's out. */
 .toolbar {
   position: sticky;
   top: 0;
   z-index: 3;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 0.75rem;
-  margin-top: 0.75rem;
-  background: var(--night);
-}
-.toolbar .tabs {
-  position: static;
-  margin: 0;
-  background: none;
-  flex: none;
+  margin: 0 -1rem;
+  padding: 0.6rem 1rem;
+  background: #120429;
+  border-bottom: 1px solid #ffffff14;
 }
 .tools {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 0.4rem;
   min-width: 0;
 }
 .tools input {
-  width: 14rem;
-  min-width: 5rem;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 28rem;
+}
+#menu,
+#shade {
+  display: none;
+}
+/* Nothing on the toolbar, in Settings, but the sidebar: no bar. */
+@media (min-width: 40rem) {
+  .toolbar:has(#tools[hidden]) {
+    padding: 0;
+    border: 0;
+  }
 }
 
-/* One row, on a phone. */
-@media (max-width: 40rem) {
+/* Too narrow for the sidebar beside the shelf, as a phone is: it's slid in
+   over it by the menu button, which says which shelf's showing. PHONE, in
+   app.js. */
+@media (max-width: 39.99rem) {
+  #library {
+    padding: 0 0.75rem 1rem;
+  }
   .toolbar {
-    gap: 0.3rem;
+    gap: 0.4rem;
+    margin: 0 -0.75rem;
+    padding: 0.5rem 0.75rem;
   }
-  .toolbar .tabs button {
-    padding: 0.4rem 0.45rem;
-    font-size: 0.78rem;
+  #menu {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex: none;
+    max-width: 45%;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 0.9rem;
   }
-  .tools {
-    flex: 1 1 0;
-    gap: 0.25rem;
+  #shelf-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .tools input {
     flex: 1 1 0;
     width: 0;
-    min-width: 0;
-    padding-inline: 0.4rem;
   }
   .tools select {
-    flex: 0 1 4.6rem;
+    flex: 0 1 5.5rem;
     min-width: 0;
     padding-inline: 0.2rem;
+  }
+  .tabs {
+    width: min(16rem, 82vw);
+    background: #0d0221f0;
+    box-shadow: 0 0 24px #000a;
+    translate: -100% 0;
+    visibility: hidden;
+    transition:
+      translate 0.2s,
+      visibility 0s 0.2s;
+  }
+  .tabs.open {
+    translate: 0 0;
+    visibility: visible;
+    transition: translate 0.2s;
+  }
+  #shade {
+    position: fixed;
+    inset: 0;
+    z-index: 3;
+    display: block;
+    background: #05010d99;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  .toolbar:has(.tabs.open) #shade {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tabs,
+  #shade {
+    transition: none !important;
   }
 }
 
@@ -1276,7 +1331,7 @@ body.dropping::after {
     sans-serif;
   color: var(--text);
 }
-.settings h2:first-child {
+.settings > h2:first-child {
   margin-top: 0;
 }
 .check {
@@ -1331,33 +1386,50 @@ body.dropping::after {
   user-select: text;
   -webkit-user-select: text;
 }
+/* In the desktop app, the games scroll in the library, not the window: the
+   scrollbar's then over the scene, not beside it. The library's the whole
+   window, the sidebar in it, as WebKit cuts off what's fixed in place
+   outside what scrolls it. And what's placed by the page, as a file
+   choice's hidden input is, is placed here instead, or the window would
+   scroll too. */
+.native #library {
+  position: relative;
+  height: 100vh;
+  overflow-y: auto;
+}
+
 /* The scene, faded back behind the games, frosted, and still: moving, it
    would have the whole window drawn again all the time. Under the sidebar
    too, but centred on the library, right of it: as far past the right edge
    as the sidebar's wide. And a little past the window's edges, so that the
    blur doesn't fade out at them. */
-.native #scene {
+#scene {
   inset: -3rem;
   right: -15.5rem;
   opacity: 0.45;
   filter: blur(8px) saturate(1.2);
 }
-.native #scene::after {
+@media (max-width: 39.99rem) {
+  #scene {
+    right: -3rem;
+  }
+}
+#scene::after {
   content: "";
   position: absolute;
   inset: 0;
   background: #d8ccff26;
 }
-.native #scene * {
+#scene * {
   animation: none;
 }
 /* A scene in pixels instead, scenes.js's: crisp, so neither blurred nor
    hazed, and the window's size. */
-.native #scene.pixel {
+#scene.pixel {
   inset: 0;
   filter: none;
 }
-.native #scene.pixel::after,
+#scene.pixel::after,
 #scene.pixel > div {
   display: none;
 }
@@ -1369,130 +1441,24 @@ body.dropping::after {
 #power-on-ram {
   margin-left: 0.5rem;
 }
-.native #library {
-  max-width: none;
-  margin: 0;
-  /* Past the sidebar: the library's the whole window, the sidebar in it,
-     as WebKit cuts off what's fixed in place outside what scrolls it. */
-  padding: 0 1rem 1rem 13.5rem;
-  /* The games scroll here, not the window: the scrollbar's then over the
-     scene, not beside it. And what's placed by the page, as a file choice's
-     hidden input is, is placed here instead, or the window would scroll
-     too. */
-  position: relative;
-  height: 100vh;
-  overflow-y: auto;
-}
-.native .toolbar {
-  margin: 0 -1rem;
-  padding: 0.6rem 1rem;
-  justify-content: flex-end;
-  background: #120429;
-  border-bottom: 1px solid #ffffff14;
-}
-.native .tools {
-  flex: 1;
-}
-/* Nothing on the toolbar, in Settings, but the sidebar: no bar. */
-.native .toolbar:has(#tools[hidden]) {
-  padding: 0;
-  border: 0;
-}
-.native .tools input {
-  flex: 1 1 auto;
-  width: auto;
-  max-width: 28rem;
-}
-.native #find {
-  margin-left: auto;
-}
-.native .tabs {
-  position: fixed;
-  z-index: 4;
-  inset: 0 auto 0 0;
-  width: 12.5rem;
-  height: auto;
-  flex-direction: column;
-  gap: 0.1rem;
-  margin: 0;
-  padding: 0.9rem 0.5rem;
-  /* Frosted glass over the scene. Nothing scrolls under it, so it's
-     blurred once, not as the games go by. */
-  background: linear-gradient(#ffffff10, #ffffff06), #0d022180;
-  -webkit-backdrop-filter: blur(12px) saturate(1.4);
-  backdrop-filter: blur(12px) saturate(1.4);
-  border-right: 1px solid #ffffff14;
-}
-.native .tabs h1 {
-  margin: 0 0 0.9rem 0.4rem;
-  font-size: 1.45rem;
-}
-.native .tabs button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: 0.45rem 0.6rem;
-  color: var(--text);
-  border: 0;
-  border-radius: 6px;
-  font:
-    500 0.9rem/1.3 system-ui,
-    sans-serif;
-  letter-spacing: 0;
-  text-shadow: none;
-  text-align: left;
-}
-.native .tabs button:hover {
-  background: #ffffff10;
-}
-.native .tabs button.on {
-  color: #fff;
-  background: #ffffff1f;
-  border: 0;
-}
-.native .tabs #tab-settings {
-  margin-top: auto;
-}
-.native .tabs #quit-app {
-  justify-content: flex-start;
-  gap: 0.5rem;
-  color: var(--quiet);
-}
-.native .tabs #quit-app svg {
-  width: 1em;
-  height: 1em;
-}
-.native button,
-.native .button,
-.native select {
-  font-family: system-ui, sans-serif;
-  letter-spacing: 0;
-}
-.native .shelf {
-  margin-top: 0.9rem;
-  padding: 0;
-  background: none;
-  border: 0;
-}
-.native .fields {
-  margin: 0 0 0.9rem;
-  border: 0;
-  border-radius: 6px;
-  top: 3.2rem;
-}
-.native ::-webkit-scrollbar {
+::-webkit-scrollbar {
   width: 10px;
 }
-.native ::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   background: #ffffff30;
   border-radius: 5px;
 }
 
-/* A long shelf, in a window: nothing to repaint as it goes by. */
-.native .art {
+/* A long shelf: nothing to repaint as it goes by. */
+.art {
   box-shadow: none;
   transition: none;
+}
+
+/* What only the desktop app has, or only a browser. */
+html:not(.native) .for-desktop,
+.native .for-browser {
+  display: none !important;
 }
 
 /* The shelf of games: rows of a fixed height, for app.js to place them. */
@@ -1540,6 +1506,9 @@ body.dropping::after {
 }
 #game-settings .choices label {
   display: contents;
+}
+#game-settings .choices label[hidden] {
+  display: none;
 }
 #game-settings-about {
   margin: 0;

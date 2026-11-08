@@ -6,20 +6,37 @@ use crate::cpu::Variant;
 use crate::host::clock;
 use crate::host::display::{Gamepad, Joystick, Key, Pointer};
 use crate::host::files;
-use crate::host::machine::Machine;
+use crate::host::machine::{Machine, PowerOnRam};
 use crate::host::page::{Page, Shared};
-use crate::host::run::Host;
+use crate::host::run::{self, Host};
 use crate::host::save_state;
 use crate::machines::apple2::rom_set::Sorted;
 use crate::machines::apple2::video::Monitor;
 use crate::machines::apple2::{self, Apple2, Model};
+use crate::machines::nes::region::Region;
 use crate::machines::nes::{self, Nes};
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::atomic::Ordering;
 use wasm_bindgen::prelude::*;
 
+/// What's known of the NES game `name`, its file's `bytes`, without running
+/// it, as `cpu_emu facts` says it, a line.
+#[wasm_bindgen]
+pub fn nes_facts(name: &str, bytes: Vec<u8>) -> String {
+    let path = Path::new(name);
+    nes::facts_of(path, nes::image_of(path, bytes))
+}
+
 /// A file put in by the page.
+/// Whether the machines started from now on can be rewound, as Settings
+/// has it: the page's `--no-rewind`.
+#[wasm_bindgen]
+pub fn rewind(on: bool) {
+    run::REWIND.store(on, Ordering::Relaxed);
+}
+
 #[wasm_bindgen]
 pub fn put_file(name: &str, bytes: Vec<u8>) {
     files::put(Path::new(name), bytes);
@@ -112,9 +129,38 @@ fn model(name: &str) -> Result<Model, String> {
 
 #[wasm_bindgen]
 impl Emulator {
-    /// The NES, with the game `rom`.
-    pub fn nes(rom: &str, overscan: usize) -> Result<Emulator, String> {
-        let cpu = nes::build(rom, overscan, nes::Chosen::default())?;
+    /// The NES, with the game `rom`, and what's chosen of it, each if it
+    /// is, else "": its `region`, ntsc or pal; its `console`, nes or
+    /// famicom; its second `port`, controller or zapper; its `ram` at
+    /// power-on, ones, zeros or random.
+    pub fn nes(
+        rom: &str,
+        overscan: usize,
+        region: &str,
+        console: &str,
+        port: &str,
+        ram: &str,
+    ) -> Result<Emulator, String> {
+        let either = |said: &str, no: &str, yes: &str| match said {
+            "" => Ok(None),
+            _ if said == no => Ok(Some(false)),
+            _ if said == yes => Ok(Some(true)),
+            _ => Err(format!("{said}: not {no} or {yes}")),
+        };
+        let chosen = nes::Chosen {
+            region: match region {
+                "" => None,
+                _ => Some(Region::parse(region).ok_or(format!("{region}: not a region"))?),
+            },
+            famicom: either(console, "nes", "famicom")?,
+            zapper: either(port, "controller", "zapper")?,
+        };
+        let mut cpu = nes::build(rom, overscan, chosen)?;
+        if !ram.is_empty() {
+            PowerOnRam::parse(ram)
+                .ok_or(format!("{ram}: not ones, zeros or random"))?
+                .fill(&mut cpu.memory.ram);
+        }
         let region = cpu.memory.region;
         let page = Rc::new(RefCell::new(Shared::default()));
         let state = save_state::path(Path::new(rom));
