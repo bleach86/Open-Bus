@@ -131,7 +131,7 @@ mod tests {
             (Mapper::Nrom, 0x8000, Mirroring::Vertical, 0),
             "checked, it has no RAM"
         );
-        assert!(cart.battery, "a battery the database hasn't still kept");
+        assert!(!cart.battery, "checked, its battery as the database has it");
         let unchecked = |_| {
             static UNCHECKED: Known = Known {
                 submapper: None,
@@ -147,6 +147,15 @@ mod tests {
             (0x2000, true, Mirroring::Horizontal),
             "unchecked, the header's RAM and mirroring, a battery added"
         );
+        let no_battery = |_| {
+            static NO_BATTERY: Known = Known {
+                submapper: None,
+                ..KNOWN
+            };
+            Some(&NO_BATTERY)
+        };
+        let cart = Cartridge::known_as(&cnrom, no_battery).unwrap();
+        assert!(cart.battery, "unchecked, the header's battery kept");
     }
 
     #[test]

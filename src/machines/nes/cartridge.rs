@@ -739,7 +739,13 @@ impl Cartridge {
             if known.checked() || known.prg_ram > 0 {
                 prg_ram_size = known.prg_ram;
             }
-            battery |= known.battery;
+            // A header's battery bit is often wrongly set (Super Mario Bros
+            // 3 (J)'s, its RAM then saved every second it's played).
+            battery = if known.checked() {
+                known.battery
+            } else {
+                battery || known.battery
+            };
         }
         let told = nes2 || known.is_some_and(Known::checked);
         let prg_rom = image
