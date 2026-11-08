@@ -29,9 +29,12 @@ mod tests {
         PowerOnRam::Random.fill(&mut first);
         PowerOnRam::Random.fill(&mut second);
         assert_ne!(first, second);
-        // Every value about as often as any other: none missing.
+        // Every value about as often as any other: none missing, of 64K. (Of
+        // 2K, one would be about one time in eleven.)
+        let mut lots = vec![0; 0x10000];
+        PowerOnRam::Random.fill(&mut lots);
         let mut seen = [false; 256];
-        for byte in first {
+        for byte in lots {
             seen[byte as usize] = true;
         }
         assert!(seen.iter().all(|&seen| seen), "a value never seen");
