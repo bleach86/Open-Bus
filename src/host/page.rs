@@ -3,7 +3,7 @@
 //! controls kept for the host. No more of a browser than that: the page
 //! has the canvas and the sound, and calls in through `web.rs`.
 
-use crate::host::display::{Display, Gamepad, Joystick, Key};
+use crate::host::display::{Display, Gamepad, Joystick, Key, Pointer};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -24,6 +24,7 @@ pub struct Shared {
     pub gamepad: Gamepad,
     pub gamepad_2: Gamepad,
     pub joystick: Joystick,
+    pub pointer: Pointer,
     pub key_down: bool,
     pub reset: bool,
 }
@@ -57,6 +58,10 @@ impl Display for Page {
 
     fn gamepad_2(&self) -> Gamepad {
         self.0.borrow().gamepad_2
+    }
+
+    fn pointer(&self) -> Pointer {
+        self.0.borrow().pointer
     }
 
     fn key_down(&self) -> bool {

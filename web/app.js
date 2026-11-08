@@ -1681,6 +1681,8 @@ async function start(make, machine, using) {
     page('machine').hidden = false;
     page('machine').dataset.machine = machine;
     page('disk').hidden = page('disk-help').hidden = !emulator.disk_system();
+    aiming = emulator.aimed_at();
+    page('frame').classList.toggle('aiming', aiming);
     const canvas = page('screen');
     page('machine').style.setProperty('--ratio', emulator.shown_width() / emulator.shown_height());
     canvas.focus();
@@ -1947,7 +1949,40 @@ function fullscreen() {
 attach(page('handheld'));
 page('full').hidden = !page('frame').requestFullscreen;
 
-page('screen').ondblclick = fullscreen;
+// Not a light gun's: its double clicks are shots.
+page('screen').ondblclick = () => aiming || fullscreen();
+
+/// Whether the machine's aimed at, a light gun's: the pointer on the picture
+/// its, where it is and its buttons, the left (or a finger) and the right.
+let aiming = false;
+
+/// Where it was last aimed: a finger lifted leaves the picture as it goes,
+/// and the game looks for the light a frame or two after, so it's still
+/// aimed there, as a gun would be. Only a mouse aims away, leaving it.
+let aimedAt = [0, 0, false];
+
+function aim(event) {
+    if (!aiming) {
+        return;
+    }
+    const lifted = event.pointerType !== 'mouse' && ['pointerleave', 'pointercancel'].includes(event.type);
+    if (!lifted) {
+        const canvas = page('screen');
+        const box = canvas.getBoundingClientRect();
+        const x = ((event.clientX - box.left) / box.width) * canvas.width;
+        const y = ((event.clientY - box.top) / box.height) * canvas.height;
+        const on = event.type !== 'pointerleave' && x >= 0 && y >= 0 && x < canvas.width && y < canvas.height;
+        aimedAt = [x, y, on];
+    }
+    emulator?.pointer(...aimedAt, event.buttons & 3);
+}
+
+for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointerleave', 'pointercancel']) {
+    page('screen').addEventListener(type, aim);
+}
+// Held to the picture while a button's down, so that it's let go there too.
+page('screen').addEventListener('pointerdown', (event) => aiming && page('screen').setPointerCapture(event.pointerId));
+page('screen').addEventListener('contextmenu', (event) => aiming && event.preventDefault());
 
 /// The pointer over the picture, gone once it's been still a while.
 const POINTER_SHOWN = 2000;

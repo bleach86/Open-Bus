@@ -648,6 +648,9 @@ pub struct Cartridge {
     /// always is.
     #[serde(skip)]
     pub famicom: bool,
+    /// Whether the database knows it as a Zapper's game.
+    #[serde(skip)]
+    pub zapper: bool,
     /// The board its MMC3 is on: as the ROMs are, not in a save state.
     #[serde(skip)]
     pub board: Board,
@@ -925,6 +928,7 @@ impl Cartridge {
             mapper,
             region,
             famicom: known.is_some_and(|known| known.famicom),
+            zapper: known.is_some_and(|known| known.zapper),
             board,
             sprite_fetch: false,
             prg_pages: None,
@@ -947,6 +951,7 @@ impl Cartridge {
             mapper: Mapper::Fds(Box::new(fds)),
             region: None,
             famicom: true,
+            zapper: false,
             board: Board::Plain,
             sprite_fetch: false,
             prg_pages: None,

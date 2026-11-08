@@ -45,6 +45,17 @@ pub trait Display {
         Gamepad::default()
     }
 
+    /// The pointer as it is now, a mouse's or a finger's, over the picture
+    /// or not.
+    fn pointer(&self) -> Pointer {
+        Pointer::default()
+    }
+
+    /// Whether the machine's to be aimed at, as a light gun is: the pointer
+    /// shown always, as cross hairs, and its clicks the machine's, none of
+    /// them the display's own (a double click its fullscreen).
+    fn aiming(&mut self, _on: bool) {}
+
     /// Whether a key is held down, any but the modifiers and the function
     /// keys.
     fn key_down(&self) -> bool {
@@ -119,6 +130,16 @@ impl Joystick {
         y: 0.0,
         buttons: [false; 3],
     };
+}
+
+/// A pointer as the host has it, a mouse's or a finger's: where it is on
+/// the picture, in the picture's own pixels as it was last shown, if it's
+/// over it; and its two buttons, held, the first and the second (a mouse's
+/// left and right).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Pointer {
+    pub at: Option<(f32, f32)>,
+    pub buttons: [bool; 2],
 }
 
 /// A gamepad as a console has it: its D-pad, its A and B, its Select and

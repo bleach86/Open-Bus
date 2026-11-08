@@ -35,6 +35,8 @@ pub struct Known {
     pub mirroring: Option<Mirroring>,
     /// Whether it's a Famicom's game, the system it says.
     pub famicom: bool,
+    /// Whether it's played with a Zapper, its controller type 8.
+    pub zapper: bool,
 }
 
 impl Known {
@@ -85,6 +87,7 @@ pub(super) fn game(line: &str) -> Option<(u32, Known)> {
         battery: fields[11] == "1",
         mirroring,
         famicom: fields[1] == "Famicom",
+        zapper: fields[13] == "8",
     };
     Some((crc, known))
 }

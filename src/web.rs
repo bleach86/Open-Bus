@@ -4,8 +4,9 @@
 
 use crate::cpu::Variant;
 use crate::host::clock;
-use crate::host::display::{Gamepad, Joystick, Key};
+use crate::host::display::{Gamepad, Joystick, Key, Pointer};
 use crate::host::files;
+use crate::host::machine::Machine;
 use crate::host::page::{Page, Shared};
 use crate::host::run::Host;
 use crate::host::save_state;
@@ -210,6 +211,23 @@ impl Emulator {
     /// Whether it's a Disk System, with a disk to change.
     pub fn disk_system(&self) -> bool {
         matches!(&self.running, Running::Nes(host) if host.cpu.memory.cartridge.disk_crc().is_some())
+    }
+
+    /// Whether it's aimed at, as a light gun is, the pointer its.
+    pub fn aimed_at(&self) -> bool {
+        match &self.running {
+            Running::Apple(host) => host.cpu.memory.aimed_at(),
+            Running::Nes(host) => host.cpu.memory.aimed_at(),
+        }
+    }
+
+    /// The pointer as it is: at `x`, `y` on the picture, in its pixels, if
+    /// it's `on` it; its buttons a bit each, the first and the second.
+    pub fn pointer(&self, x: f32, y: f32, on: bool, buttons: u8) {
+        self.page.borrow_mut().pointer = Pointer {
+            at: on.then_some((x, y)),
+            buttons: [buttons & 1 != 0, buttons & 2 != 0],
+        };
     }
 
     pub fn function_key(&self, key: u8) {

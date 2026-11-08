@@ -22,6 +22,7 @@ mod tests {
                     battery: true,
                     mirroring: Some(Mirroring::Horizontal),
                     famicom: false,
+                    zapper: false,
                 }
             ))
         );
@@ -33,6 +34,9 @@ mod tests {
             (unchecked.prg_ram, unchecked.chr_ram, unchecked.mirroring),
             (8 * 1024, 0, None)
         );
+        // Controller 8, a Zapper.
+        let (_, zapper) = database::game("4E959173,NesNtsc,,,,0,16,8,0,0,0,0,v,8,,0,,").unwrap();
+        assert!(zapper.zapper, "a Zapper's");
         // A comment, and a board known only by its UNIF name: no game.
         assert_eq!(database::game("# Mesen Game Database"), None);
         assert_eq!(

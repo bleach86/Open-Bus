@@ -156,10 +156,11 @@ pub struct Host<M: Machine> {
 }
 
 impl<M: Machine> Host<M> {
-    pub fn new(mut cpu: CPU<M>, display: Box<dyn Display>, state: PathBuf) -> Self {
+    pub fn new(mut cpu: CPU<M>, mut display: Box<dyn Display>, state: PathBuf) -> Self {
         if !display.text_only() {
             cpu.memory.sound_on();
         }
+        display.aiming(cpu.memory.aimed_at());
         Host {
             cpu,
             display,
@@ -522,6 +523,7 @@ impl<M: Machine> Host<M> {
             joystick: self.display.joystick(),
             gamepad,
             gamepad_2: self.display.gamepad_2(),
+            pointer: self.display.pointer(),
             key_down: self.display.key_down(),
         });
         while let Some(key) = self.display.function_key() {

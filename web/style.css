@@ -774,6 +774,15 @@ li.missing .rom {
 #frame.still {
   cursor: none;
 }
+/* A light gun's: cross hairs, always there, and a finger on the picture
+   only aiming, not scrolling or zooming. */
+#frame.aiming,
+#frame.aiming.still {
+  cursor: crosshair;
+}
+#frame.aiming canvas {
+  touch-action: none;
+}
 canvas {
   display: block;
   width: min(100cqw, calc(100cqh * var(--ratio)));

@@ -70,6 +70,7 @@ pub mod palette;
 pub mod ppu;
 pub mod region;
 pub mod vrc;
+pub mod zapper;
 
 #[cfg(test)]
 mod tests {
@@ -82,6 +83,7 @@ mod tests {
     mod test_roms;
     mod timing;
     mod vrc;
+    mod zapper;
 }
 
 use crate::cpu::bus::Bus;
@@ -103,6 +105,7 @@ use ppu::Ppu;
 use region::Region;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use zapper::Zapper;
 
 /// The NTSC NES's: the crystal's 21,477,272 Hz, a twelfth.
 pub const CLOCK_HZ: u32 = 1_789_773;
@@ -200,6 +203,9 @@ pub struct Nes {
     pub gamepad: Gamepad,
     #[serde(skip)]
     pub gamepad_2: Gamepad,
+    /// The Zapper in the second port, if its game's played with one.
+    #[serde(skip)]
+    pub zapper: Option<Zapper>,
     /// The PPU's colours; the dots or lines hidden at each edge, as a TV's
     /// overscan hides them; and the frame made of them, what's seen of it.
     #[serde(skip)]
@@ -244,6 +250,7 @@ impl Nes {
             ppu: Ppu::new(region),
             apu: Apu::new(region),
             region,
+            zapper: cartridge.zapper.then(Zapper::default),
             cartridge,
             shifts: [0; 2],
             strobe: false,
@@ -300,11 +307,21 @@ impl Nes {
         bit
     }
 
+    /// $4017 with a Zapper there: its bits; a Famicom's, the second
+    /// controller's too, which is still wired in.
+    fn zapper_read(&mut self) -> u8 {
+        let pad = if self.famicom { self.controller(1) } else { 0 };
+        let zapper = self.zapper.unwrap_or_default();
+        let ppu = &self.ppu;
+        zapper.read(ppu.line, ppu.dot, &ppu.frame, &self.colours) | pad | (self.open_bus & 0xE0)
+    }
+
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => self.ram[addr as usize & 0x7FF],
             0x2000..=0x3FFF => self.ppu.read_register(addr, &mut self.cartridge),
             0x4015 => self.apu.status(self.internal_bus, self.cycles % 2 == 1),
+            0x4017 if self.zapper.is_some() => self.zapper_read(),
             0x4016 | 0x4017 => self.controller(addr as usize - 0x4016) | (self.open_bus & 0xE0),
             0x4000..=0x401F => self.open_bus,
             0x4020..=0x7FFF => self.cartridge.register_read(addr, self.open_bus),
@@ -612,13 +629,21 @@ impl Machine for Nes {
     }
 
     fn leave_out_picture(&mut self, leave_out: bool) -> bool {
-        self.ppu.leaving_out = leave_out && self.ppu.fast;
+        // Not a Zapper's: what's drawn is what it sees.
+        self.ppu.leaving_out = leave_out && self.ppu.fast && self.zapper.is_none();
         self.ppu.leaving_out
     }
 
     fn input(&mut self, input: Input) {
         self.gamepad = input.gamepad;
         self.gamepad_2 = input.gamepad_2;
+        if let Some(zapper) = &mut self.zapper {
+            zapper.aim(input.pointer, self.overscan);
+        }
+    }
+
+    fn aimed_at(&self) -> bool {
+        self.zapper.is_some()
     }
 
     /// Held, the PPU's reset, but for a Famicom's, and the CPU and APU
@@ -666,6 +691,7 @@ impl Machine for Nes {
         self.name = take(&mut running.name);
         self.gamepad = running.gamepad;
         self.gamepad_2 = running.gamepad_2;
+        self.zapper = running.zapper;
         self.colours = take(&mut running.colours);
         self.overscan = running.overscan;
         self.battery_file = running.battery_file.take();

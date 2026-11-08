@@ -113,6 +113,7 @@ mod tests {
         battery: false,
         mirroring: Some(Mirroring::Vertical),
         famicom: false,
+        zapper: false,
     };
 
     #[test]

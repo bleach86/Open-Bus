@@ -5,7 +5,7 @@
 //! host gives it: the keys, the controls, the Reset button.
 
 use crate::cpu::bus::Bus;
-use crate::host::display::{Gamepad, Joystick, Key};
+use crate::host::display::{Gamepad, Joystick, Key, Pointer};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -24,6 +24,8 @@ pub struct Input {
     pub gamepad: Gamepad,
     /// The second player's.
     pub gamepad_2: Gamepad,
+    /// The pointer, a light gun's.
+    pub pointer: Pointer,
     /// Whether a key is held down, any but the modifiers and the function
     /// keys.
     pub key_down: bool,
@@ -60,6 +62,11 @@ pub trait Machine: Bus + Serialize + DeserializeOwned {
 
     /// The controls, a frame at a time.
     fn input(&mut self, input: Input);
+
+    /// Whether it's aimed at, as a light gun is: the pointer's, then.
+    fn aimed_at(&self) -> bool {
+        false
+    }
 
     /// A function key for the machine's own uses (F2 and F4 are the
     /// host's): a notice of what it did, if it did anything.

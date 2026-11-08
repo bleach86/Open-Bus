@@ -9,17 +9,19 @@
 //! machine's own uses, and F12, its Reset key; and the machine's sound, in
 //! stereo, through an audio queue. F11 or a double click switches it to
 //! fullscreen and back, the picture its shape still, bars at its sides if
-//! the screen is wider. Closed, it tells the machine, to turn itself off.
+//! the screen is wider. The mouse on the picture, for a machine that's
+//! aimed at, its pointer cross hairs then, and its clicks the machine's.
+//! Closed, it tells the machine, to turn itself off.
 
 use crate::host::controls::{Action, Controls};
-use crate::host::display::{CHANNELS, Display, Gamepad, Joystick, Key, SAMPLE_RATE};
+use crate::host::display::{CHANNELS, Display, Gamepad, Joystick, Key, Pointer, SAMPLE_RATE};
 use crate::host::pads::{self, Pads};
 use sdl2::EventPump;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::controller::Button;
-use sdl2::event::Event;
+use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::{Keycode, Mod};
-use sdl2::mouse::{MouseButton, MouseUtil};
+use sdl2::mouse::{Cursor, MouseButton, MouseUtil, SystemCursor};
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::{Canvas, Texture};
 use sdl2::video::FullscreenType;
@@ -75,6 +77,15 @@ pub struct Window {
     keypad_text: Option<char>,
     /// When the pointer last moved.
     pointer_moved: Instant,
+    /// The picture's size, and the window's as SDL scales the mouse's
+    /// place to it, its logical size.
+    picture: (usize, usize),
+    logical: (u32, u32),
+    /// The mouse on the picture; and whether the machine's aimed at, and
+    /// the cross hairs it's shown as then.
+    pointer: Pointer,
+    aiming: bool,
+    cross_hairs: Option<Cursor>,
 }
 
 /// How long Select and Start are held together to go back to the library.
@@ -174,6 +185,11 @@ impl Window {
             both_held: None,
             keypad_text: None,
             pointer_moved: Instant::now(),
+            picture: (width, height),
+            logical: size,
+            pointer: Pointer::default(),
+            aiming: false,
+            cross_hairs: None,
         };
         if fullscreen {
             window.toggle_fullscreen();
@@ -345,8 +361,31 @@ impl Window {
                     mouse_btn: MouseButton::Left,
                     clicks: 2,
                     ..
-                } => toggle = !toggle,
-                Event::MouseMotion { .. } => self.pointer_moved = Instant::now(),
+                } if !self.aiming => toggle = !toggle,
+                Event::MouseMotion { x, y, .. } => {
+                    self.pointer_moved = Instant::now();
+                    self.pointer.at = on_picture(self.picture, self.logical, x, y);
+                }
+                Event::MouseButtonDown {
+                    mouse_btn, x, y, ..
+                } => click(
+                    &mut self.pointer,
+                    mouse_btn,
+                    true,
+                    on_picture(self.picture, self.logical, x, y),
+                ),
+                Event::MouseButtonUp {
+                    mouse_btn, x, y, ..
+                } => click(
+                    &mut self.pointer,
+                    mouse_btn,
+                    false,
+                    on_picture(self.picture, self.logical, x, y),
+                ),
+                Event::Window {
+                    win_event: WindowEvent::Leave,
+                    ..
+                } => self.pointer.at = None,
                 event => {
                     if let Some(source) = self.pads.take(&event).filter(|_| self.capturing) {
                         self.pressed.push_back(source);
@@ -358,11 +397,34 @@ impl Window {
         if toggle {
             self.toggle_fullscreen();
         }
-        // The pointer: gone in fullscreen, and in the window once it's still.
+        // The pointer: gone in fullscreen, and in the window once it's
+        // still; but always there to aim with.
         let windowed = self.canvas.window().fullscreen_state() == FullscreenType::Off;
         self.mouse
-            .show_cursor(windowed && self.pointer_moved.elapsed() < POINTER_SHOWN);
+            .show_cursor(self.aiming || windowed && self.pointer_moved.elapsed() < POINTER_SHOWN);
     }
+}
+
+/// Where the mouse at `x`, `y`, in a window's `logical` size, is on its
+/// `picture`, in the picture's pixels, if it's on it, not on the bars
+/// beside it.
+fn on_picture(picture: (usize, usize), logical: (u32, u32), x: i32, y: i32) -> Option<(f32, f32)> {
+    let x = x as f32 * picture.0 as f32 / logical.0 as f32;
+    let y = y as f32 * picture.1 as f32 / logical.1 as f32;
+    let on = (0.0..picture.0 as f32).contains(&x) && (0.0..picture.1 as f32).contains(&y);
+    on.then_some((x, y))
+}
+
+/// A mouse `button` `pressed` or let go, the mouse `at` that on the
+/// picture: the left the pointer's first button, the right its second.
+fn click(pointer: &mut Pointer, button: MouseButton, pressed: bool, at: Option<(f32, f32)>) {
+    let n = match button {
+        MouseButton::Left => 0,
+        MouseButton::Right => 1,
+        _ => return,
+    };
+    pointer.buttons[n] = pressed;
+    pointer.at = at;
 }
 
 /// Shift, Ctrl, Alt, the GUI keys, Caps Lock: not keys of their own.
@@ -423,6 +485,20 @@ fn keypad(keycode: Keycode) -> Option<char> {
 }
 
 impl Display for Window {
+    fn pointer(&self) -> Pointer {
+        self.pointer
+    }
+
+    fn aiming(&mut self, on: bool) {
+        self.aiming = on;
+        self.cross_hairs = on
+            .then(|| Cursor::from_system(SystemCursor::Crosshair).ok())
+            .flatten();
+        if let Some(cross_hairs) = &self.cross_hairs {
+            cross_hairs.set();
+        }
+    }
+
     fn show(&mut self, pixels: &[u32], width: usize, height: usize) {
         self.texture
             .with_lock(None, |buffer, pitch| {
