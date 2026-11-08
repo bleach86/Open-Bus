@@ -66,6 +66,14 @@ pub fn save(path: &Path, bytes: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
+/// Saved now: the page's memory is quick, and there are no threads.
+pub fn save_later(path: &Path, bytes: Vec<u8>) {
+    let _ = save(path, &bytes);
+}
+
+/// Saved already.
+pub fn all_saved() {}
+
 pub fn write_at(path: &Path, offset: u64, bytes: &[u8]) -> io::Result<()> {
     FILES.with_borrow_mut(|files| {
         let file = files.get_mut(path).ok_or_else(|| not_found(path))?;

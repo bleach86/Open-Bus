@@ -9,6 +9,7 @@
 #[cfg(test)]
 mod tests {
     use crate::cpu::CPU;
+    use crate::host::files;
     use crate::host::machine::Machine;
     use crate::machines::apple2::disk_image::Disk;
     use crate::machines::apple2::disk2::Disk2;
@@ -198,12 +199,14 @@ mod tests {
             cpu.memory.text()
         );
         cpu.memory.keep_saved(false);
+        files::all_saved();
         assert!(!file.exists(), "saved while the disk was still turning");
         // Saved at the frame's end after the drive stops.
         while cpu.memory.disk2.as_ref().unwrap().spinning() {
             cpu.execute(100_000);
         }
         cpu.memory.keep_saved(false);
+        files::all_saved();
 
         let image = std::fs::read(&file).expect("the image not saved");
         std::fs::remove_file(&file).unwrap();

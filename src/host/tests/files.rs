@@ -33,6 +33,23 @@ mod tests {
     }
 
     #[test]
+    fn a_file_saved_later_is_saved_its_latest() {
+        let file = std::env::temp_dir().join(format!("cpu_emu_{}_later", std::process::id()));
+        for byte in 0..100 {
+            files::save_later(&file, vec![byte; 0x2000]);
+        }
+        files::all_saved();
+        assert_eq!(files::read(&file).unwrap(), [99; 0x2000]);
+        std::fs::remove_file(&file).unwrap();
+        files::save_later(Path::new("/no/such/folder/a"), vec![1]);
+        files::all_saved();
+
+        web::save_later(Path::new("later.srm"), vec![7]);
+        web::all_saved();
+        assert_eq!(web::read(Path::new("later.srm")).unwrap(), [7], "the web's");
+    }
+
+    #[test]
     fn a_web_pages_files_do_the_same() {
         let (folder, file) = (Path::new("disks"), Path::new("disks/a"));
         assert!(web::read(file).is_err() && !web::exists(file) && web::read_only(file).is_err());

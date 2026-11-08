@@ -5,6 +5,7 @@
 
 use std::io::{self, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Condvar, Mutex};
 
 pub fn read(path: &Path) -> io::Result<Vec<u8>> {
     std::fs::read(path)
@@ -17,6 +18,68 @@ pub fn save(path: &Path, bytes: &[u8]) -> io::Result<()> {
     saving.push(".saving");
     std::fs::write(&saving, bytes)?;
     std::fs::rename(&saving, path)
+}
+
+/// Saves made on a thread of their own, not the machine's, so that a slow
+/// disk (a network share's) doesn't hold up its frames: each file's
+/// latest bytes, to be saved; whether one's being saved; and whether the
+/// thread's been started.
+struct Saving {
+    due: Vec<(PathBuf, Vec<u8>)>,
+    saving: bool,
+    started: bool,
+}
+
+static SAVING: Mutex<Saving> = Mutex::new(Saving {
+    due: Vec::new(),
+    saving: false,
+    started: false,
+});
+
+/// Told when there's more to save, or a save's done.
+static SAVES: Condvar = Condvar::new();
+
+/// `bytes` saved to `path` soon, on the saving thread: over what's still to
+/// be saved there, if there is. Any that won't save are told of.
+pub fn save_later(path: &Path, bytes: Vec<u8>) {
+    let mut saving = SAVING.lock().unwrap();
+    match saving.due.iter_mut().find(|(due, _)| due == path) {
+        Some((_, due)) => *due = bytes,
+        None => saving.due.push((path.to_path_buf(), bytes)),
+    }
+    if !saving.started {
+        saving.started = true;
+        std::thread::spawn(keep_saving);
+    }
+    SAVES.notify_all();
+}
+
+/// The saving thread: each file, in the order they were asked for.
+fn keep_saving() {
+    let mut saving = SAVING.lock().unwrap();
+    loop {
+        if saving.due.is_empty() {
+            saving.saving = false;
+            SAVES.notify_all();
+            saving = SAVES.wait(saving).unwrap();
+            continue;
+        }
+        let (path, bytes) = saving.due.remove(0);
+        saving.saving = true;
+        drop(saving);
+        if let Err(e) = save(&path, &bytes) {
+            eprintln!("{}: not saved: {e}", path.display());
+        }
+        saving = SAVING.lock().unwrap();
+    }
+}
+
+/// Once all that's been asked to be saved later has been.
+pub fn all_saved() {
+    let mut saving = SAVING.lock().unwrap();
+    while saving.saving || !saving.due.is_empty() {
+        saving = SAVES.wait(saving).unwrap();
+    }
 }
 
 /// `bytes` written over the file at `path`, from `offset`: a block of a

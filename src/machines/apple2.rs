@@ -344,11 +344,9 @@ impl Apple2 {
             return;
         };
         disk.written = false;
-        let saved = disk
-            .to_image()
-            .and_then(|image| files::save(&path, &image).map_err(|e| e.to_string()));
-        if let Err(e) = saved {
-            eprintln!("{}: not saved: {e}", path.display());
+        match disk.to_image() {
+            Ok(image) => files::save_later(&path, image),
+            Err(e) => eprintln!("{}: not saved: {e}", path.display()),
         }
     }
 

@@ -399,9 +399,7 @@ impl Nes {
             return;
         }
         self.cartridge.written = false;
-        if let Err(e) = files::save(path, &self.cartridge.prg_ram) {
-            eprintln!("{}: not saved: {e}", path.display());
-        }
+        files::save_later(path, self.cartridge.prg_ram.clone());
     }
 
     /// A cycle of sound: the output through the low-passes; a sample made

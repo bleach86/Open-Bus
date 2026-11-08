@@ -458,6 +458,7 @@ impl<M: Machine> Host<M> {
         }
         if self.display.closed() {
             self.cpu.memory.keep_saved(true);
+            files::all_saved();
             return false;
         }
         true
@@ -546,6 +547,7 @@ impl<M: Machine> Host<M> {
         self.stats.frame(now, cycles, now - began);
         if self.display.closed() {
             self.cpu.memory.keep_saved(true);
+            files::all_saved();
             return false;
         }
         true
