@@ -45,6 +45,7 @@ pub mod host {
         mod clock;
         mod controls;
         mod files;
+        mod machine;
         mod notice;
         mod page;
         mod run;

@@ -45,6 +45,9 @@ mod tests {
             return;
         };
         cpu.pc = 0xC000; // its automatic start, no PPU needed
+        // Its results are only ever written as errors, over RAM that was 0
+        // at power-on, as its log's emulator has it.
+        cpu.memory.ram.fill(0);
         for (n, line) in log.lines().enumerate() {
             let field = |name: &str| {
                 line.split(name)

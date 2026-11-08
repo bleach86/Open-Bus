@@ -701,9 +701,15 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
             .as_bool()
             .unwrap_or(false)
             .then(|| "--fast".to_string());
+        // What its RAM holds at power-on, if it's not the default.
+        let ram = machine["ram"]
+            .as_str()
+            .filter(|ram| ["zeros", "random"].contains(ram))
+            .map(|ram| format!("--ram={ram}"));
         return Ok(["nes".to_string(), file(text("game")?)?]
             .into_iter()
             .chain(fast)
+            .chain(ram)
             .collect());
     }
     let library = folder(app, "library")?.to_string_lossy().into_owned();

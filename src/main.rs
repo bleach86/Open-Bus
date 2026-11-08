@@ -25,6 +25,8 @@
 /// for what's too slow otherwise: a line at a time, and less exact for it.
 /// With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
 /// to be resized: as the desktop app has it, in place of its library.
+/// `--ram=zeros` or `--ram=random` for its RAM at power-on all 0s, or as
+/// random as a real console's, not all 1s ($FF).
 /// `--launched` says that a launcher started it, as EmulationStation might,
 /// for Select and Start held together to go back to. `--resume` keeps its
 /// state as it's put away, beside it, and goes on from that next time.
@@ -78,12 +80,19 @@ fn main() {
                 .find_map(|arg| arg.strip_prefix("--region="))
                 .map(|name| machines::nes::region::Region::parse(name).expect(usage));
             let fast = args.iter().any(|arg| arg == "--fast");
+            let ram = args
+                .iter()
+                .find_map(|arg| arg.strip_prefix("--ram="))
+                .map_or(Default::default(), |name| {
+                    cpu_emu::host::machine::PowerOnRam::parse(name).expect(usage)
+                });
             machines::nes::run(
                 rom,
                 args.iter().any(|arg| arg == "--fullscreen"),
                 overscan,
                 region,
                 fast,
+                ram,
             );
         }
         Some(machine @ ("apple2" | "apple2e")) => {

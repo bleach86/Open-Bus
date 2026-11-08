@@ -95,3 +95,49 @@ pub trait Machine: Bus + Serialize + DeserializeOwned {
     /// loaded into.
     fn keep(&mut self, running: &mut Self);
 }
+
+/// What a machine's RAM holds at power-on. A real chip's comes up however
+/// it does, the same each time on one console and not on another; a game
+/// that clears its RAM first doesn't care, and a few don't. All 1s, $FF,
+/// unless it's said; all 0s; or as random as a real one's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PowerOnRam {
+    #[default]
+    Ones,
+    Zeros,
+    Random,
+}
+
+impl PowerOnRam {
+    /// As `--ram=` names it.
+    pub fn parse(name: &str) -> Option<PowerOnRam> {
+        match name {
+            "ones" => Some(PowerOnRam::Ones),
+            "zeros" => Some(PowerOnRam::Zeros),
+            "random" => Some(PowerOnRam::Random),
+            _ => None,
+        }
+    }
+
+    /// `ram` as it'd be at power-on.
+    pub fn fill(self, ram: &mut [u8]) {
+        match self {
+            PowerOnRam::Ones => ram.fill(0xFF),
+            PowerOnRam::Zeros => ram.fill(0),
+            PowerOnRam::Random => {
+                use std::hash::{BuildHasher, Hasher};
+                // A seed of the system's own randomness, then xorshift.
+                let mut seed = std::collections::hash_map::RandomState::new()
+                    .build_hasher()
+                    .finish()
+                    | 1;
+                for byte in ram {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    *byte = (seed >> 32) as u8;
+                }
+            }
+        }
+    }
+}

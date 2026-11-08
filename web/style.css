@@ -1314,7 +1314,8 @@ body.dropping::after {
   display: block;
   image-rendering: pixelated;
 }
-#background {
+#background,
+#power-on-ram {
   margin-left: 0.5rem;
 }
 .native #library {

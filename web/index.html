@@ -160,6 +160,20 @@
         </p>
         <p class="row-actions">
           <label
+            >RAM at power-on
+            <select id="power-on-ram">
+              <option value="ones">All $FF</option>
+              <option value="zeros">All $00</option>
+              <option value="random">Random</option>
+            </select></label
+          >
+        </p>
+        <p class="quiet">
+          What the NES's RAM holds when it's switched on. A real console's is
+          whatever its chip comes up with; a few games depend on it.
+        </p>
+        <p class="row-actions">
+          <label
             >Background
             <select id="background">
               <option value="sunset">Sunset</option>

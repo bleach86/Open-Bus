@@ -1338,8 +1338,9 @@ function playNatively(machine) {
     }
     const fullscreen = machine.kind !== 'controls' && (page('start-fullscreen').checked || page('tv-layout').checked);
     const fast = page('performance-mode').checked;
+    const ram = page('power-on-ram').value;
     const resume = machine.kind !== 'controls' && page('quick-resume').checked;
-    native.play({ ...machine, fullscreen, fast, resume }).catch((problem) => say(String(problem), true));
+    native.play({ ...machine, fullscreen, fast, ram, resume }).catch((problem) => say(String(problem), true));
 }
 native?.whenPads((pressed) => {
     padsSaid = pressed;
@@ -1579,6 +1580,8 @@ if (native) {
     page('quick-resume').onchange = ({ target }) => localStorage.setItem('resume', target.checked ? 'yes' : 'no');
     page('performance-mode').onchange = ({ target }) =>
         localStorage.setItem('performance', target.checked ? 'yes' : 'no');
+    page('power-on-ram').value = localStorage.getItem('ram') ?? 'ones';
+    page('power-on-ram').onchange = ({ target }) => localStorage.setItem('ram', target.value);
     page('background').value = localStorage.getItem('background') ?? 'sunset';
     page('background').onchange = ({ target }) => {
         localStorage.setItem('background', target.value);

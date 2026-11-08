@@ -151,6 +151,9 @@ struct Dma {
 /// and sound, the controls), which the machine it's loaded into has.
 #[derive(Serialize, Deserialize)]
 pub struct Nes {
+    /// Its 2K of RAM: all $FF at power-on unless it's said otherwise (see
+    /// `PowerOnRam`), as Mesen has it as an option. Minna no Taabou,
+    /// starting its NMI before its RAM, needs some $FF in it to start.
     pub ram: Vec<u8>,
     pub ppu: Ppu,
     pub apu: Apu,
@@ -235,7 +238,7 @@ impl Nes {
     pub fn of(cartridge: Cartridge, region: Region) -> Self {
         Nes {
             famicom: false,
-            ram: vec![0; 0x800],
+            ram: vec![0xFF; 0x800],
             ppu: Ppu::new(region),
             apu: Apu::new(region),
             region,
@@ -795,8 +798,17 @@ pub fn size(overscan: usize, region: Region) -> (u32, u32) {
 /// The NES as `build` has it, run in a window, `fullscreen` or not, in
 /// performance mode if it's `fast`.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run(rom: &str, fullscreen: bool, overscan: usize, region: Option<Region>, fast: bool) {
+/// `ram` what its RAM holds at power-on.
+pub fn run(
+    rom: &str,
+    fullscreen: bool,
+    overscan: usize,
+    region: Option<Region>,
+    fast: bool,
+    ram: crate::host::machine::PowerOnRam,
+) {
     let mut cpu = build(rom, overscan, region).unwrap_or_else(|e| panic!("{e}"));
+    ram.fill(&mut cpu.memory.ram);
     if fast {
         cpu.memory.performance();
     }
