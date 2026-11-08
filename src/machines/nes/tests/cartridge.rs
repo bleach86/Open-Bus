@@ -291,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn gxrom_has_its_banks_the_other_way_round_with_conflicts() {
+    fn gxrom_has_its_banks_the_other_way_round_and_no_conflicts() {
         let mut cart = board(66, 8, 4);
         assert_eq!(banks(&mut cart), (0, 1, 0xC0, 0xC0), "from the first");
         cart.cpu_write(0x8000, 0x13, 0);
@@ -302,13 +302,10 @@ mod tests {
         );
         cart.cpu_write(0x8000, 0x30, 0);
         assert_eq!(banks(&mut cart), (6, 7, 0xC0, 0xC0), "over $FF, as written");
+        // Over bank 6, whose bytes are all 6: as written, as Mesen has it.
         cart.cpu_write(0x8020, 0x11, 0);
-        assert_eq!(
-            cart.chr_read(0),
-            0xC0 | (6 & 1),
-            "over 6, only what both hold"
-        );
-        assert_eq!(cart.cpu_read(0x8020), Some(0), "over 6, the PRG bits gone");
+        assert_eq!(cart.chr_read(0), 0xC1, "the CHR's bank as written");
+        assert_eq!(banks(&mut cart), (2, 3, 0xC1, 0xC1), "the PRG's too");
     }
 
     #[test]

@@ -81,7 +81,9 @@
 //! $0000 and $1000, the writes going to the PRG RAM under them too.
 //!
 //! 66, GxROM: a 32K bank (bits 4 and 5) and an 8K bank of CHR (bits 0 and
-//! 1), with bus conflicts.
+//! 1). Nintendo's GNROM board has bus conflicts, but as Mesen has it, none:
+//! its games don't need them, and a hack of Jajamaru no Daibouken for 66
+//! only runs without.
 //!
 //! 71, Camerica: a 16K bank at $8000, written at $C000 up, the last fixed
 //! at $C000. Fire Hawk's board has which 1K all four nametables are too,
@@ -580,6 +582,12 @@ const MMC6_GAMES: [u32; 2] = [0x8891_29CB, 0xD054_FFB0];
 /// Race.
 const MAPPER_144_GAMES: [u32; 1] = [0x5CAA_3E61];
 
+/// Mapper 140's games by their ROMs' CRC-32, whatever an old header says:
+/// Jajamaru no Daibouken, its dumps' headers saying 66, the database not
+/// knowing it. Its register's at $6000, JF-14's; a hack of it writes $8000
+/// instead, and is 66.
+const MAPPER_140_GAMES: [u32; 1] = [0x6BBE_2BE5];
+
 /// How long A12 must be low, in PPU dots, for its rise to clock MMC3's
 /// IRQ counter: about three CPU cycles. Not between a line's sprites'
 /// fetches, only as the background's give way to theirs.
@@ -771,6 +779,9 @@ impl Cartridge {
             _ => None,
         };
         let rom_crc = crate::host::zip::crc32(&[&prg_rom[..], &chr_rom[..]].concat());
+        if !told && MAPPER_140_GAMES.contains(&rom_crc) {
+            number = 140;
+        }
         let mmc6 = number == 4 && ((told && submapper == 1) || MMC6_GAMES.contains(&rom_crc));
         if mmc6 && !told {
             prg_ram_size = 0x400;
@@ -849,7 +860,7 @@ impl Cartridge {
             34 => Mapper::Bnrom(0),
             64 => Mapper::Rambo1(Rambo1::default()),
             69 => Mapper::Fme7(Fme7::default()),
-            66 => Mapper::Gxrom(Banks::new(Conflicts::And)),
+            66 => Mapper::Gxrom(Banks::new(Conflicts::None)),
             71 => Mapper::Camerica(0),
             228 => Mapper::Active(Active::default()),
             232 => Mapper::Quattro(Quattro {
