@@ -294,6 +294,11 @@ mod tests {
         assert_eq!(lines[1], "MAPPER 0 NROM");
         assert!(lines[2].starts_with("PRG 16K CHR 8K"), "{lines:?}");
         assert!(nes(Region::Pal).debug()[0].starts_with("NES PAL"));
+        let mut famicom = nes(Region::Ntsc);
+        famicom.as_famicom();
+        assert!(famicom.debug()[0].starts_with("FAMICOM NTSC FRAME"));
+        famicom.name = "Test".into();
+        assert_eq!(famicom.title(), "Famicom   Test", "its window's title");
     }
 
     #[test]

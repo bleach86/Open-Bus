@@ -568,16 +568,18 @@ impl Machine for Nes {
             Region::Ntsc => "NTSC",
             Region::Pal => "PAL",
         };
-        let mut lines = vec![format!("NES {region} FRAME {}", self.frames)];
+        let console = if self.famicom { "FAMICOM" } else { "NES" };
+        let mut lines = vec![format!("{console} {region} FRAME {}", self.frames)];
         lines.extend(self.cartridge.debug());
         lines.push(format!("APU {}", self.apu.sounding()));
         lines
     }
 
     fn title(&self) -> String {
+        let console = if self.famicom { "Famicom" } else { "NES" };
         match self.region {
-            Region::Ntsc => format!("NES   {}", self.name),
-            Region::Pal => format!("NES   {}   PAL, 50 Hz", self.name),
+            Region::Ntsc => format!("{console}   {}", self.name),
+            Region::Pal => format!("{console}   {}   PAL, 50 Hz", self.name),
         }
     }
 
