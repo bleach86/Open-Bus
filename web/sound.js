@@ -11,8 +11,10 @@ class Player extends AudioWorkletProcessor {
         this.queued = 0;
         this.at = 0;
         this.playing = false;
+        // None, as fast-forward or the menu sends: nothing to queue. Queued,
+        // it'd never be done with, and nothing after it played.
         this.port.onmessage = (event) => {
-            if (this.queued < MOST) {
+            if (event.data.length > 0 && this.queued < MOST) {
                 this.queue.push(event.data);
                 this.queued += event.data.length;
             }
