@@ -1575,7 +1575,8 @@ function playNatively(machine) {
     const fast = page('performance-mode').checked;
     const ram = page('power-on-ram').value;
     const resume = machine.kind !== 'controls' && page('quick-resume').checked;
-    native.play({ ...machine, fullscreen, fast, ram, resume }).catch((problem) => say(String(problem), true));
+    const rewind = page('rewind').checked;
+    native.play({ ...machine, fullscreen, fast, ram, resume, rewind }).catch((problem) => say(String(problem), true));
 }
 native?.whenPads((pressed) => {
     padsSaid = pressed;
@@ -1805,6 +1806,8 @@ if (native) {
         localStorage.setItem('fullscreen', target.checked ? 'yes' : 'no');
     page('performance-mode').checked = localStorage.getItem('performance') === 'yes';
     page('quick-resume').checked = localStorage.getItem('resume') === 'yes';
+    page('rewind').checked = localStorage.getItem('rewind') !== 'no';
+    page('rewind').onchange = ({ target }) => localStorage.setItem('rewind', target.checked ? 'yes' : 'no');
     page('tv-layout').checked = localStorage.getItem('tv') === 'yes';
     page('tv-layout').onchange = ({ target }) => {
         localStorage.setItem('tv', target.checked ? 'yes' : 'no');
@@ -1948,7 +1951,7 @@ async function stop() {
     emulator.free();
     emulator = null;
     held.clear();
-    fastForward = false;
+    fastForward = rewinding = false;
     clearTimeout(pointerTimer);
     letGo(page('handheld'));
     page('machine').hidden = true;
@@ -2011,6 +2014,7 @@ function padState(pad) {
         select: button(back),
         start: button(start),
         rightTrigger: raw ? push(5) > 0.5 : button(7),
+        leftTrigger: raw ? push(2) > 0.5 : button(6),
     };
 }
 
@@ -2067,7 +2071,8 @@ function controls() {
         (first.a || key('Numpad0', 'AltLeft') ? 1 : 0) | (first.east || key('NumpadDecimal', 'AltRight') ? 2 : 0);
     const down_ = [...held].some((code) => !/^(Shift|Control|Alt|Meta)/.test(code));
     fastForward = boundHeld(0, 'fast', pads[0], first);
-    emulator.controls(gamepad, gamepad2, x, y, buttons, down_, reset, fastForward);
+    rewinding = boundHeld(0, 'rewind', pads[0], first);
+    emulator.controls(gamepad, gamepad2, x, y, buttons, down_, reset, fastForward, rewinding);
 }
 
 function show() {
@@ -2092,6 +2097,8 @@ function show() {
 /// as the host's FAST has it.
 let fastForward = false;
 const FAST = 3;
+/// And whether rewind is, which wins.
+let rewinding = false;
 
 function tick(now) {
     requestAnimationFrame(tick);
@@ -2104,7 +2111,7 @@ function tick(now) {
         navigate(now);
         return;
     }
-    const speed = fastForward ? FAST : 1;
+    const speed = fastForward && !rewinding ? FAST : 1;
     const period = 1000 / emulator.hz() / speed;
     if (now - last > 250) {
         last = now - period;

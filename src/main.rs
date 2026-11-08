@@ -29,6 +29,8 @@
 /// random as a real console's, not all 1s ($FF). `--region=ntsc` or `pal`,
 /// `--console=nes` or `famicom`, and `--port2=controller` or `zapper` for
 /// those as chosen, not as the game's known to be.
+/// `--no-rewind` for no rewinding: a console's last 30 seconds aren't kept
+/// to go back to, held, as they are otherwise.
 /// `--launched` says that a launcher started it, as EmulationStation might,
 /// for Select and Start held together to go back to. `--resume` keeps its
 /// state as it's put away, beside it, and goes on from that next time.
@@ -57,6 +59,9 @@ fn main() {
     }
     if args.iter().any(|arg| arg == "--resume") {
         cpu_emu::host::run::RESUME.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    if args.iter().any(|arg| arg == "--no-rewind") {
+        cpu_emu::host::run::REWIND.store(false, std::sync::atomic::Ordering::Relaxed);
     }
     if args.iter().any(|arg| arg == "--launched") {
         cpu_emu::host::window::LAUNCHED.store(true, std::sync::atomic::Ordering::Relaxed);

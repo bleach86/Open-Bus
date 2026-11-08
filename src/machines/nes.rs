@@ -646,6 +646,10 @@ impl Machine for Nes {
         self.zapper.is_some()
     }
 
+    fn rewinds(&self) -> bool {
+        true
+    }
+
     /// Held, the PPU's reset, but for a Famicom's, and the CPU and APU
     /// held so.
     fn reset_button(&mut self, held: bool) {

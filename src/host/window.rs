@@ -229,10 +229,16 @@ impl Window {
     /// Whether what's bound to fast-forward is held, not while it's looking
     /// for a press to bind.
     fn fast_held(&self) -> bool {
+        self.held_for(Action::FastForward)
+    }
+
+    /// Whether what's bound to `action`, the first player's, is held, not
+    /// while it's looking for a press to bind.
+    fn held_for(&self, action: Action) -> bool {
         !self.capturing
             && self
                 .controls
-                .holds(0, Action::FastForward, |source| self.is_held(0, source))
+                .holds(0, action, |source| self.is_held(0, source))
     }
 
     /// Back to the library: by what's bound to it; or if the app opened
@@ -498,6 +504,10 @@ fn keypad(keycode: Keycode) -> Option<char> {
 impl Display for Window {
     fn fast_forward(&self) -> bool {
         self.fast_held()
+    }
+
+    fn rewinding(&self) -> bool {
+        self.held_for(Action::Rewind)
     }
 
     fn pointer(&self) -> Pointer {

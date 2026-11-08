@@ -799,6 +799,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
                 .then_some("--fullscreen"),
         )
         .args(resumed(&app, &machine).then_some("--resume"))
+        .args((machine["rewind"] == false).then_some("--no-rewind"))
         .arg(window_place(&window)?)
         .current_dir(&library)
         .stderr(Stdio::piped());

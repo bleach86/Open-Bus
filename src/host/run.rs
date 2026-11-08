@@ -3,7 +3,8 @@
 //! isn't the machine's: its picture shown, with a notice over it if there
 //! is one (or its text screen in a terminal), its sound played; the keys,
 //! the controls and the Reset button given to it; F2 saving its state and
-//! F4 loading it back; F6 changing the controls; F3 the debug panel, how fast it's going, its CPU and
+//! F4 loading it back; rewind, held, going back to what was, a console's
+//! last REWIND_SECONDS kept as it runs; F6 changing the controls; F3 the debug panel, how fast it's going, its CPU and
 //! what the machine has to say of itself; what it keeps saved; and the
 //! window closed, off. And a menu over the game, for all that without a
 //! keyboard: F1, or Select and Start tapped together.
@@ -20,6 +21,7 @@ use crate::host::machine::{Input, Machine};
 use crate::host::notice;
 use crate::host::save_state;
 use crate::host::stats::Stats;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::sleep;
@@ -125,6 +127,15 @@ const LATE: Duration = Duration::from_millis(8);
 const FAST: u64 = 3;
 const FAST_NOTICE: &str = "Fast forward";
 
+/// Rewinding, unless it's turned off, as `--no-rewind` does: a moment of a
+/// machine that can be, kept every REWIND_EVERY frames, the last
+/// REWIND_SECONDS of them. Held, a moment's gone back to each frame, and a
+/// frame run from it to see it: back twice as fast as it went, and quiet.
+pub static REWIND: AtomicBool = AtomicBool::new(true);
+const REWIND_EVERY: u32 = 2;
+const REWIND_SECONDS: u32 = 30;
+const REWIND_NOTICE: &str = "Rewind";
+
 /// Quick resume, if it's asked for: a state kept as a machine's put away, and
 /// gone on from the next time it's run, a file of its own beside the state F2
 /// saves, which it leaves alone.
@@ -156,6 +167,10 @@ pub struct Host<M: Machine> {
     fast: u64,
     /// The frames run, for turbo's pressing and letting go.
     frames: u32,
+    /// The moments kept to rewind to, the last last, if it's kept; and the
+    /// frames since the last.
+    pub(crate) moments: Option<VecDeque<Vec<u8>>>,
+    since_moment: u32,
     /// The menu, if it's up; how many frames Select and Start have been held
     /// together, and whether they're kept from the machine until they're
     /// let go; the Reset button's frames still to be held, as the menu has
@@ -172,6 +187,7 @@ impl<M: Machine> Host<M> {
             cpu.memory.sound_on();
         }
         display.aiming(cpu.memory.aimed_at());
+        let moments = (REWIND.load(Ordering::Relaxed) && cpu.memory.rewinds()).then(VecDeque::new);
         Host {
             cpu,
             display,
@@ -187,6 +203,8 @@ impl<M: Machine> Host<M> {
             left_out: false,
             fast: 0,
             frames: 0,
+            moments,
+            since_moment: 0,
             menu: None,
             both_held: 0,
             holding_back: false,
@@ -503,20 +521,26 @@ impl<M: Machine> Host<M> {
             return self.menu_frame();
         }
         let began = clock::seconds();
+        let rewinding = self.rewind();
         let before = self.cpu.clock;
-        let fast = self.display.fast_forward();
-        let was_fast = self.fast > 0;
+        let fast = !rewinding && self.display.fast_forward();
         self.fast = if fast { self.fast + 1 } else { 0 };
-        // Its notice for as long as it's held, and no longer.
-        if fast {
-            self.say(FAST_NOTICE);
-        } else if was_fast
-            && self
+        // Their notices for as long as they're held, and no longer.
+        let held = if rewinding {
+            Some(REWIND_NOTICE)
+        } else {
+            fast.then_some(FAST_NOTICE)
+        };
+        match held {
+            Some(notice) => self.say(notice),
+            None if self
                 .notice
                 .as_ref()
-                .is_some_and(|(text, _)| text == FAST_NOTICE)
-        {
-            self.notice = None;
+                .is_some_and(|(text, _)| [FAST_NOTICE, REWIND_NOTICE].contains(&text.as_str())) =>
+            {
+                self.notice = None;
+            }
+            None => {}
         }
         // Fast-forwarded, a picture of each FAST; late, one left out, but
         // never two in a row, or there'd be no telling it's still going.
@@ -527,6 +551,9 @@ impl<M: Machine> Host<M> {
         self.cpu.run_frame();
         let cycles = self.cpu.clock.wrapping_sub(before) as u64;
         self.cycles += if fast { cycles / FAST } else { cycles };
+        if !rewinding {
+            self.keep_moment();
+        }
 
         if self.left_out || unseen {
             self.display.no_picture();
@@ -534,7 +561,7 @@ impl<M: Machine> Host<M> {
             self.show();
         }
         let machine = &mut self.cpu.memory;
-        if !fast {
+        if !fast && !rewinding {
             self.display.play(machine.sound());
         }
         machine.sound().clear();
@@ -586,6 +613,48 @@ impl<M: Machine> Host<M> {
             return false;
         }
         true
+    }
+
+    /// Rewind, if it's held and there's a moment to go back to: the machine
+    /// as it was at the last kept, the oldest staying as the last there is.
+    /// Whether it's rewinding.
+    fn rewind(&mut self) -> bool {
+        if !self.display.rewinding() {
+            return false;
+        }
+        let Some(moments) = &mut self.moments else {
+            return false;
+        };
+        let moment = if moments.len() > 1 {
+            moments.pop_back()
+        } else {
+            moments.back().cloned()
+        };
+        let Some(moment) = moment else {
+            return false;
+        };
+        self.since_moment = 0;
+        save_state::back_to(&mut self.cpu, &moment).is_ok()
+    }
+
+    /// A moment of the machine kept, if it's rewound and it's been
+    /// REWIND_EVERY frames: the oldest let go, past REWIND_SECONDS.
+    fn keep_moment(&mut self) {
+        let Some(moments) = &mut self.moments else {
+            return;
+        };
+        self.since_moment += 1;
+        if self.since_moment < REWIND_EVERY {
+            return;
+        }
+        self.since_moment = 0;
+        if let Ok(moment) = save_state::moment(&self.cpu) {
+            moments.push_back(moment);
+        }
+        let most = (REWIND_SECONDS * FRAMES_A_SECOND / REWIND_EVERY) as usize;
+        while moments.len() > most {
+            moments.pop_front();
+        }
     }
 
     /// Frames, each when it's due at the CPU's clock, until the window's

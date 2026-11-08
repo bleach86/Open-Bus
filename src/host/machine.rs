@@ -63,6 +63,12 @@ pub trait Machine: Bus + Serialize + DeserializeOwned {
     /// The controls, a frame at a time.
     fn input(&mut self, input: Input);
 
+    /// Whether it can be rewound: its states small enough, and quick enough
+    /// to make, for a ring of them to be kept as it runs. A console's are.
+    fn rewinds(&self) -> bool {
+        false
+    }
+
     /// Whether it's aimed at, as a light gun is: the pointer's, then.
     fn aimed_at(&self) -> bool {
         false

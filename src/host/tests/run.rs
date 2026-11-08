@@ -29,6 +29,7 @@ mod tests {
         gamepad_2: Gamepad,
         reset: bool,
         fast: bool,
+        rewind: bool,
         closed: bool,
         /// Closed once it's shown this many pictures, if it's to be.
         close_after: Option<usize>,
@@ -86,6 +87,10 @@ mod tests {
 
         fn fast_forward(&self) -> bool {
             self.0.borrow().fast
+        }
+
+        fn rewinding(&self) -> bool {
+            self.0.borrow().rewind
         }
 
         fn closed(&self) -> bool {
@@ -187,6 +192,41 @@ mod tests {
         assert_eq!(seen.borrow().pictures, 5, "let go, its picture shown");
         assert!(seen.borrow().samples > played, "and heard");
         assert!(host.notice.is_none(), "its notice still up");
+    }
+
+    #[test]
+    fn rewound_it_goes_back_two_frames_a_frame_quiet_to_the_oldest_kept() {
+        let (mut host, seen, _) = host("rewind");
+        // A frame's mark in RAM, as it's kept every other frame: 2, 4, ... 20.
+        for frame in 1..=20 {
+            host.cpu.memory.ram[0x123] = frame;
+            host.frame();
+        }
+        assert_eq!(host.moments.as_ref().unwrap().len(), 10);
+        let (pictures, played) = (seen.borrow().pictures, seen.borrow().samples);
+        seen.borrow_mut().rewind = true;
+        let mut back = Vec::new();
+        for _ in 0..12 {
+            host.frame();
+            back.push(host.cpu.memory.ram[0x123]);
+        }
+        assert_eq!(
+            back,
+            [20, 18, 16, 14, 12, 10, 8, 6, 4, 2, 2, 2],
+            "to the oldest, and there"
+        );
+        assert_eq!(seen.borrow().pictures, pictures + 12, "each seen");
+        assert_eq!(seen.borrow().samples, played, "heard");
+        assert_eq!(host.notice.as_ref().unwrap().0, "Rewind");
+
+        // Let go: on from there, kept again, its notice gone.
+        seen.borrow_mut().rewind = false;
+        host.cpu.memory.ram[0x123] = 99;
+        host.frame();
+        host.frame();
+        assert!(host.notice.is_none(), "its notice still up");
+        let moments = host.moments.as_ref().unwrap();
+        assert_eq!(moments.len(), 2, "the oldest, and one since");
     }
 
     #[test]

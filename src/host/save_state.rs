@@ -67,6 +67,25 @@ pub fn restore<M: Machine>(cpu: &mut CPU<M>, state: &[u8]) -> Result<(), String>
     Ok(())
 }
 
+/// A moment of `cpu` and its machine, kept to go back to, as rewinding keeps
+/// them: a state with no header, as it's only ever loaded back into the
+/// machine it's of, as it's running (and its ROMs not checked for that, the
+/// most of making one); and squeezed, many being kept.
+pub fn moment<M: Machine>(cpu: &CPU<M>) -> Result<Vec<u8>, String> {
+    let state = postcard::to_stdvec(cpu).map_err(|e| e.to_string())?;
+    Ok(miniz_oxide::deflate::compress_to_vec(&state, 1))
+}
+
+/// The machine put back as it was at `moment`; what a state leaves out its
+/// own.
+pub fn back_to<M: Machine>(cpu: &mut CPU<M>, moment: &[u8]) -> Result<(), String> {
+    let state = miniz_oxide::inflate::decompress_to_vec(moment).map_err(|e| format!("{e:?}"))?;
+    let mut loaded: CPU<M> = postcard::from_bytes(&state).map_err(|e| e.to_string())?;
+    loaded.memory.keep(&mut cpu.memory);
+    *cpu = loaded;
+    Ok(())
+}
+
 /// An array of bytes, in a state: serde has none over 32 of its own.
 pub mod bytes {
     use serde::de::Error;

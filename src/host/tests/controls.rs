@@ -167,6 +167,16 @@ mod tests {
     }
 
     #[test]
+    fn rewind_is_the_first_players_backspace_and_left_trigger() {
+        let controls = Controls::default();
+        assert_eq!(
+            controls.of(0, Action::Rewind),
+            ["key:Backspace", "pad:lefttrigger"]
+        );
+        assert!(controls.of(1, Action::Rewind).is_empty());
+    }
+
+    #[test]
     fn bindings_are_said_for_people() {
         assert_eq!(said("key:Right Shift"), "RIGHT SHIFT");
         assert_eq!(said("pad:a"), "PAD A", "not to be taken for a key");

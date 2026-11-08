@@ -28,6 +28,7 @@ pub struct Shared {
     pub key_down: bool,
     pub reset: bool,
     pub fast: bool,
+    pub rewind: bool,
 }
 
 /// The display a host has; the page has the same `Shared`.
@@ -71,6 +72,10 @@ impl Display for Page {
 
     fn fast_forward(&self) -> bool {
         self.0.borrow().fast
+    }
+
+    fn rewinding(&self) -> bool {
+        self.0.borrow().rewind
     }
 
     fn reset_held(&self) -> bool {

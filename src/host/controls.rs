@@ -1,6 +1,6 @@
 //! What's pressed for what: for each player, each of the console's buttons
 //! and turbo A and B; and for the first, the way back to the library, and
-//! fast-forward, held, what's bound to it. A binding's a word
+//! fast-forward and rewind, held, what's bound to it. A binding's a word
 //! for what's held, the same for all of it: `key:X`, a key by the window's
 //! name for it; `pad:a`, a gamepad's button or `pad:lefty-`, a stick pushed
 //! that way, all on that player's gamepad.
@@ -27,9 +27,10 @@ pub enum Action {
     TurboB,
     Library,
     FastForward,
+    Rewind,
 }
 
-pub const ACTIONS: [Action; 12] = [
+pub const ACTIONS: [Action; 13] = [
     Action::Up,
     Action::Down,
     Action::Left,
@@ -42,6 +43,7 @@ pub const ACTIONS: [Action; 12] = [
     Action::TurboB,
     Action::Library,
     Action::FastForward,
+    Action::Rewind,
 ];
 
 /// Each player's: the console's buttons, and turbo. The rest are the first
@@ -63,6 +65,7 @@ pub fn word(action: Action) -> &'static str {
         Action::TurboB => "turbo-b",
         Action::Library => "library",
         Action::FastForward => "fast",
+        Action::Rewind => "rewind",
     }
 }
 
@@ -112,7 +115,7 @@ const STICK: [(Action, &str); 4] = [
     (Action::Left, "pad:leftx-"),
     (Action::Right, "pad:leftx+"),
 ];
-const KEYBOARD: [(Action, &str); 13] = [
+const KEYBOARD: [(Action, &str); 14] = [
     (Action::Up, "key:Up"),
     (Action::Down, "key:Down"),
     (Action::Left, "key:Left"),
@@ -126,6 +129,7 @@ const KEYBOARD: [(Action, &str); 13] = [
     (Action::TurboB, "key:A"),
     (Action::Library, "key:F5"),
     (Action::FastForward, "key:`"),
+    (Action::Rewind, "key:Backspace"),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,6 +153,7 @@ impl Default for Controls {
         }
         bindings.push((0, Action::Library, "pad:guide".to_string()));
         bindings.push((0, Action::FastForward, "pad:righttrigger".to_string()));
+        bindings.push((0, Action::Rewind, "pad:lefttrigger".to_string()));
         Controls { bindings }
     }
 }

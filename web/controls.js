@@ -18,6 +18,7 @@ export const ACTIONS = [
     'turboB',
     'library',
     'fast',
+    'rewind',
 ];
 /// The console's own and turbo, a bit each for the emulator: the rest are
 /// the page's.
@@ -60,6 +61,7 @@ function player(first) {
         }
         bound.select.push('key:ShiftRight', 'key:Tab');
         bound.fast.push('key:Backquote', 'pad:rightTrigger');
+        bound.rewind.push('key:Backspace', 'pad:leftTrigger');
     }
     return bound;
 }

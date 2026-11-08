@@ -67,6 +67,11 @@ pub trait Display {
         false
     }
 
+    /// Whether what's bound to rewind is held.
+    fn rewinding(&self) -> bool {
+        false
+    }
+
     /// Whether the machine's Reset key is held.
     fn reset_held(&self) -> bool {
         false
