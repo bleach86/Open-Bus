@@ -2,6 +2,7 @@
 //! the folders added, the files hidden, and what's been found, every file in
 //! `library` and in the folders, with its size; of the games, those that
 //! are favourites, and those played, how often, for how long, and when last;
+//! what's chosen of a game for itself, its own settings over the app's;
 //! and what's known of each NES game's file without running it, as the
 //! emulator says, for as long as it's the size it was and the emulator the
 //! same. A change is to the rows it
@@ -57,6 +58,7 @@ const SCHEMA: &str = "
         problem TEXT NOT NULL,
         emulator TEXT NOT NULL DEFAULT ''
     );
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, settings TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS games (
         key TEXT PRIMARY KEY,
         machine TEXT NOT NULL,
@@ -337,6 +339,54 @@ impl Library {
         .map_err(said)
     }
 
+    /// What's chosen of `machine`'s game for itself: its settings, as
+    /// CHOICES has them, an object of those it has.
+    pub fn settings(&self, machine: &Value) -> Result<Value, String> {
+        let Some((key, _)) = game(machine) else {
+            return Ok(json!({}));
+        };
+        let db = self.lock()?;
+        let kept: Option<String> = db
+            .query_row(
+                "SELECT settings FROM settings WHERE key = ?1",
+                [&key],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(said)?;
+        Ok(kept
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(json!({})))
+    }
+
+    /// `settings` chosen of `machine`'s game: those CHOICES has, as it has
+    /// them; none, and it's as the app's settings have it.
+    pub fn choose(&self, machine: &Value, settings: &Value) -> Result<(), String> {
+        let Some((key, _)) = game(machine) else {
+            return Err("not a game".to_string());
+        };
+        let mut chosen = json!({});
+        for (name, values) in CHOICES {
+            if let Some(value) = settings[name]
+                .as_str()
+                .filter(|value| values.contains(value))
+            {
+                chosen[name] = json!(value);
+            }
+        }
+        let db = self.lock()?;
+        if chosen.as_object().is_some_and(|chosen| chosen.is_empty()) {
+            db.execute("DELETE FROM settings WHERE key = ?1", [&key])
+        } else {
+            db.execute(
+                "INSERT OR REPLACE INTO settings (key, settings) VALUES (?1, ?2)",
+                params![key, chosen.to_string()],
+            )
+        }
+        .map(|_| ())
+        .map_err(said)
+    }
+
     /// The games that are favourites, or have been played: each, how it's
     /// started, whether it's a favourite, how often and how long it's been
     /// played, and when last; the last played first.
@@ -465,6 +515,16 @@ impl Library {
         }))
     }
 }
+
+/// What a game can have of its own, and what each can be: as the emulator's
+/// options have them, but quick resume's.
+pub const CHOICES: [(&str, &[&str]); 5] = [
+    ("region", &["ntsc", "pal"]),
+    ("console", &["nes", "famicom"]),
+    ("port2", &["controller", "zapper"]),
+    ("ram", &["ones", "zeros", "random"]),
+    ("resume", &["on", "off"]),
+];
 
 /// A game as it's kept, of what the page started, or would start: a NES's
 /// game; an Apple's disks, and the model, its ROMs and Mockingboards it was
@@ -785,6 +845,33 @@ mod tests {
             library.unknown("e2").unwrap(),
             ["/g/a.zip", "/g/b.nes"],
             "a new emulator's to say it all again"
+        );
+    }
+
+    #[test]
+    fn a_games_settings_are_those_it_can_have_and_none_are_forgotten() {
+        let library = Library::in_memory().unwrap();
+        let nes = json!({ "kind": "nes", "game": "/g/a.zip", "fullscreen": true });
+        assert_eq!(library.settings(&nes).unwrap(), json!({}), "none yet");
+        library
+            .choose(
+                &nes,
+                &json!({ "region": "pal", "console": "", "port2": "zapper", "ram": "lots", "colour": "red", "resume": "off" }),
+            )
+            .unwrap();
+        assert_eq!(
+            library
+                .settings(&json!({ "kind": "nes", "game": "/g/a.zip" }))
+                .unwrap(),
+            json!({ "region": "pal", "port2": "zapper", "resume": "off" }),
+            "by its game, not how it's started; what it can't have left out"
+        );
+        library.choose(&nes, &json!({})).unwrap();
+        assert_eq!(library.settings(&nes).unwrap(), json!({}));
+        assert!(
+            library
+                .choose(&json!({ "kind": "controls" }), &json!({}))
+                .is_err()
         );
     }
 

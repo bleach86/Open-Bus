@@ -1497,4 +1497,27 @@ mod tests {
         assert!(crate::machines::nes::facts(&folder.join("gone.nes")).contains("\t\t0\t0\t"));
         std::fs::remove_dir_all(&folder).unwrap();
     }
+
+    #[test]
+    fn whats_chosen_of_a_game_wins_over_what_its_known_to_be() {
+        use crate::machines::nes::{Chosen, build, region::Region};
+        let folder = std::env::temp_dir().join(format!("cpu_emu_{}_chosen", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let game = folder.join("Game (J).nes");
+        std::fs::write(&game, image(2, 1, [0; 10])).unwrap();
+        let rom = game.to_str().unwrap();
+        let known = build(rom, 0, Chosen::default()).unwrap();
+        assert!(known.memory.famicom && known.memory.zapper.is_none());
+        assert_eq!(known.memory.region, Region::Ntsc);
+        let chosen = Chosen {
+            region: Some(Region::Pal),
+            famicom: Some(false),
+            zapper: Some(true),
+        };
+        let nes = build(rom, 0, chosen).unwrap().memory;
+        assert!(!nes.famicom, "Japan's alone, but chosen a NES");
+        assert!(nes.zapper.is_some(), "a Zapper chosen");
+        assert_eq!(nes.region, Region::Pal);
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
 }

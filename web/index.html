@@ -360,6 +360,58 @@
       </p>
     </dialog>
 
+    <dialog id="game-settings" aria-labelledby="game-settings-title">
+      <h2 id="game-settings-title"></h2>
+      <p id="game-settings-about" class="quiet"></p>
+      <div class="choices">
+        <label
+          >Region
+          <select data-setting="region">
+            <option value="">Automatic</option>
+            <option value="ntsc">NTSC, 60 Hz</option>
+            <option value="pal">PAL, 50 Hz</option>
+          </select></label
+        >
+        <label
+          >Console
+          <select data-setting="console">
+            <option value="">Automatic</option>
+            <option value="nes">NES</option>
+            <option value="famicom">Famicom</option>
+          </select></label
+        >
+        <label
+          >Port 2
+          <select data-setting="port2">
+            <option value="">Automatic</option>
+            <option value="controller">Controller</option>
+            <option value="zapper">Zapper</option>
+          </select></label
+        >
+        <label
+          >RAM at power-on
+          <select data-setting="ram">
+            <option value="">As in Settings</option>
+            <option value="ones">All $FF</option>
+            <option value="zeros">All $00</option>
+            <option value="random">Random</option>
+          </select></label
+        >
+        <label
+          >Quick resume
+          <select data-setting="resume">
+            <option value="">As in Settings</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select></label
+        >
+      </div>
+      <p class="row-actions">
+        <button id="game-settings-close">Close</button>
+        <button id="game-settings-play" class="primary">Play</button>
+      </p>
+    </dialog>
+
     <script type="module">
       // A browser keeps a file a good while without asking whether it's changed,
       // and a page of old files and new doesn't work. So each is asked after first:

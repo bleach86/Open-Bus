@@ -213,6 +213,11 @@ export async function gameFacts() {
 /// `told` when more's known of the games.
 export const whenFactsChange = (told) => listen('facts-changed', () => told());
 
+/// What's chosen of `machine`'s game, by the page's names, for itself: its
+/// own settings, an object of those it has. And those chosen of it.
+export const gameSettings = (machine) => invoke('game_settings', { machine: pathed(machine) });
+export const chooseSettings = (machine, settings) => invoke('choose_settings', { machine: pathed(machine), settings });
+
 /// `machine`, by the page's names, a favourite, `on`, or not.
 export const favourite = (machine, on) => invoke('favourite', { machine: pathed(machine), on });
 

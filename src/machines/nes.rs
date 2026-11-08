@@ -805,22 +805,38 @@ fn seen(overscan: usize) -> (usize, usize) {
     (ppu::WIDTH - 2 * overscan, ppu::HEIGHT - 2 * overscan)
 }
 
+/// What's chosen of a game, over what it's known to be, each if it is: its
+/// region; whether its console's a Famicom; whether there's a Zapper in its
+/// second port.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Chosen {
+    pub region: Option<Region>,
+    pub famicom: Option<bool>,
+    pub zapper: Option<bool>,
+}
+
 /// The NES, on whichever host, with the game at `rom` (an iNES image, or a
 /// zip of one), its battery's RAM read if it has any, reset; `overscan` dots
-/// or lines hidden at each edge of its picture; its `region`, or the
-/// game's, as its header or its name says.
-pub fn build(rom: &str, overscan: usize, region: Option<Region>) -> Result<CPU<Nes>, String> {
+/// or lines hidden at each edge of its picture; its region, its console and
+/// its second port as `chosen`, or as the game's header, the database or
+/// its name says.
+pub fn build(rom: &str, overscan: usize, chosen: Chosen) -> Result<CPU<Nes>, String> {
     let path = Path::new(rom);
     let image = image(path).map_err(|e| format!("{rom}: {e}"))?;
-    let cartridge = cartridge(&image, path).map_err(|e| format!("{rom}: {e}"))?;
+    let mut cartridge = cartridge(&image, path).map_err(|e| format!("{rom}: {e}"))?;
     let named = path
         .file_name()
         .and_then(|name| Region::from_name(&name.to_string_lossy()));
-    let region = region.or(cartridge.region).or(named).unwrap_or_default();
+    let region = chosen
+        .region
+        .or(cartridge.region)
+        .or(named)
+        .unwrap_or_default();
     let japans = path
         .file_name()
         .is_some_and(|name| region::japans_alone(&name.to_string_lossy()));
-    let famicom = cartridge.famicom || japans;
+    let famicom = chosen.famicom.unwrap_or(cartridge.famicom || japans);
+    cartridge.zapper = chosen.zapper.unwrap_or(cartridge.zapper);
     let mut nes = Nes::of(cartridge, region);
     if famicom {
         nes.as_famicom();
@@ -887,11 +903,11 @@ pub fn run(
     rom: &str,
     fullscreen: bool,
     overscan: usize,
-    region: Option<Region>,
+    chosen: Chosen,
     fast: bool,
     ram: crate::host::machine::PowerOnRam,
 ) {
-    let mut cpu = build(rom, overscan, region).unwrap_or_else(|e| panic!("{e}"));
+    let mut cpu = build(rom, overscan, chosen).unwrap_or_else(|e| panic!("{e}"));
     ram.fill(&mut cpu.memory.ram);
     if fast {
         cpu.memory.performance();

@@ -26,7 +26,9 @@
 /// With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
 /// to be resized: as the desktop app has it, in place of its library.
 /// `--ram=zeros` or `--ram=random` for its RAM at power-on all 0s, or as
-/// random as a real console's, not all 1s ($FF).
+/// random as a real console's, not all 1s ($FF). `--region=ntsc` or `pal`,
+/// `--console=nes` or `famicom`, and `--port2=controller` or `zapper` for
+/// those as chosen, not as the game's known to be.
 /// `--launched` says that a launcher started it, as EmulationStation might,
 /// for Select and Start held together to go back to. `--resume` keeps its
 /// state as it's put away, beside it, and goes on from that next time.
@@ -59,7 +61,7 @@ fn main() {
     if args.iter().any(|arg| arg == "--launched") {
         cpu_emu::host::window::LAUNCHED.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal]";
+    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal] [--console=nes|famicom] [--port2=controller|zapper]";
     match args.get(1).map(String::as_str) {
         Some("controls") => machines::nes::controls(),
         Some("pads") => cpu_emu::host::pads::report(),
@@ -82,6 +84,21 @@ fn main() {
                 .iter()
                 .find_map(|arg| arg.strip_prefix("--region="))
                 .map(|name| machines::nes::region::Region::parse(name).expect(usage));
+            let either = |name: &str, no: &str, yes: &str| {
+                let prefix = format!("--{name}=");
+                args.iter()
+                    .find_map(|arg| arg.strip_prefix(&prefix))
+                    .map(|said| match said {
+                        _ if said == no => false,
+                        _ if said == yes => true,
+                        _ => panic!("{usage}"),
+                    })
+            };
+            let chosen = machines::nes::Chosen {
+                region,
+                famicom: either("console", "nes", "famicom"),
+                zapper: either("port2", "controller", "zapper"),
+            };
             let fast = args.iter().any(|arg| arg == "--fast");
             let ram = args
                 .iter()
@@ -93,7 +110,7 @@ fn main() {
                 rom,
                 args.iter().any(|arg| arg == "--fullscreen"),
                 overscan,
-                region,
+                chosen,
                 fast,
                 ram,
             );

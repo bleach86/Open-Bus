@@ -114,7 +114,7 @@ fn model(name: &str) -> Result<Model, String> {
 impl Emulator {
     /// The NES, with the game `rom`.
     pub fn nes(rom: &str, overscan: usize) -> Result<Emulator, String> {
-        let cpu = nes::build(rom, overscan, None)?;
+        let cpu = nes::build(rom, overscan, nes::Chosen::default())?;
         let region = cpu.memory.region;
         let page = Rc::new(RefCell::new(Shared::default()));
         let state = save_state::path(Path::new(rom));

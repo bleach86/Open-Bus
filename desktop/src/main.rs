@@ -695,15 +695,23 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
             .as_bool()
             .unwrap_or(false)
             .then(|| "--fast".to_string());
-        // What its RAM holds at power-on, if it's not the default.
-        let ram = machine["ram"]
+        // Its own settings, over the app's: what its RAM holds at power-on,
+        // if it's not the default; and its region, its console and what's
+        // in its second port, if they're not as it's known to be.
+        let chosen = library(app).settings(machine)?;
+        let ram = chosen["ram"]
             .as_str()
+            .or(machine["ram"].as_str())
             .filter(|ram| ["zeros", "random"].contains(ram))
             .map(|ram| format!("--ram={ram}"));
+        let options = ["region", "console", "port2"]
+            .into_iter()
+            .filter_map(|name| Some(format!("--{name}={}", chosen[name].as_str()?)));
         return Ok(["nes".to_string(), file(text("game")?)?]
             .into_iter()
             .chain(fast)
             .chain(ram)
+            .chain(options)
             .collect());
     }
     let library = folder(app, "library")?.to_string_lossy().into_owned();
@@ -752,6 +760,29 @@ fn complaint(said: &str, game: &str) -> String {
     line.replace(game, &name)
 }
 
+/// Whether `machine`'s game's put away to resume from: as it's chosen of it,
+/// or as the app's settings have it.
+fn resumed(app: &AppHandle, machine: &Value) -> bool {
+    let chosen = library(app).settings(machine).unwrap_or_default();
+    match chosen["resume"].as_str() {
+        Some("on") => true,
+        Some("off") => false,
+        _ => machine["resume"].as_bool().unwrap_or(false),
+    }
+}
+
+/// What's chosen of a game for itself, its own settings, for the page.
+#[tauri::command(async)]
+fn game_settings(app: AppHandle, machine: Value) -> Result<Value, String> {
+    library(&app).settings(&machine)
+}
+
+/// `settings` chosen of a game, for itself.
+#[tauri::command(async)]
+fn choose_settings(app: AppHandle, machine: Value, settings: Value) -> Result<(), String> {
+    library(&app).choose(&machine, &settings)
+}
+
 /// A game played, the window away until it's over.
 #[tauri::command]
 fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), String> {
@@ -767,12 +798,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
                 .unwrap_or(false)
                 .then_some("--fullscreen"),
         )
-        .args(
-            machine["resume"]
-                .as_bool()
-                .unwrap_or(false)
-                .then_some("--resume"),
-        )
+        .args(resumed(&app, &machine).then_some("--resume"))
         .arg(window_place(&window)?)
         .current_dir(&library)
         .stderr(Stdio::piped());
@@ -1008,7 +1034,9 @@ fn main() {
             add_folder_files,
             kept_games,
             favourite,
-            game_facts
+            game_facts,
+            game_settings,
+            choose_settings
         ])
         .run(tauri::generate_context!())
         .expect("couldn't open the window");

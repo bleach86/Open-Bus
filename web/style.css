@@ -1505,8 +1505,9 @@ body.dropping::after {
   overflow: hidden;
 }
 
-/* The controls' dialog. */
-#controls-dialog {
+/* The controls' dialog, and a game's own settings. */
+#controls-dialog,
+#game-settings {
   width: min(30rem, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
   padding: 1.1rem 1.25rem;
@@ -1516,10 +1517,12 @@ body.dropping::after {
   border-radius: 8px;
   box-shadow: 0 10px 40px #000c;
 }
-#controls-dialog::backdrop {
+#controls-dialog::backdrop,
+#game-settings::backdrop {
   background: #05010dc0;
 }
-#controls-dialog h2 {
+#controls-dialog h2,
+#game-settings h2 {
   margin: 0 0 0.6rem;
   font:
     600 1.05rem/1.3 system-ui,
@@ -1527,6 +1530,20 @@ body.dropping::after {
 }
 #controls-dialog .rows li {
   padding: 0.3rem 0.2rem;
+}
+#game-settings .choices {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.5rem 0.8rem;
+  align-items: center;
+  margin: 0.9rem 0;
+}
+#game-settings .choices label {
+  display: contents;
+}
+#game-settings-about {
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 .dialog-tabs {
   display: flex;

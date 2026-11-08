@@ -414,6 +414,13 @@ function fillGames(wanted) {
 function gameTile(name) {
     const item = document.createElement('li');
     item.className = 'tile';
+    item.dataset.game = name;
+    if (native) {
+        item.oncontextmenu = (event) => {
+            event.preventDefault();
+            openGameSettings(name);
+        };
+    }
     const key = nesArt(name);
     const known = art.get(key);
     const button = document.createElement('button');
@@ -478,6 +485,57 @@ function starButton(machine, title) {
         refresh();
     };
     return star;
+}
+
+/// A NES game's own settings, in the desktop app, over Settings': each kept
+/// as it's changed, and the game started from them if it's wanted. What
+/// automatic would be, if it's known.
+async function openGameSettings(name) {
+    const machine = { kind: 'nes', game: name };
+    const chosen = await native.gameSettings(machine);
+    const dialog = page('game-settings');
+    const facts = factsOf.get(name);
+    page('game-settings-title').textContent = titleOf(name);
+    page('game-settings-about').textContent = [name, facts?.mapper.replace(/^MAPPER (\d+) /, 'Mapper $1, ')]
+        .filter(Boolean)
+        .join(' · ');
+    const automatic = { console: facts && (facts.famicom ? 'Famicom' : 'NES'), port2: facts?.zapper && 'Zapper' };
+    const selects = [...dialog.querySelectorAll('select[data-setting]')];
+    for (const select of selects) {
+        const setting = select.dataset.setting;
+        const known = automatic[setting];
+        if (setting in automatic) {
+            select.options[0].textContent = known ? `Automatic: ${known}` : 'Automatic';
+        }
+        select.value = chosen[setting] ?? '';
+        select.onchange = () =>
+            native.chooseSettings(
+                machine,
+                Object.fromEntries(selects.filter(({ value }) => value).map((one) => [one.dataset.setting, one.value])),
+            );
+    }
+    page('game-settings-play').onclick = () => {
+        dialog.close();
+        playNatively(machine);
+    };
+    page('game-settings-close').onclick = () => dialog.close();
+    dialog.showModal();
+    if (document.body.classList.contains('pointer-gone')) {
+        focusOn(selects[0]);
+    }
+}
+page('game-settings').addEventListener('close', () => {
+    padFocus = null;
+    showSelected();
+});
+const settingsOpen = () => page('game-settings').open;
+
+/// Start pressed on a NES game: its own settings.
+function settingsOfSelected() {
+    const tile = padFocus ? padFocus.closest('.tile') : gamesShowing() && tiles.get(selectedGame);
+    if (native && tile?.dataset.game) {
+        openGameSettings(tile.dataset.game);
+    }
 }
 
 /// The desktop app's own shelves: the games last played, the last first,
@@ -705,6 +763,9 @@ function moveInGames(way) {
 /// choice, the page's buttons, choices and ticks, the Apple's disks; not the
 /// search, which wants typing, nor a tile's remove button.
 function focusable() {
+    if (settingsOpen()) {
+        return [...page('game-settings').querySelectorAll('select, button')];
+    }
     const all = document.querySelectorAll(
         [
             '.toolbar button',
@@ -764,7 +825,7 @@ function backToShelf() {
 /// toolbar; anywhere else, to the nearest that way, down off the bottom of
 /// the toolbar onto the shelf of games.
 function move(way) {
-    if (gamesShowing() && !padFocus) {
+    if (gamesShowing() && !padFocus && !settingsOpen()) {
         const { columns } = shelfShape(page('games'));
         const at = shelf.indexOf(selectedGame);
         const tile = tiles.get(selectedGame);
@@ -782,7 +843,7 @@ function move(way) {
     const next = nearest(padFocus, way, options);
     if (next) {
         focusOn(next);
-    } else if (way === 'down' && gamesShowing()) {
+    } else if (way === 'down' && gamesShowing() && !settingsOpen()) {
         backToShelf();
     }
 }
@@ -857,6 +918,8 @@ function navigate(now) {
     if (newly('a')) {
         navigationWaits = true;
         confirmSelected();
+    } else if (newly('b') && settingsOpen()) {
+        page('game-settings').close();
     } else if (newly('b') && padFocus && gamesShowing()) {
         backToShelf();
     } else if (newly('b')) {
@@ -868,6 +931,8 @@ function navigate(now) {
     } else if (newly('start') && appleShowing()) {
         navigationWaits = true;
         page('apple').click();
+    } else if (newly('start') && !settingsOpen()) {
+        settingsOfSelected();
     } else if (newly('select')) {
         starSelected();
     } else if (newly('previous')) {
@@ -880,7 +945,7 @@ function navigate(now) {
 
 addEventListener('keydown', (event) => {
     const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName);
-    if (emulator || typing || page('library').hidden || page('controls-dialog').open) {
+    if (emulator || typing || page('library').hidden || page('controls-dialog').open || settingsOpen()) {
         return;
     }
     const way = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[event.code];
