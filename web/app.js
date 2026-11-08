@@ -2023,6 +2023,11 @@ async function stop() {
     fastForward = rewinding = false;
     clearTimeout(pointerTimer);
     letGo(page('handheld'));
+    // Its fullscreen gone with it: left, the browser would keep a hidden
+    // machine fullscreen, and the library under it all, untouchable.
+    if (page('machine').contains(document.fullscreenElement)) {
+        document.exitFullscreen().catch(() => {});
+    }
     page('machine').hidden = true;
     page('library').hidden = false;
     document.title = 'Open Bus';
