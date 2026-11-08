@@ -52,6 +52,8 @@
 //!
 //! 5, the MMC5: in mmc5.rs, there being so much of it.
 //!
+//! 21, 22, 23 and 25, Konami's VRC2 and VRC4: in vrc.rs.
+//!
 //! 20, the Famicom Disk System: not a cartridge, but it's in the slot, and
 //! all of it, in fds.rs.
 //!
@@ -221,6 +223,7 @@ use super::database::{self, Known};
 use super::fds::Fds;
 use super::mmc5::{self, Mmc5};
 use super::region::Region;
+use super::vrc::{Vrc, Wiring};
 use serde::{Deserialize, Serialize};
 
 /// How the PPU's four nametables, $2000, $2400, $2800 and $2C00, are
@@ -511,6 +514,8 @@ pub enum Board {
     TamS1,
     Sunsoft184,
     Irem77,
+    /// A VRC2's or 4's, and whether that's a guess, its header's an old one.
+    Vrc(Wiring, bool),
 }
 
 impl Board {
@@ -611,6 +616,7 @@ pub enum Mapper {
     Jf17(Jf17),
     Caltron(Caltron),
     Maxi15(Maxi15),
+    Vrc(Vrc),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -805,6 +811,7 @@ impl Cartridge {
             // The last 16K at $C000 too at first, as TAM-S1's is.
             97 => Mapper::Latch(0x0F),
             41 => Mapper::Caltron(Caltron::default()),
+            21 | 22 | 23 | 25 => Mapper::Vrc(Vrc::default()),
             234 => Mapper::Maxi15(Maxi15::default()),
             72 => Mapper::Jf17(Jf17::default()),
             // The last 16K at $C000 at first, as JF-19's is.
@@ -867,6 +874,10 @@ impl Cartridge {
             97 => Board::TamS1,
             184 => Board::Sunsoft184,
             77 => Board::Irem77,
+            21 | 22 | 23 | 25 => {
+                let (wiring, guessed) = Wiring::of(number, submapper);
+                Board::Vrc(wiring, guessed)
+            }
             _ => Board::Plain,
         };
         // As these start: 77's own four screens; 41's and 234's registers
@@ -957,11 +968,30 @@ impl Cartridge {
         }
     }
 
-    /// A read of $4020 to $40FF, `open_bus` what's there if it's nothing.
+    /// A read of $4020 to $7FFF, `open_bus` what's there of it if it's
+    /// nothing, or not all of it.
     pub fn register_read(&mut self, addr: u16, open_bus: u8) -> u8 {
+        if let Some(latch) = self.vrc2_latch(addr) {
+            return *latch | open_bus & 0xFE;
+        }
         match &mut self.mapper {
-            Mapper::Fds(fds) => fds.read(addr, open_bus),
+            Mapper::Fds(fds) if addr < 0x4100 => fds.read(addr, open_bus),
             _ => self.cpu_read(addr).unwrap_or(open_bus),
+        }
+    }
+
+    /// A VRC2's latch, if `addr` is it: a VRC2's, known to be one, with no
+    /// RAM, at $6000 up.
+    fn vrc2_latch(&mut self, addr: u16) -> Option<&mut u8> {
+        match (&mut self.mapper, self.board) {
+            (Mapper::Vrc(vrc), Board::Vrc(wiring, false))
+                if (0x6000..=0x7FFF).contains(&addr)
+                    && !wiring.vrc4()
+                    && self.prg_ram.is_empty() =>
+            {
+                Some(&mut vrc.latch)
+            }
+            _ => None,
         }
     }
 
@@ -1032,6 +1062,7 @@ impl Cartridge {
                 (*latch as usize & 0x0F) * 0x8000 + (addr & 0x7FFF)
             }
             Mapper::Caltron(caltron) => caltron.prg as usize * 0x8000 + (addr & 0x7FFF),
+            Mapper::Vrc(vrc) => vrc.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF),
             Mapper::Maxi15(maxi) => maxi.banks().0 * 0x8000 + (addr & 0x7FFF),
             Mapper::Latch(latch) if matches!(self.board, Board::Jf13 | Board::Jf11) => {
                 ((*latch as usize >> 4) & 3) * 0x8000 + (addr & 0x7FFF)
@@ -1168,6 +1199,10 @@ impl Cartridge {
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
             Mapper::Jf17(jf) => jf.chr as usize * CHR_BANK + addr,
             Mapper::Caltron(caltron) => caltron.chr as usize * CHR_BANK + addr,
+            Mapper::Vrc(vrc) => match self.board {
+                Board::Vrc(wiring, _) => vrc.chr_bank(addr as u16, wiring) * 0x400 + (addr & 0x3FF),
+                _ => addr,
+            },
             Mapper::Maxi15(maxi) => maxi.banks().1 * CHR_BANK + addr,
             Mapper::Latch(latch) => {
                 let latch = *latch as usize;
@@ -1356,6 +1391,10 @@ impl Cartridge {
             }
             return;
         }
+        if let Some(latch) = self.vrc2_latch(addr) {
+            *latch = value & 1;
+            return;
+        }
         if let (0x6000..=0x67FF, Mapper::Caltron(caltron)) = (addr, &mut self.mapper) {
             caltron.prg = addr as u8 & 7;
             caltron.chr = (caltron.chr & 3) | (addr >> 1) as u8 & 0x0C;
@@ -1406,6 +1445,14 @@ impl Cartridge {
             | Mapper::Fds(_) => {}
             Mapper::Uxrom(bank) | Mapper::Cnrom(bank) => *bank = value,
             Mapper::Latch(_) if self.board.register_at_6000() => {}
+            Mapper::Vrc(vrc) => {
+                if let Board::Vrc(wiring, guessed) = self.board {
+                    let mirroring = vrc.write(addr, value, wiring, guessed);
+                    if let Some(mirroring) = mirroring.filter(|_| !four_screen) {
+                        self.mirroring = mirroring;
+                    }
+                }
+            }
             Mapper::Caltron(caltron) => {
                 if caltron.prg >= 4 {
                     caltron.chr = (caltron.chr & 0x0C) | (value & 3);
@@ -1865,6 +1912,14 @@ impl Cartridge {
             Mapper::Jf17(_) if self.board == Board::Jf19 => (92, "JALECO JF-19"),
             Mapper::Jf17(_) => (72, "JALECO JF-17"),
             Mapper::Caltron(_) => (41, "CALTRON"),
+            Mapper::Vrc(_) => match self.board {
+                Board::Vrc(Wiring::Vrc2a, _) => (22, "VRC2"),
+                Board::Vrc(Wiring::Vrc2b, _) => (23, "VRC2"),
+                Board::Vrc(Wiring::Vrc4e, _) => (23, "VRC4"),
+                Board::Vrc(Wiring::Vrc4a | Wiring::Vrc4c, _) => (21, "VRC4"),
+                Board::Vrc(Wiring::Vrc2c, _) => (25, "VRC2"),
+                _ => (25, "VRC4"),
+            },
             Mapper::Maxi15(_) => (234, "MAXI 15"),
             Mapper::Latch(_) => match self.board {
                 Board::Un1rom => (94, "UN1ROM"),
@@ -1924,6 +1979,12 @@ impl Cartridge {
             self.written |= fds.cycle(&mut self.prg_ram);
             return;
         }
+        if let (Mapper::Vrc(vrc), Board::Vrc(wiring, guessed)) = (&mut self.mapper, self.board) {
+            if wiring.counts(guessed) {
+                vrc.cycle();
+            }
+            return;
+        }
         if let Mapper::Fme7(fme7) = &mut self.mapper {
             if fme7.counting {
                 fme7.irq |= fme7.counter == 0 && fme7.irq_enabled;
@@ -1954,6 +2015,7 @@ impl Cartridge {
             Mapper::Fme7(fme7) => fme7.irq,
             Mapper::Mmc5(mmc5) => mmc5.irq(),
             Mapper::Fds(fds) => fds.irq(),
+            Mapper::Vrc(vrc) => vrc.irq(),
             _ => false,
         }
     }

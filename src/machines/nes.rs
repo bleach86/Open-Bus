@@ -69,6 +69,7 @@ pub mod mmc5;
 pub mod palette;
 pub mod ppu;
 pub mod region;
+pub mod vrc;
 
 #[cfg(test)]
 mod tests {
@@ -80,6 +81,7 @@ mod tests {
     mod sound;
     mod test_roms;
     mod timing;
+    mod vrc;
 }
 
 use crate::cpu::bus::Bus;
@@ -305,7 +307,7 @@ impl Nes {
             0x4015 => self.apu.status(self.internal_bus, self.cycles % 2 == 1),
             0x4016 | 0x4017 => self.controller(addr as usize - 0x4016) | (self.open_bus & 0xE0),
             0x4000..=0x401F => self.open_bus,
-            0x4020..=0x40FF => self.cartridge.register_read(addr, self.open_bus),
+            0x4020..=0x7FFF => self.cartridge.register_read(addr, self.open_bus),
             _ => self.cartridge.cpu_read(addr).unwrap_or(self.open_bus),
         }
     }
