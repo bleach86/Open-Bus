@@ -52,7 +52,7 @@
 //!
 //! 5, the MMC5: in mmc5.rs, there being so much of it.
 //!
-//! 21, 22, 23 and 25, Konami's VRC2 and VRC4: in vrc.rs.
+//! 21, 22, 23 and 25, Konami's VRC2 and VRC4; 75, VRC1; 73, VRC3: in vrc.rs.
 //!
 //! 20, the Famicom Disk System: not a cartridge, but it's in the slot, and
 //! all of it, in fds.rs.
@@ -223,7 +223,7 @@ use super::database::{self, Known};
 use super::fds::Fds;
 use super::mmc5::{self, Mmc5};
 use super::region::Region;
-use super::vrc::{Vrc, Wiring};
+use super::vrc::{Vrc, Vrc1, Vrc3, Wiring};
 use serde::{Deserialize, Serialize};
 
 /// How the PPU's four nametables, $2000, $2400, $2800 and $2C00, are
@@ -617,6 +617,8 @@ pub enum Mapper {
     Caltron(Caltron),
     Maxi15(Maxi15),
     Vrc(Vrc),
+    Vrc1(Vrc1),
+    Vrc3(Vrc3),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -812,6 +814,8 @@ impl Cartridge {
             97 => Mapper::Latch(0x0F),
             41 => Mapper::Caltron(Caltron::default()),
             21 | 22 | 23 | 25 => Mapper::Vrc(Vrc::default()),
+            75 => Mapper::Vrc1(Vrc1::default()),
+            73 => Mapper::Vrc3(Vrc3::default()),
             234 => Mapper::Maxi15(Maxi15::default()),
             72 => Mapper::Jf17(Jf17::default()),
             // The last 16K at $C000 at first, as JF-19's is.
@@ -1063,6 +1067,14 @@ impl Cartridge {
             }
             Mapper::Caltron(caltron) => caltron.prg as usize * 0x8000 + (addr & 0x7FFF),
             Mapper::Vrc(vrc) => vrc.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF),
+            Mapper::Vrc1(vrc1) => {
+                vrc1.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF)
+            }
+            Mapper::Vrc3(vrc3) => in_16k(if addr < 0xC000 {
+                vrc3.prg_bank()
+            } else {
+                last_16k
+            }),
             Mapper::Maxi15(maxi) => maxi.banks().0 * 0x8000 + (addr & 0x7FFF),
             Mapper::Latch(latch) if matches!(self.board, Board::Jf13 | Board::Jf11) => {
                 ((*latch as usize >> 4) & 3) * 0x8000 + (addr & 0x7FFF)
@@ -1195,7 +1207,8 @@ impl Cartridge {
             | Mapper::Bnrom(_)
             | Mapper::Quattro(_)
             | Mapper::Mmc5(_)
-            | Mapper::Fds(_) => addr,
+            | Mapper::Fds(_)
+            | Mapper::Vrc3(_) => addr,
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
             Mapper::Jf17(jf) => jf.chr as usize * CHR_BANK + addr,
             Mapper::Caltron(caltron) => caltron.chr as usize * CHR_BANK + addr,
@@ -1204,6 +1217,7 @@ impl Cartridge {
                 _ => addr,
             },
             Mapper::Maxi15(maxi) => maxi.banks().1 * CHR_BANK + addr,
+            Mapper::Vrc1(vrc1) => vrc1.chr_bank(addr as u16) * 0x1000 + (addr & 0x0FFF),
             Mapper::Latch(latch) => {
                 let latch = *latch as usize;
                 match self.board {
@@ -1453,6 +1467,12 @@ impl Cartridge {
                     }
                 }
             }
+            Mapper::Vrc1(vrc1) => {
+                if let Some(mirroring) = vrc1.write(addr, value).filter(|_| !four_screen) {
+                    self.mirroring = mirroring;
+                }
+            }
+            Mapper::Vrc3(vrc3) => vrc3.write(addr, value),
             Mapper::Caltron(caltron) => {
                 if caltron.prg >= 4 {
                     caltron.chr = (caltron.chr & 0x0C) | (value & 3);
@@ -1921,6 +1941,8 @@ impl Cartridge {
                 _ => (25, "VRC4"),
             },
             Mapper::Maxi15(_) => (234, "MAXI 15"),
+            Mapper::Vrc1(_) => (75, "VRC1"),
+            Mapper::Vrc3(_) => (73, "VRC3"),
             Mapper::Latch(_) => match self.board {
                 Board::Un1rom => (94, "UN1ROM"),
                 Board::Unrom180 => (180, "UNROM"),
@@ -1985,6 +2007,10 @@ impl Cartridge {
             }
             return;
         }
+        if let Mapper::Vrc3(vrc3) = &mut self.mapper {
+            vrc3.cycle();
+            return;
+        }
         if let Mapper::Fme7(fme7) = &mut self.mapper {
             if fme7.counting {
                 fme7.irq |= fme7.counter == 0 && fme7.irq_enabled;
@@ -2016,6 +2042,7 @@ impl Cartridge {
             Mapper::Mmc5(mmc5) => mmc5.irq(),
             Mapper::Fds(fds) => fds.irq(),
             Mapper::Vrc(vrc) => vrc.irq(),
+            Mapper::Vrc3(vrc3) => vrc3.irq(),
             _ => false,
         }
     }

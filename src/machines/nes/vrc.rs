@@ -1,4 +1,5 @@
-//! Konami's VRC2 and VRC4, mappers 21, 22, 23 and 25: as Mesen has them.
+//! Konami's VRCs: VRC2 and VRC4, mappers 21, 22, 23 and 25; VRC1, 75; and
+//! VRC3, 73. As Mesen has them.
 //!
 //! Its registers are in four 4K blocks from $8000 up, four in each, which
 //! of the four by two of the CPU's address lines, wired to the chip's A0 and
@@ -25,6 +26,17 @@
 //! every 341 dots, 113 2/3 cycles, by a prescaler), bit 0 its enabling
 //! again when acknowledged; and $F003, acknowledging. Enabled, it counts up
 //! from the latch, and going past $FF it's reloaded and the IRQ line held.
+//!
+//! VRC1's registers, one in each 4K block: $8000, $A000 and $C000, the 8K
+//! banks there, the last fixed at $E000; $9000, bit 0 the nametables,
+//! horizontal, not vertical, and bits 1 and 2 the high bits of its CHR's
+//! two 4K banks, $E000 and $F000 their low four.
+//!
+//! VRC3's: a 16K bank at $8000 ($F000, bits 0 to 2), the last fixed, and
+//! 8K of CHR RAM; its IRQ's 16 bits of latch, a nibble each at $8000 to
+//! $B000; $C000 its control, as VRC4's, bit 2 counting in only its low 8
+//! bits (and reloading only those); $D000 acknowledging. It counts CPU
+//! cycles up, and going past the top it's reloaded and the IRQ line held.
 
 use super::cartridge::Mirroring;
 use serde::{Deserialize, Serialize};
@@ -210,5 +222,113 @@ impl Vrc {
     /// Whether its IRQ line's held.
     pub fn irq(&self) -> bool {
         self.irq.held
+    }
+}
+
+/// VRC1's registers.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Vrc1 {
+    prg: [u8; 3],
+    chr: [u8; 2],
+}
+
+impl Vrc1 {
+    /// A write to `addr`, $8000 up: the nametables, if they're written.
+    pub fn write(&mut self, addr: u16, value: u8) -> Option<Mirroring> {
+        match addr & 0xF000 {
+            0x8000 => self.prg[0] = value & 0x0F,
+            0xA000 => self.prg[1] = value & 0x0F,
+            0xC000 => self.prg[2] = value & 0x0F,
+            0x9000 => {
+                self.chr[0] = (self.chr[0] & 0x0F) | (value & 0x02) << 3;
+                self.chr[1] = (self.chr[1] & 0x0F) | (value & 0x04) << 2;
+                return Some(if value & 1 != 0 {
+                    Mirroring::Horizontal
+                } else {
+                    Mirroring::Vertical
+                });
+            }
+            0xE000 => self.chr[0] = (self.chr[0] & 0x10) | (value & 0x0F),
+            0xF000 => self.chr[1] = (self.chr[1] & 0x10) | (value & 0x0F),
+            _ => {}
+        }
+        None
+    }
+
+    /// Which 8K of its PRG ROM `addr`, $8000 up, is in, of `banks`.
+    pub fn prg_bank(&self, addr: u16, banks: usize) -> usize {
+        match (addr - 0x8000) / 0x2000 {
+            3 => banks - 1,
+            slot => self.prg[slot as usize] as usize,
+        }
+    }
+
+    /// Which 4K of its CHR `addr` is in.
+    pub fn chr_bank(&self, addr: u16) -> usize {
+        self.chr[addr as usize >> 12 & 1] as usize
+    }
+}
+
+/// VRC3's bank and its IRQ.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Vrc3 {
+    prg: u8,
+    latch: u16,
+    counter: u16,
+    enabled: bool,
+    enabled_on_acknowledging: bool,
+    counting_8_bits: bool,
+    held: bool,
+}
+
+impl Vrc3 {
+    /// A write to `addr`, $8000 up.
+    pub fn write(&mut self, addr: u16, value: u8) {
+        let nibble = |at: u16| (self.latch & !(0x0F << at)) | ((value & 0x0F) as u16) << at;
+        match addr & 0xF000 {
+            0x8000 => self.latch = nibble(0),
+            0x9000 => self.latch = nibble(4),
+            0xA000 => self.latch = nibble(8),
+            0xB000 => self.latch = nibble(12),
+            0xC000 => {
+                self.enabled_on_acknowledging = value & 0x01 != 0;
+                self.enabled = value & 0x02 != 0;
+                self.counting_8_bits = value & 0x04 != 0;
+                if self.enabled {
+                    self.counter = self.latch;
+                }
+                self.held = false;
+            }
+            0xD000 => {
+                self.enabled = self.enabled_on_acknowledging;
+                self.held = false;
+            }
+            0xF000 => self.prg = value & 0x07,
+            _ => {}
+        }
+    }
+
+    /// Its 16K bank at $8000.
+    pub fn prg_bank(&self) -> usize {
+        self.prg as usize
+    }
+
+    /// A CPU cycle: its IRQ counting, all 16 bits or the low 8.
+    pub fn cycle(&mut self) {
+        if !self.enabled {
+            return;
+        }
+        let top = if self.counting_8_bits { 0x00FF } else { 0xFFFF };
+        if self.counter & top == top {
+            self.counter = (self.counter & !top) | (self.latch & top);
+            self.held = true;
+        } else {
+            self.counter += 1;
+        }
+    }
+
+    /// Whether its IRQ line's held.
+    pub fn irq(&self) -> bool {
+        self.held
     }
 }

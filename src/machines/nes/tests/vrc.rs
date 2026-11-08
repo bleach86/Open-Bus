@@ -1,9 +1,18 @@
 //! Konami's VRC2 and VRC4: its banks, each board's wiring of its registers,
-//! a guess's of both, and VRC4's IRQ.
+//! a guess's of both, and VRC4's IRQ. VRC1's banks; VRC3's, and its IRQ.
 
 #[cfg(test)]
 mod tests {
     use crate::machines::nes::cartridge::{Cartridge, Mirroring};
+
+    /// A cartridge's IRQ held after `cycles` CPU cycles, not before.
+    fn held_after(cart: &mut Cartridge, cycles: usize) {
+        for cycle in 0..cycles {
+            assert!(!cart.irq(), "held after {cycle} cycles");
+            cart.cycle();
+        }
+        assert!(cart.irq(), "not held after {cycles}");
+    }
 
     /// A VRC's cartridge, NES 2.0's, `number` with `submapper` (0, an old
     /// header's); 256K of PRG and 128K of CHR, each 16K bank of PRG its
@@ -133,5 +142,57 @@ mod tests {
         assert!(!cart.irq(), "before the line's end");
         cart.cycle();
         assert!(cart.irq(), "at its end");
+    }
+
+    #[test]
+    fn vrc1s_8k_banks_its_chrs_4k_and_its_nametables() {
+        let mut cart = vrc(75, 0);
+        cart.cpu_write(0x8000, 5, 0);
+        cart.cpu_write(0xA000, 7, 0);
+        cart.cpu_write(0xC000, 9, 0);
+        assert_eq!(prg(&mut cart), [2, 3, 4, 15], "the last fixed");
+        // 4K banks 3, and $15, its high bit in $9000's bit 2.
+        cart.cpu_write(0xE000, 3, 0);
+        cart.cpu_write(0xF000, 5, 0);
+        cart.cpu_write(0x9000, 0x05, 0);
+        assert_eq!([cart.chr_read(0x0000), cart.chr_read(0x1000)], [0xC1, 0xCA]);
+        assert_eq!(cart.mirroring, Mirroring::Horizontal);
+        cart.cpu_write(0x9000, 0x02, 0);
+        assert_eq!([cart.chr_read(0x0000), cart.chr_read(0x1000)], [0xC9, 0xC2]);
+        assert_eq!(cart.mirroring, Mirroring::Vertical);
+    }
+
+    #[test]
+    fn vrc3s_16k_bank() {
+        let mut cart = vrc(73, 0);
+        cart.cpu_write(0xF000, 3, 0);
+        assert_eq!(prg(&mut cart), [3, 3, 15, 15], "the last fixed");
+    }
+
+    #[test]
+    fn vrc3s_irq_counts_cycles_up_past_its_16_bits_or_its_low_8() {
+        let mut cart = vrc(73, 0);
+        // Its latch $FFFD, all 16 bits: held on the third cycle.
+        for (addr, nibble) in [(0x8000, 0xD), (0x9000, 0xF), (0xA000, 0xF), (0xB000, 0xF)] {
+            cart.cpu_write(addr, nibble, 0);
+        }
+        cart.cpu_write(0xC000, 0x02, 0);
+        held_after(&mut cart, 3);
+        cart.cpu_write(0xD000, 0, 0);
+        assert!(!cart.irq(), "acknowledged");
+        for _ in 0..0x20000 {
+            cart.cycle();
+        }
+        assert!(!cart.irq(), "not enabled again on acknowledging");
+
+        // $12FE, its low 8 bits only: past $FF on the second, those
+        // reloaded, and again, enabled on acknowledging.
+        for (addr, nibble) in [(0x8000, 0xE), (0x9000, 0xF), (0xA000, 0x2), (0xB000, 0x1)] {
+            cart.cpu_write(addr, nibble, 0);
+        }
+        cart.cpu_write(0xC000, 0x07, 0);
+        held_after(&mut cart, 2);
+        cart.cpu_write(0xD000, 0, 0);
+        held_after(&mut cart, 2);
     }
 }
