@@ -10,6 +10,7 @@
 //! ones that say; else its file's name, "(Europe)" and the like, every
 //! Europe-only game of a set being named so with a header saying NTSC. A
 //! game of both, "(USA, Europe)", is one ROM for them, and runs as NTSC.
+//! One whose name says Japan alone, "(J)" or "(Japan)", is a Famicom's.
 
 /// The first's the default: what a header's silence means.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -83,14 +84,7 @@ impl Region {
     /// The region a file's `name` says, if it says one: PAL's tags only if
     /// there's no NTSC's with them.
     pub fn from_name(name: &str) -> Option<Region> {
-        let groups = name
-            .split('(')
-            .skip(1)
-            .filter_map(|group| group.split(')').next());
-        let tags: Vec<&str> = groups
-            .flat_map(|group| group.split(','))
-            .map(str::trim)
-            .collect();
+        let tags = tags(name);
         if tags.iter().any(|tag| NTSC_TAGS.contains(tag)) {
             return Some(Region::Ntsc);
         }
@@ -107,4 +101,25 @@ impl Region {
             _ => None,
         }
     }
+}
+
+/// A name's tags: what's in its brackets, each a comma apart.
+fn tags(name: &str) -> Vec<&str> {
+    name.split('(')
+        .skip(1)
+        .filter_map(|group| group.split(')').next())
+        .flat_map(|group| group.split(','))
+        .map(str::trim)
+        .collect()
+}
+
+/// Whether a file's `name` says Japan alone, no other country with it: a
+/// Famicom's game.
+pub fn japans_alone(name: &str) -> bool {
+    let japan = |tag: &&str| matches!(*tag, "Japan" | "J");
+    let tags = tags(name);
+    tags.iter().any(japan)
+        && !tags
+            .iter()
+            .any(|tag| !japan(tag) && (NTSC_TAGS.contains(tag) || PAL_TAGS.contains(tag)))
 }

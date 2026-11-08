@@ -112,6 +112,7 @@ mod tests {
         prg_ram: 0,
         battery: false,
         mirroring: Some(Mirroring::Vertical),
+        famicom: false,
     };
 
     #[test]

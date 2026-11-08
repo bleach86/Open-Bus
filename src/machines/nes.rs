@@ -53,6 +53,13 @@
 //!
 //! F2 saves its state, F4 loads it back, beside its image, its name with
 //! .state after; F12 is its Reset button, held.
+//!
+//! A Japanese game's console is a Famicom: its PPU's reset wired high, it
+//! starts at power-on a frame before the CPU does, so its warm-up's over
+//! by the time the game starts (Magic John's and Sansuu 2 Nen's write it
+//! before a NES's would be); and its Reset button the CPU's alone. A game
+//! is Japanese if the database says it's the Famicom's, or its name says
+//! Japan's alone; a Disk System's always is.
 
 pub mod apu;
 pub mod cartridge;
@@ -178,6 +185,9 @@ pub struct Nes {
     /// Its region, from its game: a state's loaded into one of the same.
     #[serde(skip)]
     pub region: Region,
+    /// Whether it's a Famicom, from its game too.
+    #[serde(skip)]
+    pub famicom: bool,
     /// The game's name; the gamepads, as the host last gave them.
     #[serde(skip)]
     pub name: String,
@@ -208,6 +218,13 @@ impl Nes {
         Nes::of(cartridge, Region::Ntsc)
     }
 
+    /// A Famicom, not a NES: its PPU started a frame before its CPU, so
+    /// warmed up already, and its Reset button not the PPU's.
+    pub fn as_famicom(&mut self) {
+        self.famicom = true;
+        self.ppu.warmed_up();
+    }
+
     /// Performance mode, which has to be before its sound's on.
     pub fn performance(&mut self) {
         self.ppu.fast = true;
@@ -217,6 +234,7 @@ impl Nes {
     /// A NES of `region`.
     pub fn of(cartridge: Cartridge, region: Region) -> Self {
         Nes {
+            famicom: false,
             ram: vec![0; 0x800],
             ppu: Ppu::new(region),
             apu: Apu::new(region),
@@ -598,11 +616,14 @@ impl Machine for Nes {
         self.gamepad_2 = input.gamepad_2;
     }
 
-    /// Held, the PPU's reset, and the CPU and APU held so.
+    /// Held, the PPU's reset, but for a Famicom's, and the CPU and APU
+    /// held so.
     fn reset_button(&mut self, held: bool) {
         self.reset_held = held;
         if held {
-            self.ppu.reset();
+            if !self.famicom {
+                self.ppu.reset();
+            }
             self.cartridge.reset();
             (self.dma, self.dmc_dma, self.halted) = (None, None, false);
         }
@@ -636,6 +657,7 @@ impl Machine for Nes {
         self.cartridge.take_roms(&mut running.cartridge);
         self.region = running.region;
         (self.ppu.region, self.apu.region) = (running.region, running.region);
+        self.famicom = running.famicom;
         self.name = take(&mut running.name);
         self.gamepad = running.gamepad;
         self.gamepad_2 = running.gamepad_2;
@@ -708,7 +730,14 @@ pub fn build(rom: &str, overscan: usize, region: Option<Region>) -> Result<CPU<N
         .file_name()
         .and_then(|name| Region::from_name(&name.to_string_lossy()));
     let region = region.or(cartridge.region).or(named).unwrap_or_default();
+    let japans = path
+        .file_name()
+        .is_some_and(|name| region::japans_alone(&name.to_string_lossy()));
+    let famicom = cartridge.famicom || japans;
     let mut nes = Nes::of(cartridge, region);
+    if famicom {
+        nes.as_famicom();
+    }
     if nes.cartridge.battery {
         let file = path.with_extension("srm");
         if let Ok(saved) = files::read(&file) {

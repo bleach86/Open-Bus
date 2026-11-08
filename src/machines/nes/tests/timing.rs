@@ -1,5 +1,6 @@
 //! A NES's region: how long its frames are, its dots a CPU cycle, what's
-//! said of a game's region and by whom; its colours; a state kept to it.
+//! said of a game's region and by whom; its colours; a state kept to it. A
+//! Famicom's PPU: warmed up already, and not reset by Reset.
 
 #[cfg(test)]
 mod tests {
@@ -8,7 +9,7 @@ mod tests {
     use crate::machines::nes::cartridge::Cartridge;
     use crate::machines::nes::palette::palette;
     use crate::machines::nes::ppu::Ppu;
-    use crate::machines::nes::region::{PAL_CLOCK_HZ, Region};
+    use crate::machines::nes::region::{self, PAL_CLOCK_HZ, Region};
     use crate::machines::nes::{CLOCK_HZ, Nes};
 
     /// An iNES image of NOPs, its header's bytes `header` set.
@@ -164,6 +165,85 @@ mod tests {
         ] {
             assert_eq!(Region::from_name(name), None, "{name}");
         }
+    }
+
+    #[test]
+    fn a_files_name_says_if_its_japans_alone() {
+        for name in [
+            "Fire Emblem (J).zip",
+            "Banana (Japan).zip",
+            "Game (J) [a1].nes",
+        ] {
+            assert!(region::japans_alone(name), "{name}");
+        }
+        for name in [
+            "Karnov (USA).zip",
+            "Game (Japan, USA).zip",
+            "Game (JU).nes",
+            "Game (Japan, Europe).zip",
+            "Game (World).zip",
+            "Homebrew.nes",
+        ] {
+            assert!(!region::japans_alone(name), "{name}");
+        }
+    }
+
+    /// A write to a PPU register, and a read, a CPU cycle each, as the CPU's
+    /// are: PPUADDR's second write takes a dot or so to arrive.
+    fn put(nes: &mut Nes, addr: u16, value: u8) {
+        nes.write(addr, value);
+        nes.tick();
+    }
+
+    fn get(nes: &mut Nes, addr: u16) -> u8 {
+        let value = nes.read(addr);
+        nes.tick();
+        value
+    }
+
+    /// `value` written to nametable $2000 through PPUADDR and PPUDATA at
+    /// once, then read back once it's warmed up for sure: what's there.
+    fn written_at_once(nes: &mut Nes, value: u8) -> u8 {
+        put(nes, 0x2006, 0x20);
+        put(nes, 0x2006, 0x00);
+        put(nes, 0x2007, value);
+        for _ in 0..3 {
+            while !nes.hand_back() {
+                nes.tick();
+            }
+        }
+        put(nes, 0x2006, 0x20);
+        put(nes, 0x2006, 0x00);
+        get(nes, 0x2007);
+        get(nes, 0x2007)
+    }
+
+    #[test]
+    fn a_famicoms_ppu_is_warmed_up_at_once_and_not_reset_by_reset() {
+        let mut nes = Nes::of(Cartridge::new(&image(&[])).unwrap(), Region::Ntsc);
+        assert_eq!(
+            written_at_once(&mut nes, 0x55),
+            0,
+            "a NES's ignored, warming up"
+        );
+        let mut famicom = Nes::of(Cartridge::new(&image(&[])).unwrap(), Region::Ntsc);
+        famicom.as_famicom();
+        assert_eq!(written_at_once(&mut famicom, 0x55), 0x55);
+
+        nes.reset_button(true);
+        nes.reset_button(false);
+        assert_eq!(
+            written_at_once(&mut nes, 0xAA),
+            0,
+            "after Reset, ignored again"
+        );
+        famicom.reset_button(true);
+        famicom.reset_button(false);
+        assert_eq!(
+            written_at_once(&mut famicom, 0xAA),
+            0xAA,
+            "the Famicom's PPU not reset"
+        );
     }
 
     #[test]

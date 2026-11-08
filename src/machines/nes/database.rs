@@ -33,6 +33,8 @@ pub struct Known {
     pub prg_ram: usize,
     pub battery: bool,
     pub mirroring: Option<Mirroring>,
+    /// Whether it's a Famicom's game, the system it says.
+    pub famicom: bool,
 }
 
 impl Known {
@@ -82,6 +84,7 @@ pub(super) fn game(line: &str) -> Option<(u32, Known)> {
         prg_ram: k(9) + k(10),
         battery: fields[11] == "1",
         mirroring,
+        famicom: fields[1] == "Famicom",
     };
     Some((crc, known))
 }

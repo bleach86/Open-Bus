@@ -21,12 +21,14 @@ mod tests {
                     prg_ram: 8 * 1024,
                     battery: true,
                     mirroring: Some(Mirroring::Horizontal),
+                    famicom: false,
                 }
             ))
         );
         // No submapper: not checked, its RAMs only what it adds.
         let (_, unchecked) = database::game("0FB244C8,Famicom,,,,4,128,128,,8,0,0,,,,,,").unwrap();
         assert!(!unchecked.checked());
+        assert!(unchecked.famicom, "the Famicom's");
         assert_eq!(
             (unchecked.prg_ram, unchecked.chr_ram, unchecked.mirroring),
             (8 * 1024, 0, None)

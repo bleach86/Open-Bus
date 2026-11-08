@@ -524,6 +524,10 @@ pub struct Cartridge {
     /// The region its header says it's for, if it says one.
     #[serde(skip)]
     pub region: Option<Region>,
+    /// Whether the database knows it as a Famicom's game; a Disk System's
+    /// always is.
+    #[serde(skip)]
+    pub famicom: bool,
     /// The board its MMC3 is on: as the ROMs are, not in a save state.
     #[serde(skip)]
     pub board: Board,
@@ -761,6 +765,7 @@ impl Cartridge {
             mirroring,
             mapper,
             region,
+            famicom: known.is_some_and(|known| known.famicom),
             board,
             sprite_fetch: false,
             prg_pages: None,
@@ -782,6 +787,7 @@ impl Cartridge {
             mirroring: Mirroring::Horizontal,
             mapper: Mapper::Fds(Box::new(fds)),
             region: None,
+            famicom: true,
             board: Board::Plain,
             sprite_fetch: false,
             prg_pages: None,

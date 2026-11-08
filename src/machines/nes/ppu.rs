@@ -253,6 +253,11 @@ impl Ppu {
         }
     }
 
+    /// Its warm-up over already: a Famicom's, started before its CPU.
+    pub fn warmed_up(&mut self) {
+        self.warming_up = false;
+    }
+
     /// RESET: PPUCTRL and PPUMASK cleared, the write toggle and the buffer;
     /// writes ignored again, until the pre-render line.
     pub fn reset(&mut self) {
