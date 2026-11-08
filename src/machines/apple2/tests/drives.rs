@@ -155,6 +155,7 @@ mod tests {
         disk.path = Some(saved.clone());
         disk.written = true;
         press(&mut host, 9);
+        crate::host::files::all_saved();
         assert!(saved.exists(), "the disk taken out not saved");
         for path in paths.iter().chain([&saved]) {
             std::fs::remove_file(path).unwrap();
