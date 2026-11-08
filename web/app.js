@@ -418,9 +418,24 @@ function gameTile(name) {
     const known = art.get(key);
     const button = document.createElement('button');
     button.className = 'play';
-    button.dataset.tip = [titleOf(name), known?.developer, name].filter(Boolean).join('\n');
+    const facts = factsOf.get(name);
+    const mapper = facts?.mapper.replace(/^MAPPER (\d+) /, 'Mapper $1, ');
+    button.dataset.tip = [
+        titleOf(name),
+        known?.developer,
+        name,
+        mapper,
+        facts?.problem && `Won't load: ${facts.problem}`,
+    ]
+        .filter(Boolean)
+        .join('\n');
     button.onclick = () =>
         native ? playNatively({ kind: 'nes', game: name }) : start(() => Emulator.nes(name, 8), 'nes', [name]);
+    // One the emulator says won't load, greyed out, and why it won't said.
+    if (facts?.problem) {
+        item.classList.add('unplayable');
+        button.onclick = () => say(`${titleOf(name)} won't load: ${facts.problem}.`, true);
+    }
     button.append(cover(key, titleOf(name)), caption(titleOf(name), known, tagsOf(name)));
     item.append(button, removeButton(name));
     if (native) {
@@ -438,10 +453,15 @@ const gameKey = (machine) => (machine.kind === 'nes' ? `nes\n${machine.game}` : 
 
 async function loadKept() {
     if (native) {
-        kept = await native.keptGames();
+        [kept, factsOf] = await Promise.all([native.keptGames(), native.gameFacts()]);
         favoured = new Set(kept.filter(({ favourite }) => favourite).map(({ machine }) => gameKey(machine)));
     }
 }
+
+/// What the emulator's said of each NES game, in the desktop app, by name:
+/// its mapper, and why it won't load, if it won't. Loaded with `kept`.
+let factsOf = new Map();
+native?.whenFactsChange(() => refresh());
 
 /// A game's star, in the desktop app: lit if it's a favourite, and pressed,
 /// made one, or not.

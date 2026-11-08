@@ -743,6 +743,62 @@ fn cartridge(image: &[u8], path: &Path) -> Result<Cartridge, String> {
     Ok(Cartridge::disk(image, sides, &bios))
 }
 
+/// What's known of the game at `path` without running it, for a library to
+/// keep: a line of its CRC-32 (its ROMs', after the header, as the game
+/// database has it), its mapper, whether it's a Famicom's, and whether it's
+/// a Zapper's, then why it won't load, if it won't, and its path last, a tab
+/// between each. A Disk System's game, its BIOS not needed for this.
+pub fn facts(path: &Path) -> String {
+    let fact = |image: &[u8]| -> Result<[String; 4], String> {
+        if fds::sides_of(image).is_some() {
+            let crc = crc32(image);
+            return Ok([
+                format!("{crc:08X}"),
+                "MAPPER 20 DISK SYSTEM".into(),
+                "1".into(),
+                "0".into(),
+            ]);
+        }
+        let cartridge = Cartridge::new(image)?;
+        let trainer = if image[6] & 0x04 != 0 { 512 } else { 0 };
+        let name = path
+            .file_name()
+            .map_or(String::new(), |name| name.to_string_lossy().into_owned());
+        let famicom = cartridge.famicom || region::japans_alone(&name);
+        Ok([
+            format!("{:08X}", crc32(&image[16 + trainer..])),
+            cartridge.mapper_name(),
+            (famicom as u8).to_string(),
+            (cartridge.zapper as u8).to_string(),
+        ])
+    };
+    let [crc, mapper, famicom, zapper, problem] = match image(path).and_then(|image| fact(&image)) {
+        Ok([crc, mapper, famicom, zapper]) => [crc, mapper, famicom, zapper, String::new()],
+        Err(problem) => ["".into(), "".into(), "0".into(), "0".into(), problem],
+    };
+    let problem = problem.replace(['\t', '\n'], " ");
+    format!(
+        "{crc}\t{mapper}\t{famicom}\t{zapper}\t{problem}\t{}",
+        path.display()
+    )
+}
+
+/// `cpu_emu facts`: `facts` of each file named on standard input, a line
+/// each, as soon as it's known.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn report_facts() {
+    use std::io::{BufRead, Write};
+    let mut out = std::io::stdout().lock();
+    for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+        if writeln!(out, "{}", facts(Path::new(&line)))
+            .and_then(|_| out.flush())
+            .is_err()
+        {
+            return;
+        }
+    }
+}
+
 /// What's seen of the picture, `overscan` hidden at each edge: its width
 /// and height.
 fn seen(overscan: usize) -> (usize, usize) {

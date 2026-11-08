@@ -36,6 +36,8 @@
 /// output until standard input closes: the desktop app's library's.
 /// `cpu_emu roms FOLDER` for the Apple's ROMs in the files named on standard
 /// input written into FOLDER, under the names they're looked for by.
+/// `cpu_emu facts` for what's known of each NES game named on standard
+/// input, a line each: the desktop app's library's.
 use cpu_emu::{cpu, machines};
 use machines::apple2::video::Monitor;
 
@@ -61,6 +63,7 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("controls") => machines::nes::controls(),
         Some("pads") => cpu_emu::host::pads::report(),
+        Some("facts") => machines::nes::report_facts(),
         Some("roms") => {
             let out = args.get(2).expect("cpu_emu roms FOLDER");
             machines::apple2::rom_set::sort(std::path::Path::new(out))

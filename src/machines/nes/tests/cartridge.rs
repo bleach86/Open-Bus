@@ -1473,4 +1473,28 @@ mod tests {
         cart.cpu_write(0x5FFF, 0x03, 0);
         assert_eq!(banks(&mut cart), (0, 1, 0xC3, 0xC3), "$5F00 is another");
     }
+
+    #[test]
+    fn a_games_facts_are_a_line_its_problem_if_it_wont_load() {
+        let folder = std::env::temp_dir().join(format!("cpu_emu_{}_facts", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let (good, bad) = (folder.join("Good (J).nes"), folder.join("Bad.nes"));
+        std::fs::write(&good, image(2, 1, [0; 10])).unwrap();
+        std::fs::write(&bad, image(2, 1, [0x30, 0x10, 0, 0, 0, 0, 0, 0, 0, 0])).unwrap();
+        let crc = crate::host::zip::crc32(&image(2, 1, [0; 10])[16..]);
+        assert_eq!(
+            crate::machines::nes::facts(&good),
+            format!("{crc:08X}\tMAPPER 0 NROM\t1\t0\t\t{}", good.display()),
+            "Japan's alone, by its name, a Famicom's"
+        );
+        assert_eq!(
+            crate::machines::nes::facts(&bad),
+            format!(
+                "\t\t0\t0\tmapper 19, which isn't here yet\t{}",
+                bad.display()
+            )
+        );
+        assert!(crate::machines::nes::facts(&folder.join("gone.nes")).contains("\t\t0\t0\t"));
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
 }

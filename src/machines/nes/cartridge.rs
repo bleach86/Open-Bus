@@ -1918,7 +1918,7 @@ impl Cartridge {
     }
 
     /// Its mapper, by its number and name, as a person knows it.
-    fn mapper_name(&self) -> String {
+    pub fn mapper_name(&self) -> String {
         let (number, name) = match &self.mapper {
             Mapper::Nrom => (0, "NROM"),
             Mapper::Mmc1(_) => (1, "MMC1"),

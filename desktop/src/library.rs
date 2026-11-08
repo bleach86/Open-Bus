@@ -1,7 +1,10 @@
 //! The library as the app keeps it, in `library.sqlite` in its data folder:
 //! the folders added, the files hidden, and what's been found, every file in
-//! `library` and in the folders, with its size; and of the games, those that
-//! are favourites, and those played, how often, for how long, and when last. A change is to the rows it
+//! `library` and in the folders, with its size; of the games, those that
+//! are favourites, and those played, how often, for how long, and when last;
+//! and what's known of each NES game's file without running it, as the
+//! emulator says, for as long as it's the size it was and the emulator the
+//! same. A change is to the rows it
 //! changes, not all of them; and a look through the folders that finds them
 //! as they were changes nothing. What was kept before, in `settings.json`
 //! and `files.json`, is taken in the first time, and they're left as `.old`.
@@ -44,6 +47,16 @@ const SCHEMA: &str = "
         own INTEGER NOT NULL,
         UNIQUE (path, own)
     );
+    CREATE TABLE IF NOT EXISTS facts (
+        path TEXT PRIMARY KEY,
+        size INTEGER NOT NULL,
+        crc TEXT NOT NULL,
+        mapper TEXT NOT NULL,
+        famicom INTEGER NOT NULL,
+        zapper INTEGER NOT NULL,
+        problem TEXT NOT NULL,
+        emulator TEXT NOT NULL DEFAULT ''
+    );
     CREATE TABLE IF NOT EXISTS games (
         key TEXT PRIMARY KEY,
         machine TEXT NOT NULL,
@@ -80,6 +93,21 @@ impl Library {
 
     fn of(connection: Connection) -> Result<Library, String> {
         connection.execute_batch(SCHEMA).map_err(said)?;
+        // Facts kept before they said which emulator: none, so learned again.
+        let has = connection
+            .query_row(
+                "SELECT 1 FROM pragma_table_info('facts') WHERE name = 'emulator'",
+                [],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(said)?
+            .is_some();
+        if !has {
+            connection
+                .execute_batch("ALTER TABLE facts ADD COLUMN emulator TEXT NOT NULL DEFAULT ''")
+                .map_err(said)?;
+        }
         Ok(Library(Mutex::new(connection)))
     }
 
@@ -335,6 +363,91 @@ impl Library {
         rows.collect::<Result<_, _>>().map_err(said)
     }
 
+    /// The NES games found that nothing's known of by `emulator`, the one
+    /// there is now, or not at the size they are now.
+    pub fn unknown(&self, emulator: &str) -> Result<Vec<String>, String> {
+        let db = self.lock()?;
+        let mut statement = db
+            .prepare(
+                "SELECT files.path FROM files LEFT JOIN facts
+                     ON facts.path = files.path AND facts.size = files.size AND facts.emulator = ?1
+                 WHERE facts.path IS NULL ORDER BY files.id",
+            )
+            .map_err(said)?;
+        let rows = statement
+            .query_map([emulator], |row| row.get::<_, String>(0))
+            .map_err(said)?;
+        let paths: Vec<String> = rows.collect::<Result<_, _>>().map_err(said)?;
+        Ok(paths.into_iter().filter(|path| is_nes(path)).collect())
+    }
+
+    /// What `emulator` said of games, a line each, as `cpu_emu facts` says
+    /// it, kept for the size each is now. Whether any were.
+    pub fn learned(&self, lines: &[String], emulator: &str) -> Result<bool, String> {
+        let mut db = self.lock()?;
+        let tx = db.transaction().map_err(said)?;
+        let mut any = false;
+        for line in lines {
+            let fields: Vec<&str> = line.splitn(6, '\t').collect();
+            let [crc, mapper, famicom, zapper, problem, path] = fields[..] else {
+                continue;
+            };
+            let size: Option<i64> = tx
+                .query_row("SELECT size FROM files WHERE path = ?1", [path], |row| {
+                    row.get(0)
+                })
+                .optional()
+                .map_err(said)?;
+            let Some(size) = size else { continue };
+            tx.execute(
+                "INSERT OR REPLACE INTO facts
+                     (path, size, crc, mapper, famicom, zapper, problem, emulator)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    path,
+                    size,
+                    crc,
+                    mapper,
+                    famicom == "1",
+                    zapper == "1",
+                    problem,
+                    emulator
+                ],
+            )
+            .map_err(said)?;
+            any = true;
+        }
+        tx.commit().map_err(said)?;
+        Ok(any)
+    }
+
+    /// What's known of the games found, as they are now: each's path, its
+    /// CRC-32, its mapper, whether it's a Famicom's and a Zapper's, and why
+    /// it won't load, if it won't.
+    pub fn facts(&self) -> Result<Vec<Value>, String> {
+        let db = self.lock()?;
+        let mut statement = db
+            .prepare(
+                "SELECT DISTINCT facts.path, crc, mapper, famicom, zapper, problem FROM facts
+                 JOIN files ON files.path = facts.path AND files.size = facts.size
+                 ORDER BY facts.path",
+            )
+            .map_err(said)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(json!({
+                    "path": row.get::<_, String>(0)?,
+                    "crc": row.get::<_, String>(1)?,
+                    "mapper": row.get::<_, String>(2)?,
+                    "famicom": row.get::<_, bool>(3)?,
+                    "zapper": row.get::<_, bool>(4)?,
+                    "problem": row.get::<_, String>(5)?,
+                }))
+            })
+            .map_err(said)?;
+        rows.collect::<Result<_, _>>().map_err(said)
+    }
+
     /// All that's been found, as the page has it: `root`, where the app's
     /// library is, and each section's files, a path and a size each.
     pub fn found(&self, root: &str) -> Result<Value, String> {
@@ -385,6 +498,13 @@ pub fn game(machine: &Value) -> Option<(String, Value)> {
         }
         _ => None,
     }
+}
+
+/// Whether `path`'s a NES game's, as the library has them: an iNES image, a
+/// Disk System's, or a zip of one.
+fn is_nes(path: &str) -> bool {
+    let kind = path.rsplit('.').next().unwrap_or_default().to_lowercase();
+    ["nes", "fds", "zip"].contains(&kind.as_str())
 }
 
 /// A file as the page has one: its path, and its size.
@@ -620,6 +740,51 @@ mod tests {
             library
                 .favour(&json!({ "kind": "controls" }), true)
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn a_games_facts_are_kept_while_its_the_size_it_was() {
+        let library = Library::in_memory().unwrap();
+        let files = vec![
+            found("/g/a.zip", 10),
+            found("/g/b.nes", 20),
+            found("/d/c.dsk", 30),
+        ];
+        library
+            .replace(vec![found("/data/library/disksys.rom", 8192)], files)
+            .unwrap();
+        assert_eq!(
+            library.unknown("e1").unwrap(),
+            ["/g/a.zip", "/g/b.nes"],
+            "NES games only"
+        );
+        let lines = [
+            "52E2B5E0\tMAPPER 4 MMC3\t1\t0\t\t/g/a.zip".to_string(),
+            "\t\t0\t0\tmapper 19, which isn't here yet\t/g/b.nes".to_string(),
+            "garbled".to_string(),
+            "00000000\tMAPPER 0 NROM\t0\t0\t\t/g/gone.nes".to_string(),
+        ];
+        assert!(library.learned(&lines, "e1").unwrap());
+        assert!(library.unknown("e1").unwrap().is_empty());
+        assert_eq!(
+            library.facts().unwrap(),
+            [
+                json!({ "path": "/g/a.zip", "crc": "52E2B5E0", "mapper": "MAPPER 4 MMC3", "famicom": true, "zapper": false, "problem": "" }),
+                json!({ "path": "/g/b.nes", "crc": "", "mapper": "", "famicom": false, "zapper": false, "problem": "mapper 19, which isn't here yet" }),
+            ],
+            "a line that isn't one, and a file not found, left out"
+        );
+        // b.nes, a new dump: of a new size, not known.
+        library
+            .replace(vec![], vec![found("/g/a.zip", 10), found("/g/b.nes", 21)])
+            .unwrap();
+        assert_eq!(library.unknown("e1").unwrap(), ["/g/b.nes"]);
+        assert_eq!(library.facts().unwrap().len(), 1);
+        assert_eq!(
+            library.unknown("e2").unwrap(),
+            ["/g/a.zip", "/g/b.nes"],
+            "a new emulator's to say it all again"
         );
     }
 

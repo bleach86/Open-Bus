@@ -287,6 +287,7 @@ fn seen(app: &AppHandle, paths: Vec<PathBuf>) {
             .is_ok_and(|added| !added.is_empty());
     }
     if changed {
+        learn_facts(app);
         let _ = app.emit("files-changed", ());
     }
 }
@@ -348,6 +349,7 @@ fn add_folder_files(app: AppHandle, entries: Vec<Value>) -> Result<Vec<Value>, S
         .filter(|(path, _)| allowed(&app, path).is_ok())
         .collect();
     let added = library(&app).add(Section::Folders, allowed_entries)?;
+    learn_facts(&app);
     Ok(added.iter().map(as_entry).collect())
 }
 
@@ -375,11 +377,9 @@ fn restore_hidden(app: AppHandle, paths: Vec<String>) -> Result<Vec<Value>, Stri
                 .map(|file| (path.clone(), file.len()))
         })
         .collect();
-    Ok(kept
-        .add(Section::Folders, back)?
-        .iter()
-        .map(as_entry)
-        .collect())
+    let added = kept.add(Section::Folders, back)?;
+    learn_facts(&app);
+    Ok(added.iter().map(as_entry).collect())
 }
 
 /// A folder chosen, and remembered: its path, if one was.
@@ -443,7 +443,9 @@ fn look_again(app: &AppHandle) -> Result<bool, String> {
     for place in library(app).folders()? {
         walk(Path::new(&place), &mut added);
     }
-    library(app).replace(own, added)
+    let changed = library(app).replace(own, added)?;
+    learn_facts(app);
+    Ok(changed)
 }
 
 /// The games that are favourites, or have been played, as the library keeps
@@ -585,6 +587,100 @@ fn emulator_command() -> Result<Command, String> {
     #[cfg(windows)]
     std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
     Ok(command)
+}
+
+/// Whether the emulator's learning what's known of the games, and whether
+/// it's been asked to again, for what came while it was.
+#[derive(Default)]
+struct Learning(Mutex<(bool, bool)>);
+
+/// What's known of the NES games found learned, those nothing's known of
+/// yet, by the emulator, in the background: kept as it says each, the page
+/// told once it's done, if anything was. Asked while it's at it, it looks
+/// again after; and once is all, for any it says nothing of.
+fn learn_facts(app: &AppHandle) {
+    {
+        let state = app.state::<Learning>();
+        let Ok(mut learning) = state.0.lock() else {
+            return;
+        };
+        if learning.0 {
+            learning.1 = true;
+            return;
+        }
+        *learning = (true, false);
+    }
+    let app = app.clone();
+    thread::spawn(move || {
+        loop {
+            if learn_unknown(&app).unwrap_or(false) {
+                let _ = app.emit("facts-changed", ());
+            }
+            let state = app.state::<Learning>();
+            let Ok(mut learning) = state.0.lock() else {
+                return;
+            };
+            if !learning.1 {
+                learning.0 = false;
+                return;
+            }
+            learning.1 = false;
+        }
+    });
+}
+
+/// The games nothing's known of told to `cpu_emu facts`, and what it says
+/// kept, a hundred at a time: whether anything was.
+fn learn_unknown(app: &AppHandle) -> Result<bool, String> {
+    let emulator = which_emulator()?;
+    let unknown = library(app).unknown(&emulator)?;
+    if unknown.is_empty() {
+        return Ok(false);
+    }
+    let list: String = unknown
+        .iter()
+        .filter(|path| !path.contains('\n'))
+        .map(|path| format!("{path}\n"))
+        .collect();
+    let mut learner = emulator_command()?
+        .arg("facts")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut input = learner.stdin.take().ok_or("no input")?;
+    thread::spawn(move || input.write_all(list.as_bytes()));
+    let output = learner.stdout.take().ok_or("no output")?;
+    let (mut lines, mut any) = (Vec::new(), false);
+    for line in BufReader::new(output).lines().map_while(Result::ok) {
+        lines.push(line);
+        if lines.len() == 100 {
+            any |= library(app).learned(&std::mem::take(&mut lines), &emulator)?;
+        }
+    }
+    any |= library(app).learned(&lines, &emulator)?;
+    let _ = learner.wait();
+    Ok(any)
+}
+
+/// Which emulator there is, as what it says of games goes: its size and
+/// when it was built, which a new one changes. What an old one said is
+/// learned again, as a mapper added makes a game playable.
+fn which_emulator() -> Result<String, String> {
+    let file = fs::metadata(emulator()?).map_err(|e| e.to_string())?;
+    let built = file
+        .modified()
+        .ok()
+        .and_then(|at| at.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |at| at.as_secs());
+    Ok(format!("{} {built}", file.len()))
+}
+
+/// What's known of the games found, for the page.
+#[tauri::command(async)]
+fn game_facts(app: AppHandle) -> Result<Vec<Value>, String> {
+    library(&app).facts()
 }
 
 /// What `machine`, as the page says, is on the emulator's command line.
@@ -878,6 +974,7 @@ fn main() {
                 })?;
             let data = app.path().app_data_dir()?;
             app.manage(Library::open(&data)?);
+            learn_facts(app.handle());
             start_pads(app.handle());
             watch_folders(app.handle());
             look_over_network(app.handle().clone());
@@ -888,6 +985,7 @@ fn main() {
         .manage(Pads::default())
         .manage(Windowed::default())
         .manage(Watching::default())
+        .manage(Learning::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             all_files,
@@ -909,7 +1007,8 @@ fn main() {
             quit,
             add_folder_files,
             kept_games,
-            favourite
+            favourite,
+            game_facts
         ])
         .run(tauri::generate_context!())
         .expect("couldn't open the window");

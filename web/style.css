@@ -566,6 +566,12 @@ ul {
 .tile .remove:focus-visible {
   opacity: 1;
 }
+/* A game that won't load, as the emulator says: there, but greyed out. */
+.tile.unplayable .play {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
 /* A game's star, in the corner opposite its remove button: there on hover,
    and always once it's a favourite. A disk's drive, there too, beside it. */
 .tile .star {

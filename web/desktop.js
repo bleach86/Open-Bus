@@ -201,6 +201,18 @@ export async function keptGames() {
     });
 }
 
+/// What's known of the NES games, by the page's names: each's mapper,
+/// whether it's a Famicom's and a Zapper's, and why it won't load, if it
+/// won't. Those not looked at yet, not there.
+export async function gameFacts() {
+    const names = new Map([...where].map(([name, path]) => [path, name]));
+    const facts = await invoke('game_facts');
+    return new Map(facts.flatMap(({ path, ...known }) => (names.has(path) ? [[names.get(path), known]] : [])));
+}
+
+/// `told` when more's known of the games.
+export const whenFactsChange = (told) => listen('facts-changed', () => told());
+
 /// `machine`, by the page's names, a favourite, `on`, or not.
 export const favourite = (machine, on) => invoke('favourite', { machine: pathed(machine), on });
 
