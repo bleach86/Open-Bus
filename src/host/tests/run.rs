@@ -28,6 +28,7 @@ mod tests {
         gamepad: Gamepad,
         gamepad_2: Gamepad,
         reset: bool,
+        fast: bool,
         closed: bool,
         /// Closed once it's shown this many pictures, if it's to be.
         close_after: Option<usize>,
@@ -81,6 +82,10 @@ mod tests {
 
         fn reset_held(&self) -> bool {
             self.0.borrow().reset
+        }
+
+        fn fast_forward(&self) -> bool {
+            self.0.borrow().fast
         }
 
         fn closed(&self) -> bool {
@@ -149,6 +154,39 @@ mod tests {
             host.cpu.memory.sound().is_empty(),
             "the sound played not taken"
         );
+    }
+
+    #[test]
+    fn fast_forwarded_its_three_times_as_quick_a_picture_of_three_and_quiet() {
+        let (mut host, seen, _) = host("fast");
+        // A whole frame's cycles: the first, from Reset, is short.
+        host.frame();
+        let start = host.cycles;
+        host.frame();
+        let (frame, played) = (host.cycles - start, seen.borrow().samples);
+        seen.borrow_mut().fast = true;
+        for _ in 0..6 {
+            host.frame();
+        }
+        let ran = host.cycles - start - frame;
+        assert!(
+            ran.abs_diff(2 * frame) < 10,
+            "six frames in the time of {ran} cycles, not two frames' {}",
+            2 * frame
+        );
+        assert_eq!(
+            seen.borrow().pictures,
+            2 + 2,
+            "a picture a frame, then of each three"
+        );
+        assert_eq!(seen.borrow().samples, played, "heard while fast");
+        assert_eq!(host.notice.as_ref().unwrap().0, "Fast forward");
+
+        seen.borrow_mut().fast = false;
+        host.frame();
+        assert_eq!(seen.borrow().pictures, 5, "let go, its picture shown");
+        assert!(seen.borrow().samples > played, "and heard");
+        assert!(host.notice.is_none(), "its notice still up");
     }
 
     #[test]

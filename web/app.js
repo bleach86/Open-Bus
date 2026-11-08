@@ -142,7 +142,7 @@ function fillControls() {
             const item = document.createElement('li');
             const words = document.createElement('span');
             words.className = 'row-text';
-            words.textContent = action[0].toUpperCase() + action.slice(1);
+            words.textContent = action === 'fast' ? 'Fast forward' : action[0].toUpperCase() + action.slice(1);
             const note = document.createElement('small');
             note.textContent = controlsBound[controlsPlayer][action].map(bindings.said).join(', ') || 'Nothing';
             words.append(note);
@@ -1712,6 +1712,7 @@ async function stop() {
     emulator.free();
     emulator = null;
     held.clear();
+    fastForward = false;
     clearTimeout(pointerTimer);
     letGo(page('handheld'));
     page('machine').hidden = true;
@@ -1772,6 +1773,7 @@ function padState(pad) {
         east: button(1),
         select: button(back),
         start: button(start),
+        rightTrigger: raw ? push(5) > 0.5 : button(7),
     };
 }
 
@@ -1791,9 +1793,9 @@ function padBits(who, pad, state, touched = {}) {
         left: state.stickX < -0.5,
         right: state.stickX > 0.5,
     };
-    return bindings.ACTIONS.filter((action) => action !== 'library')
-        .map((action) => touched[action] || steered[action] || boundHeld(who, action, pad, state))
-        .reduce((bits, on, bit) => bits | (on ? 1 << bit : 0), 0);
+    return bindings.BUTTONS.map(
+        (action) => touched[action] || steered[action] || boundHeld(who, action, pad, state),
+    ).reduce((bits, on, bit) => bits | (on ? 1 << bit : 0), 0);
 }
 
 function controls() {
@@ -1827,7 +1829,8 @@ function controls() {
     const buttons =
         (first.a || key('Numpad0', 'AltLeft') ? 1 : 0) | (first.east || key('NumpadDecimal', 'AltRight') ? 2 : 0);
     const down_ = [...held].some((code) => !/^(Shift|Control|Alt|Meta)/.test(code));
-    emulator.controls(gamepad, gamepad2, x, y, buttons, down_, reset);
+    fastForward = boundHeld(0, 'fast', pads[0], first);
+    emulator.controls(gamepad, gamepad2, x, y, buttons, down_, reset, fastForward);
 }
 
 function show() {
@@ -1848,6 +1851,11 @@ function show() {
 
 /// As many frames as are due, at the machine's own rate, the screen's
 /// whatever it is; a tab long away doesn't run to catch up.
+/// Whether what's bound to fast-forward is held: three frames run for one,
+/// as the host's FAST has it.
+let fastForward = false;
+const FAST = 3;
+
 function tick(now) {
     requestAnimationFrame(tick);
     if (page('controls-dialog').open) {
@@ -1859,12 +1867,13 @@ function tick(now) {
         navigate(now);
         return;
     }
-    const period = 1000 / emulator.hz();
+    const speed = fastForward ? FAST : 1;
+    const period = 1000 / emulator.hz() / speed;
     if (now - last > 250) {
         last = now - period;
     }
     let ran = false;
-    for (let frames = 0; frames < 3 && now - last >= period; frames++) {
+    for (let frames = 0; frames < 3 * speed && now - last >= period; frames++) {
         controls();
         const here = (Date.now() - new Date().getTimezoneOffset() * 60000) / 1000;
         emulator.frame(here);

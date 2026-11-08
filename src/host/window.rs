@@ -224,6 +224,15 @@ impl Window {
         }
     }
 
+    /// Whether what's bound to fast-forward is held, not while it's looking
+    /// for a press to bind.
+    fn fast_held(&self) -> bool {
+        !self.capturing
+            && self
+                .controls
+                .holds(0, Action::FastForward, |source| self.is_held(0, source))
+    }
+
     /// Back to the library: by what's bound to it; or if the app opened
     /// this, Select and Start held together a moment.
     fn check_library(&mut self) {
@@ -485,6 +494,10 @@ fn keypad(keycode: Keycode) -> Option<char> {
 }
 
 impl Display for Window {
+    fn fast_forward(&self) -> bool {
+        self.fast_held()
+    }
+
     fn pointer(&self) -> Pointer {
         self.pointer
     }

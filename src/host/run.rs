@@ -13,7 +13,7 @@
 
 use crate::cpu::CPU;
 use crate::host::clock;
-use crate::host::controls::{ACTIONS, Action, Controls, is_stick, name, said};
+use crate::host::controls::{ACTIONS, Action, BUTTONS, Controls, is_stick, name, said};
 use crate::host::display::{Display, Gamepad, Key};
 use crate::host::files;
 use crate::host::machine::{Input, Machine};
@@ -47,12 +47,13 @@ enum Entry {
 }
 
 impl Changing {
-    /// What's on its list: the first player has the way back too.
+    /// What's on its list: the first player has the way back and
+    /// fast-forward too.
     fn entries(&self) -> Vec<Entry> {
         let actions = if self.player == 0 {
             &ACTIONS[..]
         } else {
-            &ACTIONS[..ACTIONS.len() - 1]
+            &ACTIONS[..BUTTONS]
         };
         let mut entries: Vec<Entry> = actions.iter().map(|&action| Entry::Bind(action)).collect();
         entries.extend([
@@ -119,6 +120,11 @@ const FRAMES_A_SECOND: u32 = 60;
 /// it can: half a frame.
 const LATE: Duration = Duration::from_millis(8);
 
+/// How many times its own speed it goes, fast-forwarded, as Mesen's 300%:
+/// a picture shown of each so many, and no sound, which would only stutter.
+const FAST: u64 = 3;
+const FAST_NOTICE: &str = "Fast forward";
+
 /// Quick resume, if it's asked for: a state kept as a machine's put away, and
 /// gone on from the next time it's run, a file of its own beside the state F2
 /// saves, which it leaves alone.
@@ -133,18 +139,21 @@ pub struct Host<M: Machine> {
     /// picture with it on.
     pub notice: Option<(String, u32)>,
     noticed: Vec<u32>,
-    /// The window's title, as last set; the cycles run.
+    /// The window's title, as last set; the cycles run, as its clock's kept
+    /// to them, each fast-forwarded a FAST'th of one.
     title: String,
-    cycles: u64,
+    pub(crate) cycles: u64,
     /// The debug panel's showing; and how it's going, measured whether it
     /// is or not.
     pub debug: bool,
     stats: Stats,
     /// The controls being changed, the machine paused, if they are.
     changing: Option<Changing>,
-    /// Behind its clock, and whether the last frame's picture was left out.
+    /// Behind its clock, and whether the last frame's picture was left out;
+    /// the frames fast-forwarded so far, while it's held.
     late: bool,
     left_out: bool,
+    fast: u64,
     /// The menu, if it's up; how many frames Select and Start have been held
     /// together, and whether they're kept from the machine until they're
     /// let go; the Reset button's frames still to be held, as the menu has
@@ -174,6 +183,7 @@ impl<M: Machine> Host<M> {
             changing: None,
             late: false,
             left_out: false,
+            fast: 0,
             menu: None,
             both_held: 0,
             holding_back: false,
@@ -491,20 +501,39 @@ impl<M: Machine> Host<M> {
         }
         let began = clock::seconds();
         let before = self.cpu.clock;
-        // Never two in a row, or there'd be no telling it's still going.
-        let leave_out = self.late && !self.left_out && self.notice.is_none() && !self.debug;
+        let fast = self.display.fast_forward();
+        let was_fast = self.fast > 0;
+        self.fast = if fast { self.fast + 1 } else { 0 };
+        // Its notice for as long as it's held, and no longer.
+        if fast {
+            self.say(FAST_NOTICE);
+        } else if was_fast
+            && self
+                .notice
+                .as_ref()
+                .is_some_and(|(text, _)| text == FAST_NOTICE)
+        {
+            self.notice = None;
+        }
+        // Fast-forwarded, a picture of each FAST; late, one left out, but
+        // never two in a row, or there'd be no telling it's still going.
+        let unseen = fast && self.fast % FAST != 0;
+        let leave_out =
+            unseen || self.late && !self.left_out && self.notice.is_none() && !self.debug;
         self.left_out = self.cpu.memory.leave_out_picture(leave_out);
         self.cpu.run_frame();
         let cycles = self.cpu.clock.wrapping_sub(before) as u64;
-        self.cycles += cycles;
+        self.cycles += if fast { cycles / FAST } else { cycles };
 
-        if self.left_out {
+        if self.left_out || unseen {
             self.display.no_picture();
         } else {
             self.show();
         }
         let machine = &mut self.cpu.memory;
-        self.display.play(machine.sound());
+        if !fast {
+            self.display.play(machine.sound());
+        }
         machine.sound().clear();
         let title = machine.title();
         if title != self.title {

@@ -27,6 +27,7 @@ pub struct Shared {
     pub pointer: Pointer,
     pub key_down: bool,
     pub reset: bool,
+    pub fast: bool,
 }
 
 /// The display a host has; the page has the same `Shared`.
@@ -66,6 +67,10 @@ impl Display for Page {
 
     fn key_down(&self) -> bool {
         self.0.borrow().key_down
+    }
+
+    fn fast_forward(&self) -> bool {
+        self.0.borrow().fast
     }
 
     fn reset_held(&self) -> bool {

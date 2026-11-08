@@ -5,7 +5,9 @@
 // browsers differ; `pad:btn7` or `pad:axis2+` is what was pressed on it when
 // it was bound, whatever that may be. A stick always steers as the D-pad does.
 
-export const ACTIONS = ['up', 'down', 'left', 'right', 'a', 'b', 'select', 'start', 'library'];
+export const ACTIONS = ['up', 'down', 'left', 'right', 'a', 'b', 'select', 'start', 'library', 'fast'];
+/// The console's own, a bit each: the rest are the page's.
+export const BUTTONS = ACTIONS.slice(0, 8);
 const STORED = 'controls';
 
 const padDefaults = {
@@ -39,21 +41,32 @@ function player(first) {
             bound[action].push(source);
         }
         bound.select.push('key:ShiftRight', 'key:Tab');
+        bound.fast.push('key:Backquote', 'pad:rightTrigger');
     }
     return bound;
 }
 
 export const defaults = () => [player(true), player(false)];
 
-/// What's kept, or the defaults.
+/// What's kept, or the defaults. An action kept from before there was one
+/// has its defaults, those that aren't bound to something else.
 export function load(storage = localStorage) {
     try {
         const kept = JSON.parse(storage.getItem(STORED));
         const good =
             Array.isArray(kept) &&
             kept.length === 2 &&
-            kept.every((bound) => ACTIONS.every((action) => Array.isArray(bound[action])));
-        return good ? kept : defaults();
+            kept.every((bound) => Object.values(bound).every(Array.isArray));
+        if (!good) {
+            return defaults();
+        }
+        defaults().forEach((ours, who) => {
+            const used = Object.values(kept[who]).flat();
+            for (const action of ACTIONS.filter((action) => !kept[who][action])) {
+                kept[who][action] = ours[action].filter((source) => !used.includes(source));
+            }
+        });
+        return kept;
     } catch {
         return defaults();
     }

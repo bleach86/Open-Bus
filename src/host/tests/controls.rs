@@ -122,6 +122,39 @@ mod tests {
     }
 
     #[test]
+    fn fast_forward_is_the_first_players_backquote_and_right_trigger() {
+        let controls = Controls::default();
+        assert_eq!(
+            controls.of(0, Action::FastForward),
+            ["key:`", "pad:righttrigger"]
+        );
+        assert!(controls.of(1, Action::FastForward).is_empty());
+    }
+
+    #[test]
+    fn a_file_from_before_an_action_has_its_defaults_not_bound_elsewhere() {
+        // Before fast-forward, the second player's A on B, and their A
+        // bound to nothing.
+        let mut old = Controls::default();
+        old.bind(1, Action::B, "pad:a");
+        let text: String = old
+            .text()
+            .lines()
+            .filter(|line| !line.contains(" fast "))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let controls = Controls::parse(&text);
+        assert_eq!(
+            controls.of(0, Action::FastForward),
+            ["key:`", "pad:righttrigger"]
+        );
+        assert!(
+            controls.of(1, Action::A).is_empty(),
+            "A's default given back, though it's B's"
+        );
+    }
+
+    #[test]
     fn bindings_are_said_for_people() {
         assert_eq!(said("key:Right Shift"), "RIGHT SHIFT");
         assert_eq!(said("pad:a"), "PAD A", "not to be taken for a key");

@@ -1,5 +1,6 @@
-//! What's pressed for what: for each player, each of the console's buttons
-//! and the way back to the library, what's bound to it. A binding's a word
+//! What's pressed for what: for each player, each of the console's buttons;
+//! and for the first, the way back to the library, and fast-forward, held,
+//! what's bound to it. A binding's a word
 //! for what's held, the same for all of it: `key:X`, a key by the window's
 //! name for it; `pad:a`, a gamepad's button or `pad:lefty-`, a stick pushed
 //! that way, all on that player's gamepad.
@@ -23,9 +24,10 @@ pub enum Action {
     Select,
     Start,
     Library,
+    FastForward,
 }
 
-pub const ACTIONS: [Action; 9] = [
+pub const ACTIONS: [Action; 10] = [
     Action::Up,
     Action::Down,
     Action::Left,
@@ -35,7 +37,11 @@ pub const ACTIONS: [Action; 9] = [
     Action::Select,
     Action::Start,
     Action::Library,
+    Action::FastForward,
 ];
+
+/// The console's own, each player's: the rest are the first player's only.
+pub const BUTTONS: usize = 8;
 
 /// The file's word for an action.
 pub fn word(action: Action) -> &'static str {
@@ -49,12 +55,16 @@ pub fn word(action: Action) -> &'static str {
         Action::Select => "select",
         Action::Start => "start",
         Action::Library => "library",
+        Action::FastForward => "fast",
     }
 }
 
 /// Its name on the screen.
 pub fn name(action: Action) -> String {
-    word(action).to_uppercase()
+    match action {
+        Action::FastForward => "FAST FORWARD".to_string(),
+        _ => word(action).to_uppercase(),
+    }
 }
 
 /// What's said of a binding on the screen.
@@ -91,7 +101,7 @@ const STICK: [(Action, &str); 4] = [
     (Action::Left, "pad:leftx-"),
     (Action::Right, "pad:leftx+"),
 ];
-const KEYBOARD: [(Action, &str); 10] = [
+const KEYBOARD: [(Action, &str); 11] = [
     (Action::Up, "key:Up"),
     (Action::Down, "key:Down"),
     (Action::Left, "key:Left"),
@@ -102,6 +112,7 @@ const KEYBOARD: [(Action, &str); 10] = [
     (Action::Select, "key:Tab"),
     (Action::Start, "key:Return"),
     (Action::Library, "key:F5"),
+    (Action::FastForward, "key:`"),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -124,6 +135,7 @@ impl Default for Controls {
             bindings.push((0, action, source.to_string()));
         }
         bindings.push((0, Action::Library, "pad:guide".to_string()));
+        bindings.push((0, Action::FastForward, "pad:righttrigger".to_string()));
         Controls { bindings }
     }
 }
@@ -197,10 +209,27 @@ impl Controls {
             }
         }
         if bindings.is_empty() {
-            Controls::default()
-        } else {
-            Controls { bindings }
+            return Controls::default();
         }
+        // An action with nothing bound, as one newer than the file has: its
+        // defaults, those that aren't bound to something else.
+        let has = |bindings: &[(usize, Action, String)], player, action| {
+            bindings
+                .iter()
+                .any(|&(who, what, _)| who == player && what == action)
+        };
+        let filled: Vec<_> = Controls::default()
+            .bindings
+            .into_iter()
+            .filter(|(player, action, source)| {
+                let elsewhere = bindings
+                    .iter()
+                    .any(|(who, _, was)| who == player && was == source);
+                !has(&bindings, *player, *action) && !elsewhere
+            })
+            .collect();
+        bindings.extend(filled);
+        Controls { bindings }
     }
 
     /// What's kept, or the defaults.

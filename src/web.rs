@@ -235,7 +235,7 @@ impl Emulator {
     }
 
     /// The controls as they are: each gamepad's a bit each, up, down, left,
-    /// right, A, B, Select, Start.
+    /// right, A, B, Select, Start; and whether fast-forward's held.
     pub fn controls(
         &self,
         gamepad: u8,
@@ -245,6 +245,7 @@ impl Emulator {
         buttons: u8,
         key_down: bool,
         reset: bool,
+        fast: bool,
     ) {
         let pad = |bits: u8| {
             let held = |bit: u8| bits >> bit & 1 != 0;
@@ -269,5 +270,6 @@ impl Emulator {
         };
         page.key_down = key_down;
         page.reset = reset;
+        page.fast = fast;
     }
 }
