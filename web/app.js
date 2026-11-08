@@ -1932,7 +1932,13 @@ if (native) {
     });
     page('add-path').onclick = chooseFolder;
     page('rescan').onclick = () => lookForChanges(true);
-    page('quit-app').onclick = () => native.quit();
+    // A slip of the mouse, beside Settings, shouldn't close it: asked first.
+    // Not Ctrl+Q, as nobody presses that by chance.
+    page('quit-app').onclick = async () => {
+        if (await sure('Quit Open Bus?')) {
+            native.quit();
+        }
+    };
     native.whenFilesChange(async ({ came, went }) => {
         if (!came && !went) {
             return;
