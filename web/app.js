@@ -934,17 +934,23 @@ function focusable() {
 }
 
 /// The nearest of `options` from `from` the way `way` goes: by how far
-/// along it, and more by how far off to the side.
+/// along it, and more by how far off to the side, if they're not side by
+/// side at all. A row as wide as the page is under all of what's above it.
 function nearest(from, way, options) {
     const at = from.getBoundingClientRect();
     const [x, y] = [at.left + at.width / 2, at.top + at.height / 2];
+    const apart = (start, end, otherStart, otherEnd) => Math.max(0, otherStart - end, start - otherEnd);
     let best = null;
     let bestScore = Infinity;
     for (const option of options.filter((option) => option !== from)) {
         const there = option.getBoundingClientRect();
         const [dx, dy] = [there.left + there.width / 2 - x, there.top + there.height / 2 - y];
-        const [along, aside] = { up: [-dy, dx], down: [dy, dx], left: [-dx, dy], right: [dx, dy] }[way] ?? [0, 0];
-        const score = along + 2 * Math.abs(aside);
+        const across = apart(at.left, at.right, there.left, there.right);
+        const updown = apart(at.top, at.bottom, there.top, there.bottom);
+        const [along, aside] = { up: [-dy, across], down: [dy, across], left: [-dx, updown], right: [dx, updown] }[
+            way
+        ] ?? [0, 0];
+        const score = along + 2 * aside;
         if (along > 1 && score < bestScore) {
             [best, bestScore] = [option, score];
         }
@@ -952,14 +958,39 @@ function nearest(from, way, options) {
     return best;
 }
 
-/// `element` moved to, and scrolled to, unless it's on the toolbar, which
-/// stays in view.
+/// What stays in view over the shelf as it scrolls: the toolbar, and the
+/// Apple's choices.
+const pinned = (element) => element.closest('.toolbar, .fields');
+
+/// `element` moved to, and scrolled to, unless it's pinned, and so in view:
+/// its tile all of it, and clear of what's pinned over it, not under it.
 function focusOn(element) {
     padFocus = element;
     showSelected();
-    if (!element.closest('.toolbar')) {
-        element.scrollIntoView({ block: 'nearest' });
+    if (pinned(element)) {
+        return;
     }
+    const box = element.closest('.tile') ?? element;
+    box.scrollIntoView({ block: 'nearest' });
+    const bars = document.querySelectorAll('.toolbar, .shelf:not([hidden]) .fields');
+    const covered = Math.max(...[...bars].map((bar) => bar.getBoundingClientRect().bottom));
+    const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const top = box.getBoundingClientRect().top - GAP_DOWN * rem;
+    if (top < covered) {
+        scroller.scrollBy(0, top - covered);
+    }
+}
+
+/// Where a move from `from` the way `way` goes, of `options`. The sidebar's
+/// shelves only to the left of what's beside them, not up or down off the
+/// toolbar or the shelf. And onto what's pinned over the shelf only once
+/// there's nothing more that way on it: the row above, scrolled away under
+/// it, before what's over it.
+function towards(from, way, options) {
+    const sideways = from.closest('#sidebar') || way === 'left';
+    const choices = sideways ? options : options.filter((option) => !option.closest('#sidebar'));
+    const unpinned = choices.filter((option) => !pinned(option));
+    return (!pinned(from) && nearest(from, way, unpinned)) || nearest(from, way, choices);
 }
 
 /// Back on the shelf of games' own selection.
@@ -976,7 +1007,7 @@ function move(way) {
         const { columns } = shelfShape(page('games'));
         const at = shelf.indexOf(selectedGame);
         const tile = tiles.get(selectedGame);
-        const above = way === 'up' && at >= 0 && at < columns && tile && nearest(tile, 'up', focusable());
+        const above = way === 'up' && at >= 0 && at < columns && tile && towards(tile, 'up', focusable());
         return above ? focusOn(above) : moveInGames(way);
     }
     if (way === 'down' && padFocus?.closest('.toolbar') && gamesShowing()) {
@@ -987,7 +1018,7 @@ function move(way) {
         const disk = options.find((option) => option.closest('#disks'));
         return focusOn(disk ?? options.find((option) => !option.closest('.toolbar')) ?? options[0]);
     }
-    const next = nearest(padFocus, way, options);
+    const next = towards(padFocus, way, options);
     if (next) {
         focusOn(next);
     } else if (way === 'down' && gamesShowing() && !settingsOpen()) {
