@@ -221,6 +221,7 @@
 //! driving the bus, the bits it holds low win; the register's given what
 //! was written ANDed with the ROM's byte there.
 
+use super::bandai::{self, Bandai};
 use super::database::{self, Known};
 use super::fds::Fds;
 use super::mmc5::{self, Mmc5};
@@ -629,6 +630,7 @@ pub enum Mapper {
     Vrc1(Vrc1),
     Vrc3(Vrc3),
     Namco163(Box<Namco163>),
+    Bandai(Box<Bandai>),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -719,6 +721,8 @@ impl Cartridge {
         let (mut prg_size, mut chr_size) =
             (header[4] as usize * PRG_BANK, header[5] as usize * CHR_BANK);
         let mut prg_ram_size = 0x2000;
+        // Of that, its NVRAM, as NES 2.0 says it: Bandai's EEPROMs go by it.
+        let mut nvram = 0;
         let mut chr_ram_size = CHR_BANK;
         // RAM, and NVRAM, each 64 << its shift, if there's any.
         let sizes = |byte: u8| {
@@ -732,6 +736,11 @@ impl Cartridge {
             prg_size += ((header[9] & 0x0F) as usize) << 8 << 14;
             chr_size += ((header[9] >> 4) as usize) << 8 << 13;
             prg_ram_size = sizes(header[10]);
+            nvram = if header[10] >> 4 == 0 {
+                0
+            } else {
+                64 << (header[10] >> 4)
+            };
             chr_ram_size = sizes(header[11]);
         }
         let mut submapper = if nes2 { header[8] >> 4 } else { 0 };
@@ -843,6 +852,14 @@ impl Cartridge {
             21 | 22 | 23 | 25 => Mapper::Vrc(Vrc::default()),
             75 => Mapper::Vrc1(Vrc1::default()),
             73 => Mapper::Vrc3(Vrc3::default()),
+            // An old header's 16 with 512K of PRG and CHR RAM: Famicom Jump
+            // II's 153, the only board so, and the only game.
+            16 if !told && prg_size == 0x80000 && chr_size == 0 => {
+                Mapper::Bandai(Box::new(Bandai::new(153, 0, battery, nvram, told)))
+            }
+            16 | 153 | 157 | 159 => Mapper::Bandai(Box::new(Bandai::new(
+                number, submapper, battery, nvram, told,
+            ))),
             19 | 210 => Mapper::Namco163(Box::new(Namco163::new(
                 number,
                 submapper,
@@ -882,6 +899,16 @@ impl Cartridge {
             79 => Mapper::Nina03(Banks::new(Conflicts::None)),
             _ => return Err(format!("mapper {number}, which isn't here yet")),
         };
+        // Bandai's EEPROMs' bytes, as its RAM, saved as a battery's: it has
+        // no other, but Famicom Jump II's 8K.
+        if let Mapper::Bandai(bandai) = &mapper {
+            if bandai.board == bandai::Board::Jump2 {
+                prg_ram_size = prg_ram_size.max(0x2000);
+            } else {
+                prg_ram_size = bandai.eeprom_bytes();
+                battery = prg_ram_size > 0;
+            }
+        }
         let board = match number {
             118 => Board::Txsrom,
             119 => Board::Tqrom,
@@ -1015,6 +1042,11 @@ impl Cartridge {
         }
         match &mut self.mapper {
             Mapper::Fds(fds) if addr < 0x4100 => fds.read(addr, open_bus),
+            Mapper::Bandai(bandai) if bandai.board == bandai::Board::Jump2 => match addr {
+                0x6000.. if bandai.ram_on => self.prg_ram[addr as usize & 0x1FFF],
+                _ => open_bus,
+            },
+            Mapper::Bandai(bandai) if addr >= 0x6000 => bandai.read(open_bus),
             Mapper::Namco163(namco) if (0x4800..0x6000).contains(&addr) => {
                 let chip_ram = self.prg_ram.len() - CHIP_RAM;
                 namco
@@ -1114,6 +1146,7 @@ impl Cartridge {
             Mapper::Namco163(namco) => {
                 namco.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF)
             }
+            Mapper::Bandai(bandai) => in_16k(bandai.prg_bank(addr as u16, len / PRG_BANK)),
             Mapper::Vrc3(vrc3) => in_16k(if addr < 0xC000 {
                 vrc3.prg_bank()
             } else {
@@ -1263,6 +1296,7 @@ impl Cartridge {
             Mapper::Maxi15(maxi) => maxi.banks().1 * CHR_BANK + addr,
             Mapper::Vrc1(vrc1) => vrc1.chr_bank(addr as u16) * 0x1000 + (addr & 0x0FFF),
             Mapper::Namco163(namco) => namco.chr_bank(addr as u16) * 0x400 + (addr & 0x3FF),
+            Mapper::Bandai(bandai) => bandai.chr_offset(addr as u16),
             Mapper::Latch(latch) => {
                 let latch = *latch as usize;
                 match self.board {
@@ -1447,6 +1481,21 @@ impl Cartridge {
             }
             return;
         }
+        // Bandai's registers, where its board has them; its RAM, its
+        // EEPROMs', not at $6000 up, only talked to through them.
+        if let Mapper::Bandai(bandai) = &mut self.mapper {
+            if bandai.registers_at(addr) {
+                let (mirroring, written) = bandai.write(addr, value, &mut self.prg_ram);
+                if let Some(mirroring) = mirroring {
+                    self.mirroring = mirroring;
+                }
+                self.written |= written && self.battery;
+            } else if (0x6000..0x8000).contains(&addr) && bandai.ram_on {
+                self.prg_ram[addr as usize & 0x1FFF] = value;
+                self.written |= self.battery;
+            }
+            return;
+        }
         // A Namco's registers, from $4800 up but for its RAM. Its own 128
         // bytes, written, are saved only if they're all the RAM there is:
         // a game with more keeps its saves there, and the sound writes
@@ -1525,7 +1574,8 @@ impl Cartridge {
             | Mapper::Nina001(_)
             | Mapper::Mmc5(_)
             | Mapper::Fds(_)
-            | Mapper::Namco163(_) => {}
+            | Mapper::Namco163(_)
+            | Mapper::Bandai(_) => {}
             Mapper::Uxrom(bank) | Mapper::Cnrom(bank) => *bank = value,
             Mapper::Latch(_) if self.board.register_at_6000() => {}
             Mapper::Vrc(vrc) => {
@@ -2046,6 +2096,13 @@ impl Cartridge {
                 Chip::N163 => (namco.number, "NAMCO 163"),
                 Chip::Unknown => (namco.number, "NAMCO 175 OR 340"),
             },
+            Mapper::Bandai(bandai) => match bandai.board {
+                bandai::Board::Fcg => (16, "BANDAI FCG"),
+                bandai::Board::Lz93d50 => (bandai.number, "BANDAI LZ93D50"),
+                bandai::Board::Either => (16, "BANDAI FCG OR LZ93D50"),
+                bandai::Board::Datach => (157, "DATACH"),
+                bandai::Board::Jump2 => (153, "BANDAI LZ93D50 WITH RAM"),
+            },
             Mapper::Latch(_) => match self.board {
                 Board::Un1rom => (94, "UN1ROM"),
                 Board::Unrom180 => (180, "UNROM"),
@@ -2119,6 +2176,10 @@ impl Cartridge {
             namco.cycle(&mut self.prg_ram[chip_ram..]);
             return;
         }
+        if let Mapper::Bandai(bandai) = &mut self.mapper {
+            bandai.cycle();
+            return;
+        }
         if let Mapper::Fme7(fme7) = &mut self.mapper {
             if fme7.counting {
                 fme7.irq |= fme7.counter == 0 && fme7.irq_enabled;
@@ -2152,6 +2213,7 @@ impl Cartridge {
             Mapper::Vrc(vrc) => vrc.irq(),
             Mapper::Vrc3(vrc3) => vrc3.irq(),
             Mapper::Namco163(namco) => namco.irq(),
+            Mapper::Bandai(bandai) => bandai.irq(),
             _ => false,
         }
     }

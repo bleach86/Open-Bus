@@ -62,6 +62,7 @@
 //! Japan's alone; a Disk System's always is.
 
 pub mod apu;
+pub mod bandai;
 pub mod cartridge;
 mod database;
 pub mod fds;
@@ -75,6 +76,7 @@ pub mod zapper;
 
 #[cfg(test)]
 mod tests {
+    mod bandai;
     mod cartridge;
     mod controllers;
     mod database;
