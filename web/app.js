@@ -1058,11 +1058,72 @@ function nextTab(step) {
 /// library, and what's under it not lit up as if it were chosen; back once
 /// the mouse moves.
 const pointerGone = (gone) => document.body.classList.toggle('pointer-gone', gone);
+/// Where the pointer was last, for the gamepad to take up from.
+let pointerAt = null;
 addEventListener('mousemove', (event) => {
     if (event.movementX || event.movementY) {
         pointerGone(false);
+        pointerAt = [event.clientX, event.clientY];
     }
 });
+
+/// Whether `element` is in view: on the screen, below what's pinned over the
+/// shelf; or pinned, or the sidebar's, and always there.
+function inView(element) {
+    if (!element?.isConnected) {
+        return false;
+    }
+    if (pinned(element) || element.closest('#sidebar')) {
+        return true;
+    }
+    const bars = document.querySelectorAll('.toolbar, .shelf:not([hidden]) .fields');
+    const covered = Math.max(...[...bars].map((bar) => bar.getBoundingClientRect().bottom));
+    const { top, bottom } = (element.closest('.tile') ?? element).getBoundingClientRect();
+    return bottom > covered && top < innerHeight;
+}
+
+/// `tile` the selection: on the shelf of games, its game; elsewhere, what's
+/// moved to on it.
+function selectTile(tile) {
+    if (tile.closest('#games')) {
+        selectedGame = tile.dataset.game;
+        padFocus = null;
+    } else {
+        padFocus = focusable().find((element) => tile.contains(element)) ?? padFocus;
+    }
+    showSelected();
+}
+
+/// The gamepad, or the arrow keys, taking up from where the mouse left
+/// things: from the tile under the pointer, if it's been in use and is on
+/// one; else, if what they had has been scrolled out of view, from the first
+/// tile in view, or whatever else is, that press only showing it. Whether
+/// it was taken so.
+function takeUp() {
+    if (settingsOpen()) {
+        return false;
+    }
+    const pointing = !document.body.classList.contains('pointer-gone') && pointerAt;
+    const under = pointing && document.elementFromPoint(...pointerAt)?.closest('.shelf:not([hidden]) .tile');
+    if (under) {
+        selectTile(under);
+        return false;
+    }
+    if (inView(padFocus ?? (gamesShowing() ? tiles.get(selectedGame) : null))) {
+        return false;
+    }
+    const tile = [...document.querySelectorAll('.shelf:not([hidden]) .tile')].find(inView);
+    if (tile) {
+        selectTile(tile);
+        return true;
+    }
+    const other = focusable().find((element) => !pinned(element) && !element.closest('#sidebar') && inView(element));
+    if (other) {
+        padFocus = other;
+        showSelected();
+    }
+    return Boolean(other);
+}
 
 /// A frame of the library: what's newly pressed acted on.
 function navigate(now) {
@@ -1078,10 +1139,17 @@ function navigate(now) {
         wasPressed = pressed;
         return;
     }
-    if (Object.values(pressed).some(Boolean)) {
+    const way = ['up', 'down', 'left', 'right', 'pageup', 'pagedown'].find((direction) => pressed[direction]) ?? '';
+    // A first press, after the mouse or a scroll: from where they left it.
+    const pressing = Object.values(pressed).some(Boolean);
+    if (pressing && !Object.values(wasPressed).some(Boolean) && takeUp()) {
+        pointerGone(true);
+        [moving, moveAgainAt, wasPressed] = [way, now + FIRST_REPEAT, pressed];
+        return;
+    }
+    if (pressing) {
         pointerGone(true);
     }
-    const way = ['up', 'down', 'left', 'right', 'pageup', 'pagedown'].find((direction) => pressed[direction]) ?? '';
     if (way !== moving) {
         moveAgainAt = now + FIRST_REPEAT;
         moving = way;
@@ -1127,12 +1195,18 @@ addEventListener('keydown', (event) => {
         return;
     }
     const way = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[event.code];
-    if (way) {
+    const confirming = event.code === 'Enter' && (selectedGame || padFocus) && document.activeElement === document.body;
+    if (way || confirming) {
         event.preventDefault();
+        const taken = takeUp();
         pointerGone(true);
+        if (taken) {
+            return;
+        }
+    }
+    if (way) {
         move(way);
-    } else if (event.code === 'Enter' && (selectedGame || padFocus) && document.activeElement === document.body) {
-        event.preventDefault();
+    } else if (confirming) {
         confirmSelected();
     }
 });
