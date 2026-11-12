@@ -1537,7 +1537,7 @@ html:not(.native) .for-desktop,
   overflow: hidden;
 }
 
-/* The controls' dialog, and a game's own settings. */
+/* The controls' dialog, and a game's details. */
 #controls-dialog,
 #game-settings {
   width: min(30rem, calc(100vw - 2rem));
@@ -1579,6 +1579,62 @@ html:not(.native) .for-desktop,
 #game-settings-about {
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+/* A game's details: its cover beside what's known of it, its versions and
+   its own settings; on a phone, its cover above, smaller. */
+#game-settings {
+  width: min(46rem, calc(100vw - 2rem));
+}
+.details {
+  display: grid;
+  grid-template-columns: 13rem 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+.details-cover .art {
+  border-radius: 4px;
+}
+.details-info {
+  min-width: 0;
+}
+.facts-list {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.9rem;
+  margin: 0.8rem 0 0;
+  font-size: 0.9rem;
+}
+.facts-list dt {
+  color: var(--quiet);
+}
+.facts-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.facts-list .problem {
+  color: var(--gold);
+}
+.details-heading {
+  margin: 1.1rem 0 0;
+  font:
+    600 0.8rem/1.3 system-ui,
+    sans-serif;
+  color: var(--quiet);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+#game-settings .choices {
+  margin-top: 0.5rem;
+}
+@media (max-width: 39.99rem) {
+  .details {
+    grid-template-columns: 1fr;
+  }
+  .details-cover {
+    width: 8rem;
+    margin: 0 auto;
+  }
 }
 .dialog-tabs {
   display: flex;

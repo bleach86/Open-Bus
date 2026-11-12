@@ -768,21 +768,65 @@ function starButton(machine, title) {
     return star;
 }
 
-/// A NES game's own settings, in the desktop app, over Settings': each kept
-/// as it's changed, and the game started from them if it's wanted. What
-/// automatic would be, if it's known.
+/// A NES game's details: its cover, and what's known of it, from game lists
+/// or libretro's database, from playing it, and from the emulator; its
+/// versions, the one it plays chosen; and its own settings, over Settings',
+/// each kept as it's changed, what automatic would be said if it's known.
+/// Played from here, or made a favourite.
 async function openGameSettings(name) {
     const machine = { kind: 'nes', game: name };
     const chosen = await keeper.gameSettings(machine);
     const dialog = page('game-settings');
     const facts = factsOf.get(name);
-    page('game-settings-title').textContent = titleOf(name);
-    page('game-settings-about').textContent = [name, facts?.mapper.replace(/^MAPPER (\d+) /, 'Mapper $1, ')]
-        .filter(Boolean)
-        .join(' · ');
+    const title = titleOf(name);
+    page('game-settings-title').textContent = title;
+    page('game-settings-about').textContent = shortName(name);
+    page('game-cover').replaceChildren(cover(nesArt(name), title));
+    const known = nesKnown(name);
+    const keptOf = kept.find((game) => game.machine.kind === 'nes' && game.machine.game === name);
+    const played =
+        keptOf?.plays > 0 &&
+        `${keptOf.plays === 1 ? 'Once' : `${keptOf.plays} times`}, ${howLong(keptOf.seconds)} in all; ` +
+            `last ${whenPlayed(keptOf.last).toLowerCase()}`;
+    const versions = versionsOf.get(name) ?? [name];
+    const lines = [
+        ['Year', known?.year],
+        ['Genre', known?.genre],
+        ['Developer', known?.developer],
+        ['Players', known?.players],
+        ['Played', played || 'Not yet'],
+        ['Version', versions.length < 2 && versionName(name)],
+        ['Console', facts && (facts.famicom ? 'Famicom' : 'NES')],
+        ['Board', facts?.mapper.replace(/^MAPPER (\d+) /, 'Mapper $1, ')],
+        ["Won't load", facts?.problem],
+    ];
+    page('game-facts').replaceChildren(
+        ...lines
+            .filter(([, value]) => value)
+            .flatMap(([term, value]) => {
+                const [dt, dd] = [document.createElement('dt'), document.createElement('dd')];
+                dt.textContent = term;
+                dd.textContent = value;
+                dd.classList.toggle('problem', term === "Won't load");
+                return [dt, dd];
+            }),
+    );
+    const favourite = page('game-favourite');
+    const on = favoured.has(gameKey(machine));
+    favourite.textContent = on ? '★ Favourite' : '☆ Favourite';
+    favourite.setAttribute('aria-pressed', on);
+    favourite.onclick = async () => {
+        await keeper.favourite(machine, !on);
+        await refresh();
+        const at = padFocus === favourite;
+        dialog.close();
+        await openGameSettings(name);
+        if (at) {
+            focusOn(favourite);
+        }
+    };
     // Its versions, the one chosen played from now on, its own settings
     // shown.
-    const versions = versionsOf.get(name) ?? [name];
     const version = page('game-version');
     version.closest('label').hidden = versions.length < 2;
     version.replaceChildren(
@@ -831,7 +875,7 @@ async function openGameSettings(name) {
     page('game-settings-close').onclick = () => dialog.close();
     dialog.showModal();
     if (document.body.classList.contains('pointer-gone')) {
-        focusOn(selects[0]);
+        focusOn(page('game-settings-play'));
     }
 }
 page('game-settings').addEventListener('close', () => {
@@ -840,7 +884,7 @@ page('game-settings').addEventListener('close', () => {
 });
 const settingsOpen = () => page('game-settings').open;
 
-/// Start pressed on a NES game: its own settings.
+/// Start pressed on a NES game: its details.
 function settingsOfSelected() {
     const tile = padFocus ? padFocus.closest('.tile') : gamesShowing() && tiles.get(selectedGame);
     if (tile?.dataset.game) {
