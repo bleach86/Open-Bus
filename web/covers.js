@@ -1,8 +1,8 @@
 // Covers from online, when they're asked for. A source's catalogue comes
 // whole and games are matched against it here, so that all it's told of
-// what's in the library is which pictures to send. NES boxes are libretro's,
-// RetroArch's own, from their copy on GitHub, as their own server's closed to
-// pages. It has no Apple II, so those are title screens from the Internet
+// what's in the library is which pictures to send. NES and 2600 boxes are
+// libretro's, RetroArch's own, from their copy on GitHub, as their own
+// server's closed to pages. It has no Apple II, so those are title screens from the Internet
 // Archive. A game's title has to match: a floppy's better than a wrong cover.
 
 import { keepArt } from './files.js';
@@ -10,6 +10,7 @@ import { shrink, tagsOf, titleWords } from './art.js';
 
 const NES_BOXES = 'Nintendo_-_Nintendo_Entertainment_System';
 const FDS_BOXES = 'Nintendo_-_Family_Computer_Disk_System';
+const ATARI_2600_BOXES = 'Atari_-_2600';
 const boxTrees = (set) => `https://api.github.com/repos/libretro-thumbnails/${set}/git/trees/`;
 const boxFiles = (set) => `https://raw.githubusercontent.com/libretro-thumbnails/${set}/master/Named_Boxarts/`;
 /// Git's mode of a symbolic link: the file's just the name of another.
@@ -107,7 +108,12 @@ async function screens() {
     };
 }
 
-const SOURCES = { nes: () => boxes(NES_BOXES), fds: () => boxes(FDS_BOXES), apple: screens };
+const SOURCES = {
+    nes: () => boxes(NES_BOXES),
+    fds: () => boxes(FDS_BOXES),
+    atari2600: () => boxes(ATARI_2600_BOXES),
+    apple: screens,
+};
 
 /// A picture, if it's there: a link's followed.
 async function picture({ url, link }) {

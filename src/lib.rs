@@ -61,6 +61,7 @@ pub mod machines {
     pub mod apple2;
     pub mod atari2600;
     pub mod basic;
+    pub mod facts;
     pub mod nes;
     pub mod region;
 }

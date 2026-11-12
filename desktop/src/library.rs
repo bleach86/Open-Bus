@@ -413,8 +413,9 @@ impl Library {
         rows.collect::<Result<_, _>>().map_err(said)
     }
 
-    /// The NES games found that nothing's known of by `emulator`, the one
-    /// there is now, or not at the size they are now.
+    /// The console games found, a NES's or a 2600's, that nothing's known
+    /// of by `emulator`, the one there is now, or not at the size they are
+    /// now.
     pub fn unknown(&self, emulator: &str) -> Result<Vec<String>, String> {
         let db = self.lock()?;
         let mut statement = db
@@ -428,7 +429,10 @@ impl Library {
             .query_map([emulator], |row| row.get::<_, String>(0))
             .map_err(said)?;
         let paths: Vec<String> = rows.collect::<Result<_, _>>().map_err(said)?;
-        Ok(paths.into_iter().filter(|path| is_nes(path)).collect())
+        Ok(paths
+            .into_iter()
+            .filter(|path| is_cartridge(path))
+            .collect())
     }
 
     /// What `emulator` said of games, a line each, as `cpu_emu facts` says
@@ -527,16 +531,17 @@ pub const CHOICES: [(&str, &[&str]); 5] = [
 ];
 
 /// A game as it's kept, of what the page started, or would start: a NES's
-/// game; an Apple's disks, and the model, its ROMs and Mockingboards it was
-/// last started with, if it has been. By its files, that are what it is.
+/// or a 2600's game; an Apple's disks, and the model, its ROMs and
+/// Mockingboards it was last started with, if it has been. By its files,
+/// that are what it is.
 pub fn game(machine: &Value) -> Option<(String, Value)> {
     let text = |field: &str| machine[field].as_str().map(str::to_string);
     match machine["kind"].as_str()? {
-        "nes" => {
+        kind @ ("nes" | "atari2600") => {
             let game = text("game")?;
             Some((
-                format!("nes\n{game}"),
-                json!({ "kind": "nes", "game": game }),
+                format!("{kind}\n{game}"),
+                json!({ "kind": kind, "game": game }),
             ))
         }
         "apple" => {
@@ -560,11 +565,11 @@ pub fn game(machine: &Value) -> Option<(String, Value)> {
     }
 }
 
-/// Whether `path`'s a NES game's, as the library has them: an iNES image, a
-/// Disk System's, or a zip of one.
-fn is_nes(path: &str) -> bool {
+/// Whether `path`'s a cartridge's game, as the library has them: an iNES
+/// image, a Disk System's, a 2600's, or a zip of one.
+fn is_cartridge(path: &str) -> bool {
     let kind = path.rsplit('.').next().unwrap_or_default().to_lowercase();
-    ["nes", "fds", "zip"].contains(&kind.as_str())
+    ["nes", "fds", "a26", "zip"].contains(&kind.as_str())
 }
 
 /// A file as the page has one: its path, and its size.

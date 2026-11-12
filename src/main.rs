@@ -70,7 +70,7 @@ fn main() {
     match args.get(1).map(String::as_str) {
         Some("controls") => machines::nes::controls(),
         Some("pads") => cpu_emu::host::pads::report(),
-        Some("facts") => machines::nes::report_facts(),
+        Some("facts") => machines::facts::report(),
         Some("roms") => {
             let out = args.get(2).expect("cpu_emu roms FOLDER");
             machines::apple2::rom_set::sort(std::path::Path::new(out))

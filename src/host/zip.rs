@@ -115,6 +115,14 @@ pub fn file(archive: &[u8], wanted: impl Fn(&str) -> bool) -> Result<(String, Ve
     Ok((entry.name.clone(), read(archive, entry)?))
 }
 
+/// The names of the files in the zip `archive`.
+pub fn names(archive: &[u8]) -> Result<Vec<String>, String> {
+    Ok(entries(archive)?
+        .into_iter()
+        .map(|entry| entry.name)
+        .collect())
+}
+
 /// The files of the zip `archive` of at most `most` bytes, by their names
 /// and bytes; those it can't read left out.
 pub fn small_files(archive: &[u8], most: usize) -> Result<Vec<(String, Vec<u8>)>, String> {

@@ -13,20 +13,21 @@ use crate::host::save_state;
 use crate::machines::apple2::rom_set::Sorted;
 use crate::machines::apple2::video::Monitor;
 use crate::machines::apple2::{self, Apple2, Model};
-use crate::machines::nes::region::Region;
+use crate::machines::atari2600::{self, Atari2600};
+use crate::machines::facts;
 use crate::machines::nes::{self, Nes};
+use crate::machines::region::Region;
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use wasm_bindgen::prelude::*;
 
-/// What's known of the NES game `name`, its file's `bytes`, without running
-/// it, as `cpu_emu facts` says it, a line.
+/// What's known of the game `name`, its file's `bytes`, a NES's or a 2600's,
+/// without running it, as `cpu_emu facts` says it, a line.
 #[wasm_bindgen]
-pub fn nes_facts(name: &str, bytes: Vec<u8>) -> String {
-    let path = Path::new(name);
-    nes::facts_of(path, nes::image_of(path, bytes))
+pub fn game_facts(name: &str, bytes: Vec<u8>) -> String {
+    facts::facts_of(Path::new(name), bytes)
 }
 
 /// A file put in by the page.
@@ -109,6 +110,7 @@ impl RomSorter {
 enum Running {
     Apple(Host<Apple2>),
     Nes(Host<Nes>),
+    Atari2600(Host<Atari2600>),
 }
 
 #[wasm_bindgen]
@@ -172,6 +174,25 @@ impl Emulator {
         })
     }
 
+    /// The Atari 2600, with the game `rom`, its `region`, ntsc or pal, if
+    /// it's chosen, else "".
+    pub fn atari2600(rom: &str, region: &str) -> Result<Emulator, String> {
+        let region = match region {
+            "" => None,
+            _ => Some(Region::parse(region).ok_or(format!("{region}: not a region"))?),
+        };
+        let cpu = atari2600::build(rom, region)?;
+        let layout = cpu.memory.layout;
+        let page = Rc::new(RefCell::new(Shared::default()));
+        let state = save_state::path(Path::new(rom));
+        let host = Host::new(cpu, Box::new(Page(page.clone())), state);
+        Ok(Emulator {
+            running: Running::Atari2600(host),
+            page,
+            size: atari2600::size(layout),
+        })
+    }
+
     /// An Apple, `name` apple2, apple2e or apple2ee (the enhanced), its
     /// ROMs `roms` and the `disks` in it.
     pub fn apple(
@@ -202,6 +223,7 @@ impl Emulator {
         match &mut self.running {
             Running::Apple(host) => host.frame(),
             Running::Nes(host) => host.frame(),
+            Running::Atari2600(host) => host.frame(),
         };
     }
 
@@ -210,6 +232,7 @@ impl Emulator {
         match &self.running {
             Running::Apple(_) => apple2::CLOCK_HZ as f64 / apple2::CYCLES_PER_FRAME as f64,
             Running::Nes(host) => host.cpu.memory.region.frames_per_second(),
+            Running::Atari2600(host) => atari2600::frames_per_second(&host.cpu.memory),
         }
     }
 
@@ -264,6 +287,7 @@ impl Emulator {
         match &self.running {
             Running::Apple(host) => host.cpu.memory.aimed_at(),
             Running::Nes(host) => host.cpu.memory.aimed_at(),
+            Running::Atari2600(host) => host.cpu.memory.aimed_at(),
         }
     }
 
@@ -297,6 +321,7 @@ impl Emulator {
         match &mut self.running {
             Running::Apple(host) => host.say(text),
             Running::Nes(host) => host.say(text),
+            Running::Atari2600(host) => host.say(text),
         }
     }
 

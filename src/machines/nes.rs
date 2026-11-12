@@ -804,22 +804,6 @@ pub fn facts_of(path: &Path, image: Result<Vec<u8>, String>) -> String {
     )
 }
 
-/// `cpu_emu facts`: `facts` of each file named on standard input, a line
-/// each, as soon as it's known.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn report_facts() {
-    use std::io::{BufRead, Write};
-    let mut out = std::io::stdout().lock();
-    for line in std::io::stdin().lock().lines().map_while(Result::ok) {
-        if writeln!(out, "{}", facts(Path::new(&line)))
-            .and_then(|_| out.flush())
-            .is_err()
-        {
-            return;
-        }
-    }
-}
-
 /// What's seen of the picture, `overscan` hidden at each edge: its width
 /// and height.
 fn seen(overscan: usize) -> (usize, usize) {

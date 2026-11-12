@@ -208,8 +208,8 @@ fn library_settings(app: AppHandle) -> Result<Value, String> {
 /// The kinds of file the library has, a game's or a disk's: what's worth a
 /// watcher's noticing. Saves and states beside them change as games are
 /// played, and don't matter to it.
-const GAMES: [&str; 10] = [
-    "nes", "fds", "zip", "dsk", "do", "po", "nib", "woz", "hdv", "2mg",
+const GAMES: [&str; 11] = [
+    "nes", "fds", "a26", "zip", "dsk", "do", "po", "nib", "woz", "hdv", "2mg",
 ];
 
 /// The folders added, watched for games coming and going, and the watcher.
@@ -712,6 +712,17 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
             .chain(fast)
             .chain(ram)
             .chain(options)
+            .collect());
+    }
+    if text("kind")? == "atari2600" {
+        // Its region, if it's not as it's known to be.
+        let chosen = library(app).settings(machine)?;
+        let region = chosen["region"]
+            .as_str()
+            .map(|region| format!("--region={region}"));
+        return Ok(["atari2600".to_string(), file(text("game")?)?]
+            .into_iter()
+            .chain(region)
             .collect());
     }
     let library = folder(app, "library")?.to_string_lossy().into_owned();

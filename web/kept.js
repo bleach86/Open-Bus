@@ -29,14 +29,16 @@ function write(key, value) {
     }
 }
 
-/// A game as it's kept, by its files: a NES's game; an Apple's disks.
-const gameKey = (machine) => (machine.kind === 'nes' ? `nes\n${machine.game}` : `apple\n${machine.disks.join('\n')}`);
+/// A game as it's kept, by its files: a console's game, a NES's or a 2600's;
+/// an Apple's disks.
+const gameKey = (machine) =>
+    machine.kind === 'apple' ? `apple\n${machine.disks.join('\n')}` : `${machine.kind}\n${machine.game}`;
 
-/// A machine as it's kept: a NES's game; an Apple's disks, and its model,
-/// ROMs and Mockingboards if it's been started.
+/// A machine as it's kept: a console's game; an Apple's disks, and its
+/// model, ROMs and Mockingboards if it's been started.
 function keptOf(machine) {
-    if (machine.kind === 'nes') {
-        return { kind: 'nes', game: machine.game };
+    if (machine.kind !== 'apple') {
+        return { kind: machine.kind, game: machine.game };
     }
     const kept = { kind: 'apple', disks: machine.disks };
     for (const field of ['model', 'roms', 'mockingboards']) {
@@ -53,9 +55,9 @@ function keptOf(machine) {
 export async function keptGames() {
     const here = new Set(await names());
     const present = ({ machine }) =>
-        machine.kind === 'nes'
-            ? here.has(machine.game)
-            : machine.disks.length > 0 && machine.disks.every((disk) => here.has(disk));
+        machine.kind === 'apple'
+            ? machine.disks.length > 0 && machine.disks.every((disk) => here.has(disk))
+            : here.has(machine.game);
     return Object.values(read(KEPT, {}))
         .filter((game) => (game.favourite || game.plays > 0) && present(game))
         .sort((a, b) => (b.last ?? -1) - (a.last ?? -1));

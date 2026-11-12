@@ -1,4 +1,4 @@
-// What's known of NES and Disk System games without game lists beside them:
+// What's known of NES, Disk System and 2600 games without game lists beside them:
 // their year, genre, developer and players, as libretro's database, RetroArch's
 // own, has them, from its copy on GitHub. Its lists come whole and games are
 // matched against them here, as covers are, so nothing's told of what's in
@@ -12,7 +12,11 @@
 import { titleWords } from './art.js';
 
 const LISTS = 'https://raw.githubusercontent.com/libretro/libretro-database/master/metadat/';
-const SETS = { nes: 'Nintendo - Nintendo Entertainment System', fds: 'Nintendo - Family Computer Disk System' };
+const SETS = {
+    nes: 'Nintendo - Nintendo Entertainment System',
+    fds: 'Nintendo - Family Computer Disk System',
+    atari2600: 'Atari - 2600',
+};
 /// Each detail's list, and what it's called in it.
 const FIELDS = {
     year: ['releaseyear', 'releaseyear'],
@@ -89,7 +93,8 @@ async function known(set) {
 }
 
 /// The details of `games` learned, in the background, those not looked up
-/// yet: each `{ name, crc, fds }`, its CRC as the emulator's facts have it.
+/// yet: each `{ name, crc, set }`, its CRC as the emulator's facts have it,
+/// its set of SETS'.
 /// `told` once they're kept. The lists fetched once, and kept while the page
 /// is open, for games whose facts come later; unreachable, as offline, they're
 /// tried again next time it's opened. One at a time, in turn.
@@ -110,14 +115,14 @@ async function learn(games, told) {
         return;
     }
     try {
-        const sets = [...new Set(wanted.map(({ fds }) => (fds ? 'fds' : 'nes')))];
+        const sets = [...new Set(wanted.map(({ set }) => set))];
         for (const set of sets) {
             finding.set(set, finding.get(set) ?? known(set));
         }
         const finders = Object.fromEntries(await Promise.all(sets.map(async (set) => [set, await finding.get(set)])));
         const now = read();
         for (const game of wanted) {
-            now.games[game.name] = finders[game.fds ? 'fds' : 'nes'](game);
+            now.games[game.name] = finders[game.set](game);
         }
         now.looked = Date.now();
         localStorage.setItem(KEPT, JSON.stringify(now));

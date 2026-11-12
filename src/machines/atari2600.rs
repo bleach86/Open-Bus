@@ -547,6 +547,27 @@ pub fn image_of(path: &Path, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     Ok(image)
 }
 
+/// What's known of the game at `path` without running it, its ROM `image`
+/// if it could be had, as `machines::facts` has it: its CRC-32, its
+/// cartridge, and why it won't load, if it won't.
+pub fn facts_of(path: &Path, image: Result<Vec<u8>, String>) -> String {
+    let fact = |image: &[u8]| -> Result<[String; 2], String> {
+        let known = database::find(&crate::host::md5::md5(image));
+        let kind = Kind::named(known.map_or("", |known| known.kind))?;
+        let cartridge = Cartridge::new(image, kind, NTSC_CLOCK_HZ)?;
+        Ok([
+            format!("{:08X}", crc32(image)),
+            format!("ATARI 2600 {}", cartridge.name()),
+        ])
+    };
+    let [crc, board, problem] = match image.and_then(|image| fact(&image)) {
+        Ok([crc, board]) => [crc, board, String::new()],
+        Err(problem) => ["".into(), "".into(), problem],
+    };
+    let problem = problem.replace(['\t', '\n'], " ");
+    format!("{crc}\t{board}\t0\t0\t{problem}\t{}", path.display())
+}
+
 /// A dot `drawn` as the phosphor shows it, `shown` the last, `blend` how
 /// much of it's left: each of its colours the brighter.
 fn phosphor(drawn: u32, shown: u32, blend: f32) -> u32 {
@@ -656,6 +677,16 @@ pub fn build(rom: &str, region: Option<Region>) -> Result<CPU<Atari2600>, String
         .file_stem()
         .map_or(String::new(), |name| name.to_string_lossy().into_owned());
     Ok(cpu)
+}
+
+/// Frames a second, `atari`'s: a line's 76 cycles, as many lines as its
+/// layout's TV has.
+pub fn frames_per_second(atari: &Atari2600) -> f64 {
+    let lines = match atari.layout {
+        Region::Ntsc => 262.0,
+        Region::Pal => 312.0,
+    };
+    clock_hz(atari.region) as f64 / 76.0 / lines
 }
 
 /// How big its picture's shown, its layout `layout`'s: each dot as that

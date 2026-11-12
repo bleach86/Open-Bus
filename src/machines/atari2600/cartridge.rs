@@ -383,11 +383,17 @@ impl Cartridge {
         Ok(cartridge)
     }
 
-    /// Its name, and its RAM, if it has a Superchip's, as the debug panel
-    /// shows them.
+    /// Its type, with a Superchip's SC, and its size: "F8SC 8K"; a plain
+    /// 2K or 4K's, its size alone.
     pub fn name(&self) -> String {
-        let superchip = if self.superchip { "SC" } else { "" };
-        format!("{}{superchip} {}K", self.kind.name(), self.rom.len() / 1024)
+        let size = self.rom.len() / 1024;
+        match self.kind {
+            Kind::K4 => format!("{size}K"),
+            kind => {
+                let superchip = if self.superchip { "SC" } else { "" };
+                format!("{}{superchip} {size}K", kind.name())
+            }
+        }
     }
 
     /// Its banks of `size`.

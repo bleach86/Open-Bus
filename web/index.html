@@ -38,6 +38,7 @@
           <button id="tab-recent" data-tab="recent">Recent</button>
           <button id="tab-favourites" data-tab="favourites">Favourites</button>
           <button id="tab-nes" data-tab="nes">NES</button>
+          <button id="tab-atari2600" data-tab="atari2600">Atari 2600</button>
           <button id="tab-apple" data-tab="apple">Apple II</button>
           <button id="tab-settings" data-tab="settings">Settings</button>
           <button id="quit-app" hidden>
@@ -389,6 +390,10 @@
           screen</span
         >
         <span id="disk-help" hidden><kbd>F9</kbd> change disk</span>
+        <span id="switch-help" hidden
+          ><kbd>F5</kbd> left difficulty <kbd>F7</kbd> right difficulty
+          <kbd>F8</kbd> colour</span
+        >
         <span id="control-help" class="for-nes"></span>
       </p>
     </main>
@@ -432,7 +437,7 @@
                 <option value="pal">PAL, 50 Hz</option>
               </select></label
             >
-            <label
+            <label data-for="nes"
               >Console
               <select data-setting="console">
                 <option value="">Automatic</option>
@@ -440,7 +445,7 @@
                 <option value="famicom">Famicom</option>
               </select></label
             >
-            <label
+            <label data-for="nes"
               >Port 2
               <select data-setting="port2">
                 <option value="">Automatic</option>
@@ -448,7 +453,7 @@
                 <option value="zapper">Zapper</option>
               </select></label
             >
-            <label
+            <label data-for="nes"
               >RAM at power-on
               <select data-setting="ram">
                 <option value="">As in Settings</option>

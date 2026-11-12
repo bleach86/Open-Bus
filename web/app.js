@@ -23,7 +23,7 @@ const {
     written_files,
     changed_files,
     take_changed_parts,
-    nes_facts,
+    game_facts,
     rewind,
 } = native ? {} : await import('./pkg/cpu_emu.js');
 
@@ -55,12 +55,27 @@ const DISK_II_ROMS = ['disk2-p5-341-0027.bin', 'disk2-p6-341-0028.bin'];
 const CHANGE_DISK_KEY = 9;
 const FDS_BIOS = 'disksys.rom';
 const kind = (name) => name.split('.').pop().toLowerCase();
-const isGame = (name) => ['nes', 'fds', 'zip'].includes(kind(name));
+const isGame = (name) => ['nes', 'fds', 'a26', 'zip'].includes(kind(name));
 const isDisk = (name) => ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'].includes(kind(name));
-/// Whether there's anything to play; and the shelf to show of it first, the
-/// NES's unless there are only disks.
+/// The consoles whose games are on the shelf of games, each its own tab; and
+/// which a game's is: as the emulator's said of it, else as its file says, a
+/// zip a NES's till it's said.
+const CONSOLES = { nes: 'NES', atari2600: 'Atari 2600' };
+const isConsole = (shelf) => shelf in CONSOLES;
+function systemOf(name) {
+    const board = factsOf.get(name)?.mapper;
+    return (board ? board.startsWith('ATARI 2600') : kind(name) === 'a26') ? 'atari2600' : 'nes';
+}
+/// Whether there's anything to play; and the shelf to show of it first, a
+/// console's, the NES's if it has any, unless there are only disks.
 const hasGames = () => files.some(isGame) || files.some(isDisk);
-const gamesShelf = () => (files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple');
+function gamesShelf() {
+    const games = files.filter(isGame);
+    if (!games.length && files.some(isDisk)) {
+        return 'apple';
+    }
+    return Object.keys(CONSOLES).find((system) => games.some((name) => systemOf(name) === system)) ?? 'nes';
+}
 const isOurs = (name) => ['srm', 'state', 'resume'].includes(kind(name));
 const isRom = (name) =>
     kind(name) === 'rom' || DISK_II_ROMS.includes(name) || Object.values(IIE_ROMS).flat().includes(name);
@@ -268,19 +283,29 @@ async function loadArt() {
     }
     coversByTitle = new Map();
     for (const [key, { cover, machine }] of art) {
-        const words = titleWords(key);
+        const words = `${coverSystem(machine)}\n${titleWords(key)}`;
         if (cover && machine !== 'apple' && (!coversByTitle.has(words) || key.includes('(usa'))) {
             coversByTitle.set(words, key);
         }
     }
 }
 
-/// Which shelf's showing.
+/// Which console's games a cover found by title is of, by its `machine`: the
+/// 2600's apart, the NES's and the Disk System's together.
+const coverSystem = (machine) => (machine === 'atari2600' ? 'atari2600' : 'nes');
+
+/// Which shelf's showing; and of the consoles', which the shelf of games
+/// has, the last shown.
 let shelfShowing = 'nes';
+let consoleShowing = 'nes';
 function showShelf(name) {
     shelfShowing = name;
     localStorage.setItem('shelf', name);
-    page('nes').hidden = name !== 'nes';
+    if (isConsole(name) && name !== consoleShowing) {
+        consoleShowing = name;
+        fillGames(page('filter').value.trim().toLowerCase());
+    }
+    page('nes').hidden = !isConsole(name);
     page('recent').hidden = name !== 'recent';
     page('favourites').hidden = name !== 'favourites';
     page('apple-shelf').hidden = name !== 'apple';
@@ -349,7 +374,8 @@ async function refresh() {
     learnDetails(
         files.filter(isGame).flatMap((name) => {
             const facts = factsOf.get(name);
-            return facts?.crc ? [{ name, crc: facts.crc, fds: facts.mapper.startsWith('MAPPER 20 ') }] : [];
+            const set = facts?.mapper.startsWith('MAPPER 20 ') ? 'fds' : systemOf(name);
+            return facts?.crc ? [{ name, crc: facts.crc, set }] : [];
         }),
         refresh,
     );
@@ -364,7 +390,7 @@ async function refresh() {
 /// The games with no cover, as `findCovers` wants them.
 function coverless() {
     const nes = files.filter(isGame).map((file) => ({
-        machine: kind(file) === 'fds' ? 'fds' : 'nes',
+        machine: systemOf(file) === 'atari2600' ? 'atari2600' : kind(file) === 'fds' ? 'fds' : 'nes',
         file,
         title: plainTitle(file),
         key: nesArt(file),
@@ -408,7 +434,7 @@ const artFor = (title, ...names) =>
 /// What's said of an empty shelf.
 const noGames = native
     ? 'No games yet. Add a folder of them in Settings.'
-    : 'No games yet. Add .nes, .fds or .zip files in Settings, or drop them here.';
+    : 'No games yet. Add .nes, .fds, .a26 or .zip files in Settings, or drop them here.';
 
 /// Whether what's searched for is in a game's title, file, or what's known
 /// of it.
@@ -505,11 +531,16 @@ function showCount(tab, name, count) {
     page(tab).replaceChildren(label, ...(count ? [tally] : []));
 }
 
-/// Whose art a NES game has: its own, or one of its title's.
+/// Whose art a console's game has: its own, or one of its title's, of its
+/// console's covers.
 function nesArt(name) {
     const key = artFor(plainTitle(name), name);
-    return covers.has(key) ? key : (coversByTitle.get(titleWords(plainTitle(name))) ?? key);
+    const titled = `${coverSystem(systemOf(name))}\n${titleWords(plainTitle(name))}`;
+    return covers.has(key) ? key : (coversByTitle.get(titled) ?? key);
 }
+
+/// A game's board, in words: a NES's mapper, a 2600's cartridge.
+const boardOf = (facts) => facts?.mapper.replace(/^MAPPER (\d+) /, 'Mapper $1, ').replace(/^ATARI 2600 /, 'Cartridge ');
 
 /// A game's title, by what's known of it, else its file.
 const titleOf = (name) => art.get(nesArt(name))?.title ?? plainTitle(name);
@@ -530,9 +561,11 @@ function nesKnown(name) {
 /// Each NES game's versions, by any of their files: the best first.
 let versionsOf = new Map();
 
-/// The version of each game that's been chosen for it, by its versionKey,
-/// kept in this browser, or the desktop app's page.
+/// The version of each game that's been chosen for it, by `chosenKey`, kept
+/// in this browser, or the desktop app's page: its versionKey, a 2600's
+/// with its console's name before it, apart from the NES's of its title.
 const CHOSEN_VERSIONS = 'versions';
+const chosenKey = (name) => (systemOf(name) === 'nes' ? versionKey(name) : `${systemOf(name)}|${versionKey(name)}`);
 function chosenVersions() {
     try {
         return JSON.parse(localStorage.getItem(CHOSEN_VERSIONS)) ?? {};
@@ -541,23 +574,22 @@ function chosenVersions() {
     }
 }
 
-/// The games among the NES files `all`, one file each: the version chosen,
-/// or played last, or the best; each's versions in `versionsOf`, those that
-/// won't load last.
+/// The games among a console's files `all`, one file each: the version
+/// chosen, or played last, or the best; each's versions added to
+/// `versionsOf`, those that won't load last.
 function oneEach(all) {
     const games = new Map();
     for (const name of all) {
-        const key = versionKey(name);
+        const key = chosenKey(name);
         games.set(key, [...(games.get(key) ?? []), name]);
     }
     const chosen = chosenVersions();
     const playedAt = new Map(
         kept
-            .filter(({ machine, plays }) => machine.kind === 'nes' && plays > 0)
+            .filter(({ machine, plays }) => isConsole(machine.kind) && plays > 0)
             .map(({ machine, last }) => [machine.game, last]),
     );
     const rank = (name) => versionRank(name) + (factsOf.get(name)?.problem ? 1000 : 0);
-    versionsOf = new Map();
     return [...games].map(([key, versions]) => {
         versions.sort((a, b) => rank(a) - rank(b) || natural(a, b));
         for (const name of versions) {
@@ -569,16 +601,24 @@ function oneEach(all) {
     });
 }
 
+/// The shelf of games, the console's showing; and each console's tab, how
+/// many it has.
 function fillGames(wanted) {
-    const all = oneEach(files.filter(isGame));
     const knownOf = nesKnown;
     const matches = (name) =>
         versionsOf.get(name).some((version) => found(wanted, titleOf(version), version, knownOf(version)));
-    const shown = arranged('nes', all.filter(matches), titleOf, knownOf);
+    versionsOf = new Map();
+    const games = files.filter(isGame);
+    for (const [system, name] of Object.entries(CONSOLES)) {
+        const all = oneEach(games.filter((game) => systemOf(game) === system));
+        const shown = arranged(system, all.filter(matches), titleOf, knownOf);
+        showCount(`tab-${system}`, name, shown.length);
+        if (system === consoleShowing) {
+            shelf = shown;
+        }
+    }
     const list = page('games');
     list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : noGames;
-    showCount('tab-nes', 'NES', shown.length);
-    shelf = shown;
     tiles.clear();
     showLetters();
     placeShelf();
@@ -596,7 +636,7 @@ function letterOf(name) {
 /// Pointed at, or dragged along on a touch screen, it jumps there.
 function showLetters() {
     const strip = page('letters');
-    strip.hidden = sortOf('nes') !== 'title' || !shelf.length;
+    strip.hidden = sortOf(consoleShowing) !== 'title' || !shelf.length;
     if (strip.hidden) {
         return;
     }
@@ -729,18 +769,18 @@ function gameTile(name, alone = false) {
     const button = document.createElement('button');
     button.className = 'play';
     const facts = factsOf.get(name);
-    const mapper = facts?.mapper.replace(/^MAPPER (\d+) /, 'Mapper $1, ');
+    const machine = { kind: systemOf(name), game: name };
     button.dataset.tip = [
         titleOf(name),
         known?.developer,
         name,
-        mapper,
+        boardOf(facts),
         facts?.problem && `Won't load: ${facts.problem}`,
         versions.length > 1 && `${versions.length} versions: ${versions.map(versionName).join(' · ')}`,
     ]
         .filter(Boolean)
         .join('\n');
-    button.onclick = () => playGame({ kind: 'nes', game: name });
+    button.onclick = () => playGame(machine);
     // One the emulator says won't load, greyed out, and why it won't said.
     if (facts?.problem) {
         item.classList.add('unplayable');
@@ -758,15 +798,19 @@ function gameTile(name, alone = false) {
         art = box;
     }
     button.append(art, caption(titleOf(name), known, tagsOf(name)));
-    item.append(button, removeButton(name), starButton({ kind: 'nes', game: name }, titleOf(name)));
+    item.append(button, removeButton(name), starButton(machine, titleOf(name)));
     return item;
 }
 
 /// A game started: in the desktop app, on the native emulator; here, a NES
-/// game with what's chosen of it, an Apple's disks as they were.
+/// or 2600 game with what's chosen of it, an Apple's disks as they were.
 async function playGame(machine) {
     if (native) {
         playNatively(machine);
+    } else if (machine.kind === 'atari2600') {
+        const chosen = await keeper.gameSettings(machine);
+        rewind(page('rewind').checked);
+        start(() => Emulator.atari2600(machine.game, chosen.region ?? ''), 'atari2600', [machine.game], machine);
     } else if (machine.kind === 'nes') {
         const chosen = await keeper.gameSettings(machine);
         const of = (name) => chosen[name] ?? '';
@@ -785,7 +829,8 @@ async function playGame(machine) {
 /// refreshed, its files known by then.
 let kept = [];
 let favoured = new Set();
-const gameKey = (machine) => (machine.kind === 'nes' ? `nes\n${machine.game}` : `apple\n${machine.disks.join('\n')}`);
+const gameKey = (machine) =>
+    machine.kind === 'apple' ? `apple\n${machine.disks.join('\n')}` : `${machine.kind}\n${machine.game}`;
 
 async function loadKept() {
     [kept, factsOf] = await Promise.all([keeper.keptGames(), keeper.gameFacts()]);
@@ -799,7 +844,7 @@ async function loadKept() {
 /// the background, those it hasn't been yet.
 let factsOf = new Map();
 native?.whenFactsChange(() => refresh());
-const learnFacts = () => native || keeper.learnFacts(files.filter(isGame), bytes, nes_facts, refresh);
+const learnFacts = () => native || keeper.learnFacts(files.filter(isGame), bytes, game_facts, refresh);
 
 /// A game's star, in the desktop app: lit if it's a favourite, and pressed,
 /// made one, or not.
@@ -818,13 +863,14 @@ function starButton(machine, title) {
     return star;
 }
 
-/// A NES game's details: its cover, and what's known of it, from game lists
-/// or libretro's database, from playing it, and from the emulator; its
+/// A console game's details: its cover, and what's known of it, from game
+/// lists or libretro's database, from playing it, and from the emulator; its
 /// versions, the one it plays chosen; and its own settings, over Settings',
-/// each kept as it's changed, what automatic would be said if it's known.
-/// Played from here, or made a favourite.
+/// those its console has, each kept as it's changed, what automatic would be
+/// said if it's known. Played from here, or made a favourite.
 async function openGameSettings(name) {
-    const machine = { kind: 'nes', game: name };
+    const system = systemOf(name);
+    const machine = { kind: system, game: name };
     const chosen = await keeper.gameSettings(machine);
     const dialog = page('game-settings');
     const facts = factsOf.get(name);
@@ -833,7 +879,7 @@ async function openGameSettings(name) {
     page('game-settings-about').textContent = shortName(name);
     page('game-cover').replaceChildren(cover(nesArt(name), title));
     const known = nesKnown(name);
-    const keptOf = kept.find((game) => game.machine.kind === 'nes' && game.machine.game === name);
+    const keptOf = kept.find((game) => game.machine.kind === system && game.machine.game === name);
     const played =
         keptOf?.plays > 0 &&
         `${keptOf.plays === 1 ? 'Once' : `${keptOf.plays} times`}, ${howLong(keptOf.seconds)} in all; ` +
@@ -846,8 +892,8 @@ async function openGameSettings(name) {
         ['Players', known?.players],
         ['Played', played || 'Not yet'],
         ['Version', versions.length < 2 && versionName(name)],
-        ['Console', facts && (facts.famicom ? 'Famicom' : 'NES')],
-        ['Board', facts?.mapper.replace(/^MAPPER (\d+) /, 'Mapper $1, ')],
+        ['Console', facts && (system === 'nes' ? (facts.famicom ? 'Famicom' : 'NES') : CONSOLES[system])],
+        ['Board', boardOf(facts)],
         ["Won't load", facts?.problem],
     ];
     page('game-facts').replaceChildren(
@@ -887,7 +933,7 @@ async function openGameSettings(name) {
     version.value = name;
     version.onchange = async () => {
         const chosen = chosenVersions();
-        chosen[versionKey(name)] = version.value;
+        chosen[chosenKey(name)] = version.value;
         try {
             localStorage.setItem(CHOSEN_VERSIONS, JSON.stringify(chosen));
         } catch {
@@ -904,6 +950,10 @@ async function openGameSettings(name) {
         }
     };
     const automatic = { console: facts && (facts.famicom ? 'Famicom' : 'NES'), port2: facts?.zapper && 'Zapper' };
+    // Only the settings its console has.
+    for (const label of dialog.querySelectorAll('label[data-for]')) {
+        label.hidden = label.dataset.for !== system;
+    }
     const selects = [...dialog.querySelectorAll('select[data-setting]')];
     for (const select of selects) {
         const setting = select.dataset.setting;
@@ -950,10 +1000,10 @@ function settingsOfSelected() {
 /// each; and the favourites; each sorted as it's chosen for it. Those a
 /// search leaves out, not shown.
 function fillKept(wanted) {
-    const titled = ({ machine }) => (machine.kind === 'nes' ? titleOf(machine.game) : appleTitle(machine));
+    const titled = ({ machine }) => (machine.kind === 'apple' ? appleTitle(machine) : titleOf(machine.game));
     const knownOf = ({ machine }) =>
-        machine.kind === 'nes' ? nesKnown(machine.game) : art.get(artFor(appleTitle(machine), ...machine.disks));
-    const filesOf = ({ machine }) => (machine.kind === 'nes' ? machine.game : machine.disks.join(' '));
+        machine.kind === 'apple' ? art.get(artFor(appleTitle(machine), ...machine.disks)) : nesKnown(machine.game);
+    const filesOf = ({ machine }) => (machine.kind === 'apple' ? machine.disks.join(' ') : machine.game);
     const shown = kept.filter((game) => found(wanted, titled(game), filesOf(game), knownOf(game)));
     const recent = arranged(
         'recent',
@@ -980,7 +1030,7 @@ function fillKept(wanted) {
 /// A kept game's tile: a NES game's as on its shelf; an Apple game's started
 /// at once. Played, when last and for how long in all in place of its facts.
 function keptTile({ machine, seconds, last }, played) {
-    const item = machine.kind === 'nes' ? gameTile(machine.game, true) : appleTile(machine);
+    const item = machine.kind === 'apple' ? appleTile(machine) : gameTile(machine.game, true);
     if (played) {
         const words = item.querySelector('.caption');
         const line = words.querySelector('.facts') ?? words.appendChild(document.createElement('span'));
@@ -2297,7 +2347,7 @@ async function addFolder(folder) {
         `Added ${count(native.gamesIn(folder), 'game')} from ${folder}.${also(roms.length, 'system ROM')}${also(made, 'cover')}`,
     );
     if (!page('settings').hidden) {
-        showShelf(files.some(isGame) || !files.some(isDisk) ? 'nes' : 'apple');
+        showShelf(gamesShelf());
     }
 }
 
@@ -2441,7 +2491,7 @@ if (native) {
             KeyO: chooseFolder,
             KeyR: () => lookForChanges(true),
             KeyF: () => {
-                showShelf(page('nes').hidden && page('apple-shelf').hidden ? 'nes' : localStorage.getItem('shelf'));
+                showShelf(page('nes').hidden && page('apple-shelf').hidden ? gamesShelf() : shelfShowing);
                 page('filter').focus();
             },
             Comma: () => showShelf('settings'),
@@ -2597,8 +2647,10 @@ async function start(make, machine, using, game) {
     page('library').hidden = true;
     showPadHints(); // the library's, gone with it
     page('machine').hidden = false;
-    page('machine').dataset.machine = machine;
+    // A console's, the NES's or the 2600's, laid out as a console's.
+    page('machine').dataset.machine = machine === 'apple' ? 'apple' : 'console';
     page('disk').hidden = page('disk-help').hidden = !emulator.disk_system();
+    page('switch-help').hidden = machine !== 'atari2600';
     aiming = emulator.aimed_at();
     page('frame').classList.toggle('aiming', aiming);
     const canvas = page('screen');
