@@ -60,6 +60,21 @@ pub trait Machine: Bus + Serialize + DeserializeOwned {
     /// A key typed.
     fn key(&mut self, _key: Key) {}
 
+    /// Whether it has a keyboard, for what's pasted to be typed on.
+    fn keyboard(&self) -> bool {
+        false
+    }
+
+    /// `text` typed on its keyboard, as it's pasted: a key at a time, as
+    /// the program takes them.
+    fn type_text(&mut self, _text: &str) {}
+
+    /// The text on its screen, to be copied: a line each, as shown, without
+    /// the blank lines above and below; if it has any showing.
+    fn screen_text(&self) -> Option<String> {
+        None
+    }
+
     /// The controls, a frame at a time.
     fn input(&mut self, input: Input);
 

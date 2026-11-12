@@ -2322,6 +2322,7 @@ function tick(now) {
         emulator.frame(here);
         last += period;
         ran = true;
+        putCopied();
         const samples = emulator.samples();
         player?.port.postMessage(samples, [samples.buffer]);
     }
@@ -2346,7 +2347,19 @@ addEventListener('keydown', (event) => {
         event.preventDefault();
         return;
     }
+    // Pasting and copying: Ctrl's the machine's, as Ctrl+C is, so Shift
+    // too, as in a terminal, or Cmd on a Mac.
     event.preventDefault();
+    const ctrl = event.ctrlKey || event.metaKey;
+    const shifted = event.shiftKey || event.metaKey;
+    if ((ctrl && shifted && code === 'KeyV') || (event.shiftKey && code === 'Insert')) {
+        pasteClipboard();
+        return;
+    }
+    if ((ctrl && shifted && code === 'KeyC') || (ctrl && code === 'Insert')) {
+        emulator.copy_screen();
+        return;
+    }
     held.add(code);
     const number = /^F(\d+)$/.exec(code)?.[1];
     if (number) {
@@ -2378,6 +2391,30 @@ addEventListener('keydown', (event) => {
         emulator.key_char(event.key.charCodeAt(0));
     }
 });
+
+/// The screen's text, once it's copied, put on the clipboard.
+function putCopied() {
+    const text = emulator.copied();
+    if (text !== undefined) {
+        navigator.clipboard?.writeText(text).catch(() => emulator?.say("Couldn't copy: the browser said no"));
+    }
+}
+
+/// What's on the clipboard typed on the machine's keyboard: asked of the
+/// browser, as a key or the button's pressed, which it may not give a page.
+/// The browser's own pasting isn't waited for: with nothing to type in
+/// focused, not all browsers paste at all.
+async function pasteClipboard() {
+    try {
+        const text = await navigator.clipboard.readText();
+        emulator?.paste(text);
+    } catch {
+        emulator?.say("The browser won't share the clipboard");
+    }
+}
+
+press('copy', () => emulator.copy_screen());
+press('paste', pasteClipboard);
 
 addEventListener('keyup', (event) => {
     held.delete(event.code);

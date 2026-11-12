@@ -5,6 +5,13 @@ use crate::host::controls::Controls;
 pub const SAMPLE_RATE: u32 = 48_000;
 pub const CHANNELS: usize = 2;
 
+/// What's pasted typed on the machine's keyboard; and its screen's text
+/// copied: as a function key would be, past F1 to F12, for the host's
+/// own. Ctrl+Shift+V or Shift+Insert, and Ctrl+Shift+C or Ctrl+Insert, as
+/// a terminal has them: Ctrl+C's the machine's.
+pub const PASTE_KEY: u8 = 21;
+pub const COPY_KEY: u8 = 22;
+
 /// Where a machine's picture and sound go, and its keys and joystick come
 /// from: the host's window, or its terminal.
 pub trait Display {
@@ -119,6 +126,21 @@ pub trait Display {
 
     /// The window's title: the machine's say, what disks are in it.
     fn title(&mut self, _title: &str) {}
+
+    /// Whether it has the computer's clipboard, for the menu to paste from
+    /// and copy to.
+    fn clipboard(&self) -> bool {
+        false
+    }
+
+    /// What's to be pasted, as PASTE_KEY's pressed: what's on the
+    /// clipboard, or what the page was given.
+    fn clipboard_text(&mut self) -> Option<String> {
+        None
+    }
+
+    /// `text` copied, to the clipboard, or for the page to put there.
+    fn copy_text(&mut self, _text: &str) {}
 
     /// Sound to play: frames at SAMPLE_RATE, each a left sample then a
     /// right, -1 to 1, following on from the last.

@@ -829,6 +829,53 @@ impl Machine for Apple2 {
         self.keys.extend(self.keyboard_key(key));
     }
 
+    fn keyboard(&self) -> bool {
+        true
+    }
+
+    /// Each line's end, whichever system's, a Return; a tab a space;
+    /// typographers' quotes and dashes as on a typewriter; and what the
+    /// keyboard hasn't, left out. A II+'s letters in upper case.
+    fn type_text(&mut self, text: &str) {
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        for c in text.chars() {
+            let typed = match c {
+                '\n' => b'\n',
+                '\t' => b' ',
+                '‘' | '’' => b'\'',
+                '“' | '”' => b'"',
+                '–' | '—' => b'-',
+                c if c.is_ascii() && !c.is_ascii_control() => c as u8,
+                _ => continue,
+            };
+            self.keys.extend(self.keyboard_key(Key::Char(typed)));
+        }
+    }
+
+    /// The text screen's 24 lines; or with a picture over the rest, its 4
+    /// below; with none, nothing. Inverse and flashing as they'd read.
+    fn screen_text(&self) -> Option<String> {
+        let switches = self.switches();
+        let rows = match (switches.graphics, switches.mixed) {
+            (false, _) => 0..24,
+            (true, true) => 20..24,
+            (true, false) => return None,
+        };
+        let lower = self.lower_case();
+        let lines: Vec<String> = rows
+            .map(|row| {
+                let line: String = self.row(row).iter().map(|&b| glyph(b, lower)).collect();
+                line.trim_end().to_string()
+            })
+            .collect();
+        let first = lines.iter().position(|line| !line.is_empty());
+        let last = lines.iter().rposition(|line| !line.is_empty());
+        Some(match (first, last) {
+            (Some(first), Some(last)) => lines[first..=last].join("\n"),
+            _ => String::new(),
+        })
+    }
+
     fn input(&mut self, input: Input) {
         self.joystick = input.joystick;
         self.key_down = input.key_down;
@@ -856,10 +903,12 @@ impl Machine for Apple2 {
         }
     }
 
-    /// Held, the cards are held reset, and the CPU.
+    /// Held, the cards are held reset, and the CPU; and what's still to be
+    /// typed of a paste is dropped.
     fn reset_button(&mut self, held: bool) {
         self.reset_held = held;
         if held {
+            self.keys.clear();
             if let Some(card) = &mut self.language_card {
                 card.reset();
             }

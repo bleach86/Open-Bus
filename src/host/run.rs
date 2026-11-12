@@ -15,7 +15,7 @@
 use crate::cpu::CPU;
 use crate::host::clock;
 use crate::host::controls::{ACTIONS, Action, BUTTONS, Controls, is_stick, name, said};
-use crate::host::display::{Display, Gamepad, Key};
+use crate::host::display::{COPY_KEY, Display, Gamepad, Key, PASTE_KEY};
 use crate::host::files;
 use crate::host::machine::{Input, Machine};
 use crate::host::notice;
@@ -83,6 +83,8 @@ enum Item {
     Load,
     /// What the machine has of its own, by its function key.
     Machine(&'static str, u8),
+    Paste,
+    Copy,
     Reset,
     Controls,
     Quit,
@@ -95,6 +97,8 @@ impl Item {
             Item::Save => "SAVE STATE",
             Item::Load => "LOAD STATE",
             Item::Machine(name, _) => name,
+            Item::Paste => "PASTE",
+            Item::Copy => "COPY SCREEN",
             Item::Reset => "RESET",
             Item::Controls => "CONTROLS",
             Item::Quit => "QUIT",
@@ -401,6 +405,9 @@ impl<M: Machine> Host<M> {
                 .into_iter()
                 .map(|(name, key)| Item::Machine(name, key)),
         );
+        if self.cpu.memory.keyboard() && self.display.clipboard() {
+            items.extend([Item::Paste, Item::Copy]);
+        }
         items.push(Item::Reset);
         if self.display.controls().is_some() {
             items.push(Item::Controls);
@@ -483,6 +490,8 @@ impl<M: Machine> Host<M> {
                         self.say(text);
                     }
                 }
+                Item::Paste => self.paste(),
+                Item::Copy => self.copy(),
                 Item::Reset => self.resetting = RESET_FRAMES,
                 Item::Controls => self.change_controls(false),
                 Item::Quit => self.display.close(),
@@ -593,6 +602,8 @@ impl<M: Machine> Host<M> {
                 2 => self.save_state(),
                 3 => self.debug = !self.debug,
                 4 => self.load_state(),
+                PASTE_KEY => self.paste(),
+                COPY_KEY => self.copy(),
                 _ => {
                     if let Some(text) = self.cpu.memory.function_key(key) {
                         self.say(text);
@@ -769,6 +780,36 @@ impl<M: Machine> Host<M> {
     /// A notice over the picture.
     pub fn say(&mut self, text: impl Into<String>) {
         self.notice = Some((text.into(), notice::FRAMES));
+    }
+
+    /// What's on the clipboard typed on the machine's keyboard, if it has
+    /// one: a key at a time, as it takes them.
+    fn paste(&mut self) {
+        if !self.cpu.memory.keyboard() {
+            return;
+        }
+        match self.display.clipboard_text() {
+            Some(text) if !text.is_empty() => {
+                self.cpu.memory.type_text(&text);
+                self.say("Pasting");
+            }
+            _ => self.say("Nothing to paste"),
+        }
+    }
+
+    /// The text on the machine's screen copied, if it has a keyboard and so
+    /// text to copy.
+    fn copy(&mut self) {
+        if !self.cpu.memory.keyboard() {
+            return;
+        }
+        match self.cpu.memory.screen_text() {
+            Some(text) if !text.is_empty() => {
+                self.display.copy_text(&text);
+                self.say("Screen copied");
+            }
+            _ => self.say("No text on the screen to copy"),
+        }
     }
 
     /// F2: the machine's state saved to its file.

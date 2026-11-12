@@ -48,11 +48,14 @@ function keptOf(machine) {
 }
 
 /// The games that are favourites, or have been played, the last played
-/// first: those whose files aren't here now left out.
+/// first: those whose files aren't here now left out, and an Apple played
+/// with no disks, as for BASIC, which isn't a game.
 export async function keptGames() {
     const here = new Set(await names());
     const present = ({ machine }) =>
-        machine.kind === 'nes' ? here.has(machine.game) : machine.disks.every((disk) => here.has(disk));
+        machine.kind === 'nes'
+            ? here.has(machine.game)
+            : machine.disks.length > 0 && machine.disks.every((disk) => here.has(disk));
     return Object.values(read(KEPT, {}))
         .filter((game) => (game.favourite || game.plays > 0) && present(game))
         .sort((a, b) => (b.last ?? -1) - (a.last ?? -1));

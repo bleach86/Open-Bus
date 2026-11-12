@@ -11,13 +11,18 @@
 //! fullscreen and back, the picture its shape still, bars at its sides if
 //! the screen is wider. The mouse on the picture, for a machine that's
 //! aimed at, its pointer cross hairs then, and its clicks the machine's.
+//! Ctrl+Shift+V or Shift+Insert, the clipboard pasted, and Ctrl+Shift+C or
+//! Ctrl+Insert, the screen copied to it, for a machine with a keyboard.
 //! Closed, it tells the machine, to turn itself off.
 
 use crate::host::controls::{Action, Controls};
-use crate::host::display::{CHANNELS, Display, Gamepad, Joystick, Key, Pointer, SAMPLE_RATE};
+use crate::host::display::{
+    CHANNELS, COPY_KEY, Display, Gamepad, Joystick, Key, PASTE_KEY, Pointer, SAMPLE_RATE,
+};
 use crate::host::pads::{self, Pads};
 use sdl2::EventPump;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
+use sdl2::clipboard::ClipboardUtil;
 use sdl2::controller::Button;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::{Keycode, Mod};
@@ -47,10 +52,12 @@ pub struct Window {
     canvas: Canvas<sdl2::video::Window>,
     /// The mouse: its pointer hidden in fullscreen.
     mouse: MouseUtil,
+    clipboard: ClipboardUtil,
     texture: Texture,
     events: EventPump,
     keys: VecDeque<Key>,
-    /// F1 to F10 pressed, by number, not yet taken.
+    /// F1 to F10 pressed, by number, and PASTE_KEY and COPY_KEY, not yet
+    /// taken.
     function_keys: VecDeque<u8>,
     audio: Option<AudioQueue<f32>>,
     /// The players' gamepads.
@@ -166,6 +173,7 @@ impl Window {
         let mut window = Window {
             canvas,
             mouse: sdl.mouse(),
+            clipboard: video.clipboard(),
             texture,
             events,
             keys: VecDeque::new(),
@@ -335,6 +343,20 @@ impl Window {
                         continue;
                     }
                     let ctrl = keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
+                    let shift = keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
+                    let clipboard = match keycode {
+                        Keycode::V if ctrl && shift => Some(PASTE_KEY),
+                        Keycode::Insert if shift => Some(PASTE_KEY),
+                        Keycode::C if ctrl && shift => Some(COPY_KEY),
+                        Keycode::Insert if ctrl => Some(COPY_KEY),
+                        _ => None,
+                    };
+                    if let Some(n) = clipboard {
+                        if !repeat {
+                            self.function_keys.push_back(n);
+                        }
+                        continue;
+                    }
                     let key = match keycode {
                         Keycode::Return | Keycode::KpEnter => Some(Key::Char(13)),
                         Keycode::Backspace => Some(Key::Char(8)),
@@ -644,5 +666,17 @@ impl Display for Window {
 
     fn title(&mut self, title: &str) {
         let _ = self.canvas.window_mut().set_title(title);
+    }
+
+    fn clipboard(&self) -> bool {
+        true
+    }
+
+    fn clipboard_text(&mut self) -> Option<String> {
+        self.clipboard.clipboard_text().ok()
+    }
+
+    fn copy_text(&mut self, text: &str) {
+        let _ = self.clipboard.set_clipboard_text(text);
     }
 }

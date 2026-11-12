@@ -485,6 +485,30 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_basic_program_pasted_runs_and_its_answer_is_copied() {
+        let Some(mut cpu) = iie(true, false) else {
+            eprintln!("IIe test: no IIe ROMs in roms/apple2/");
+            return;
+        };
+        assert!(run_until(&mut cpu, "]", 10), "{:#?}", cpu.memory.text());
+        // Typed as fast as BASIC takes it, no faster: all of it there.
+        cpu.memory
+            .type_text("10 FOR I = 1 TO 3\n20 PRINT I * 7\n30 NEXT\nLIST\nRUN\n");
+        assert!(run_until(&mut cpu, "21", 10), "{:#?}", cpu.memory.text());
+        let copied = cpu.memory.screen_text().unwrap();
+        let lines: Vec<&str> = copied.lines().collect();
+        // As LIST has them, a space before each.
+        for line in [" 10  FOR I = 1 TO 3", " 20  PRINT I * 7", " 30  NEXT"] {
+            assert!(lines.contains(&line), "{line}: {copied}");
+        }
+        let ran = lines
+            .iter()
+            .position(|&line| line == "]RUN")
+            .expect(&copied);
+        assert_eq!(&lines[ran + 1..ran + 4], ["7", "14", "21"], "{copied}");
+    }
+
     /// The enhanced IIe, with the Disk II, `disk` in drive 1, reset; None
     /// without the ROMs or the disk.
     fn booting(disk: &str) -> Option<CPU<Apple2>> {

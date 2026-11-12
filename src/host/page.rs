@@ -29,6 +29,10 @@ pub struct Shared {
     pub reset: bool,
     pub fast: bool,
     pub rewind: bool,
+    /// What the page was given to paste, with PASTE_KEY; and the screen's
+    /// text copied, for it to put on the clipboard.
+    pub pasted: Option<String>,
+    pub copied: Option<String>,
 }
 
 /// The display a host has; the page has the same `Shared`.
@@ -84,6 +88,14 @@ impl Display for Page {
 
     fn function_key(&mut self) -> Option<u8> {
         self.0.borrow_mut().function_keys.pop_front()
+    }
+
+    fn clipboard_text(&mut self) -> Option<String> {
+        self.0.borrow_mut().pasted.take()
+    }
+
+    fn copy_text(&mut self, text: &str) {
+        self.0.borrow_mut().copied = Some(text.to_string());
     }
 
     fn title(&mut self, title: &str) {

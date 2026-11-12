@@ -4,7 +4,7 @@
 
 use crate::cpu::Variant;
 use crate::host::clock;
-use crate::host::display::{Gamepad, Joystick, Key, Pointer};
+use crate::host::display::{COPY_KEY, Gamepad, Joystick, Key, PASTE_KEY, Pointer};
 use crate::host::files;
 use crate::host::machine::{Machine, PowerOnRam};
 use crate::host::page::{Page, Shared};
@@ -278,6 +278,32 @@ impl Emulator {
 
     pub fn function_key(&self, key: u8) {
         self.page.borrow_mut().function_keys.push_back(key);
+    }
+
+    /// `text` typed on the machine's keyboard, as it's pasted.
+    pub fn paste(&self, text: String) {
+        let page = &mut self.page.borrow_mut();
+        page.pasted = Some(text);
+        page.function_keys.push_back(PASTE_KEY);
+    }
+
+    /// The screen's text copied, by the next frame: for `copied`.
+    pub fn copy_screen(&self) {
+        self.page.borrow_mut().function_keys.push_back(COPY_KEY);
+    }
+
+    /// `text` said over the picture, as the host's notices are.
+    pub fn say(&mut self, text: &str) {
+        match &mut self.running {
+            Running::Apple(host) => host.say(text),
+            Running::Nes(host) => host.say(text),
+        }
+    }
+
+    /// The screen's text, as it was copied, once: for the page to put on
+    /// the clipboard.
+    pub fn copied(&self) -> Option<String> {
+        self.page.borrow_mut().copied.take()
     }
 
     /// The controls as they are: each gamepad's a bit each, up, down, left,

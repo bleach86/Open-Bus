@@ -163,6 +163,65 @@ mod tests {
     }
 
     #[test]
+    fn whats_pasted_is_typed_a_key_each_time_the_last_is_taken() {
+        let mut apple = machine();
+        apple.type_text("10 print “hi”\r\n\tRUN\u{1F600}\n");
+        let mut typed = Vec::new();
+        for _ in 0..20 {
+            let key = apple.read(0xC000);
+            if key & 0x80 == 0 {
+                break;
+            }
+            assert_eq!(apple.read(0xC000), key, "the same key, till it's taken");
+            typed.push(key & 0x7F);
+            apple.read(0xC010);
+        }
+        // A II+'s: in capitals; a line's end a Return, whatever system's; a
+        // tab a space; and what it hasn't, left out.
+        assert_eq!(typed, b"10 PRINT \"HI\"\r RUN\r");
+    }
+
+    #[test]
+    fn reset_stops_a_paste() {
+        let mut apple = machine();
+        apple.type_text("LIST");
+        apple.reset_button(true);
+        apple.reset_button(false);
+        assert_eq!(apple.read(0xC000) & 0x80, 0, "nothing more typed");
+    }
+
+    #[test]
+    fn the_screens_text_is_copied_without_the_blank_lines_round_it() {
+        let mut apple = machine();
+        for row in 0..24 {
+            for column in 0..40 {
+                apple.write((video::text_address(false, row) + column) as u16, 0xA0);
+            }
+        }
+        let put = |apple: &mut Apple2, row: usize, text: &str| {
+            for (column, c) in text.bytes().enumerate() {
+                apple.write((video::text_address(false, row) + column) as u16, c | 0x80);
+            }
+        };
+        put(&mut apple, 3, "]RUN");
+        put(&mut apple, 5, "?SYNTAX ERROR IN 10");
+        put(&mut apple, 21, "]");
+        // Inverse, as it reads.
+        apple.write(video::text_address(false, 21) as u16 + 1, 0x20);
+        assert_eq!(
+            apple.screen_text().as_deref(),
+            Some("]RUN\n\n?SYNTAX ERROR IN 10\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n]")
+        );
+        // A picture over the rest: its 4 lines of text below.
+        apple.read(0xC050);
+        apple.read(0xC053);
+        assert_eq!(apple.screen_text().as_deref(), Some("]"));
+        // A picture alone: none.
+        apple.read(0xC052);
+        assert_eq!(apple.screen_text(), None);
+    }
+
+    #[test]
     fn the_soft_switches_are_read_or_written() {
         let mut apple = machine();
         apple.read(0xC050);
