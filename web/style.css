@@ -541,6 +541,72 @@ ul {
   color: var(--quiet);
   font-size: 0.72rem;
 }
+/* The strip of letters down the shelf of games' right side, as Plex has
+   one: each a jump to its first game; dimmed with none; the one at the top
+   lit. Clear of a scrollbar, and the shelf clear of it. Dragged along, on a
+   touch screen. */
+.letters {
+  position: fixed;
+  z-index: 2;
+  top: 3.9rem;
+  right: 0.8rem; /* clear of a scrollbar */
+  bottom: 0.5rem;
+  width: 1.4rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  touch-action: none;
+}
+.letters button {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: 1.6rem;
+  padding: 0;
+  color: var(--quiet);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  font:
+    600 0.7rem/1 system-ui,
+    sans-serif;
+}
+.letters button:hover:not(:disabled) {
+  color: #fff;
+  background: #ffffff14;
+  box-shadow: none;
+}
+.letters button:disabled {
+  opacity: 0.3;
+  background: none;
+}
+.letters button.on {
+  color: var(--cyan);
+}
+body.pointer-gone .letters .pad-focus {
+  outline-offset: 0;
+}
+#nes:has(.letters:not([hidden])) {
+  padding-right: 2.1rem;
+}
+
+/* How many versions a game has, on its cover's corner. */
+.art-box {
+  position: relative;
+  display: block;
+}
+.versions {
+  position: absolute;
+  right: 0.3rem;
+  bottom: 0.3rem;
+  padding: 0.05em 0.45em;
+  border-radius: 1em;
+  font:
+    600 0.68rem/1.4 system-ui,
+    sans-serif;
+  color: var(--text);
+  background: #0d0221d0;
+  pointer-events: none;
+}
 .tile .drive {
   position: absolute;
   top: 0.3rem;

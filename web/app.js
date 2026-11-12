@@ -9,6 +9,7 @@ import * as bindings from './controls.js';
 import { artKey, isMedia, keyOf, plainTitle, tagsOf, takeArt, titleWords } from './art.js';
 import { drawScene } from './scenes.js';
 import { learnDetails, learnedDetails } from './details.js';
+import { versionKey, versionName, versionRank } from './versions.js';
 
 /// The emulator's WebAssembly: the browser's only, the desktop app's games
 /// being the native emulator's, which sorts its ROMs too.
@@ -526,21 +527,146 @@ function nesKnown(name) {
     return { ...listed, ...Object.fromEntries(details) };
 }
 
+/// Each NES game's versions, by any of their files: the best first.
+let versionsOf = new Map();
+
+/// The version of each game that's been chosen for it, by its versionKey,
+/// kept in this browser, or the desktop app's page.
+const CHOSEN_VERSIONS = 'versions';
+function chosenVersions() {
+    try {
+        return JSON.parse(localStorage.getItem(CHOSEN_VERSIONS)) ?? {};
+    } catch {
+        return {};
+    }
+}
+
+/// The games among the NES files `all`, one file each: the version chosen,
+/// or played last, or the best; each's versions in `versionsOf`, those that
+/// won't load last.
+function oneEach(all) {
+    const games = new Map();
+    for (const name of all) {
+        const key = versionKey(name);
+        games.set(key, [...(games.get(key) ?? []), name]);
+    }
+    const chosen = chosenVersions();
+    const playedAt = new Map(
+        kept
+            .filter(({ machine, plays }) => machine.kind === 'nes' && plays > 0)
+            .map(({ machine, last }) => [machine.game, last]),
+    );
+    const rank = (name) => versionRank(name) + (factsOf.get(name)?.problem ? 1000 : 0);
+    versionsOf = new Map();
+    return [...games].map(([key, versions]) => {
+        versions.sort((a, b) => rank(a) - rank(b) || natural(a, b));
+        for (const name of versions) {
+            versionsOf.set(name, versions);
+        }
+        const played = versions.filter((name) => playedAt.has(name));
+        const last = played.sort((a, b) => playedAt.get(b) - playedAt.get(a))[0];
+        return versions.includes(chosen[key]) ? chosen[key] : (last ?? versions[0]);
+    });
+}
+
 function fillGames(wanted) {
-    const all = files.filter(isGame);
+    const all = oneEach(files.filter(isGame));
     const knownOf = nesKnown;
-    const matches = (name) => found(wanted, titleOf(name), name, knownOf(name));
+    const matches = (name) =>
+        versionsOf.get(name).some((version) => found(wanted, titleOf(version), version, knownOf(version)));
     const shown = arranged('nes', all.filter(matches), titleOf, knownOf);
     const list = page('games');
     list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : noGames;
     showCount('tab-nes', 'NES', shown.length);
     shelf = shown;
     tiles.clear();
+    showLetters();
     placeShelf();
 }
 
-/// A game's tile.
-function gameTile(name) {
+/// The first letter of a game's title, as the strip has it: a digit or
+/// anything else, #.
+function letterOf(name) {
+    const first = titleOf(name).trim().charAt(0).toUpperCase();
+    return first >= 'A' && first <= 'Z' ? first : '#';
+}
+
+/// The strip of letters down the shelf of games' side, while it's sorted
+/// by title: each the first game of its letter's, a letter with none dimmed.
+/// Pointed at, or dragged along on a touch screen, it jumps there.
+function showLetters() {
+    const strip = page('letters');
+    strip.hidden = sortOf('nes') !== 'title' || !shelf.length;
+    if (strip.hidden) {
+        return;
+    }
+    const firsts = new Map();
+    shelf.forEach((name, at) => firsts.has(letterOf(name)) || firsts.set(letterOf(name), at));
+    strip.replaceChildren(
+        ...['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map((letter) => {
+            const button = document.createElement('button');
+            button.textContent = letter;
+            button.dataset.letter = letter;
+            button.disabled = !firsts.has(letter);
+            button.setAttribute('aria-label', letter === '#' ? 'Numbers and symbols' : letter);
+            button.onclick = () => jumpToLetter(letter);
+            return button;
+        }),
+    );
+    letterShown = null;
+}
+const scrub = (event) => {
+    const button = document.elementFromPoint(event.clientX, event.clientY)?.closest('#letters button');
+    if (button && !button.disabled) {
+        jumpToLetter(button.dataset.letter);
+    }
+};
+page('letters').onpointerdown = (event) => {
+    if (event.pointerType === 'touch') {
+        page('letters').setPointerCapture(event.pointerId);
+        scrub(event);
+    }
+};
+page('letters').onpointermove = (event) => {
+    if (event.pointerType === 'touch' && event.buttons) {
+        scrub(event);
+    }
+};
+
+/// The shelf of games at the first game of `letter`: its row at the top,
+/// and it the one selected.
+function jumpToLetter(letter) {
+    const at = shelf.findIndex((name) => letterOf(name) === letter);
+    if (at < 0) {
+        return;
+    }
+    selectedGame = shelf[at];
+    const list = page('games');
+    const { columns, row, down } = shelfShape(list);
+    const toolbar = document.querySelector('.toolbar').getBoundingClientRect().height;
+    const top = list.getBoundingClientRect().top + scroller.scrollTop + Math.floor(at / columns) * (row + down);
+    scroller.scrollTo(0, top - toolbar - down);
+    placeShelf();
+    showSelected();
+}
+
+/// The letter of the row at the top lit on the strip, as the shelf scrolls.
+let letterShown = null;
+function showLetterAt(firstShown) {
+    const letter = shelf[firstShown] && letterOf(shelf[firstShown]);
+    if (letter === letterShown || page('letters').hidden) {
+        return;
+    }
+    letterShown = letter;
+    for (const button of page('letters').children) {
+        button.classList.toggle('on', button.dataset.letter === letter);
+    }
+}
+
+/// A game's tile: on the shelf of games, for all of its versions, `name`
+/// the one it plays; or, `alone`, for that one alone, as it was played.
+function gameTile(name, alone = false) {
+    const versions = alone ? [name] : (versionsOf.get(name) ?? [name]);
     const item = document.createElement('li');
     item.className = 'tile';
     item.dataset.game = name;
@@ -560,6 +686,7 @@ function gameTile(name) {
         name,
         mapper,
         facts?.problem && `Won't load: ${facts.problem}`,
+        versions.length > 1 && `${versions.length} versions: ${versions.map(versionName).join(' · ')}`,
     ]
         .filter(Boolean)
         .join('\n');
@@ -569,7 +696,18 @@ function gameTile(name) {
         item.classList.add('unplayable');
         button.onclick = () => say(`${titleOf(name)} won't load: ${facts.problem}.`, true);
     }
-    button.append(cover(key, titleOf(name)), caption(titleOf(name), known, tagsOf(name)));
+    // How many versions there are, on its cover's corner.
+    let art = cover(key, titleOf(name));
+    if (versions.length > 1) {
+        const badge = document.createElement('span');
+        badge.className = 'versions';
+        badge.textContent = `${versions.length} versions`;
+        const box = document.createElement('span');
+        box.className = 'art-box';
+        box.append(art, badge);
+        art = box;
+    }
+    button.append(art, caption(titleOf(name), known, tagsOf(name)));
     item.append(button, removeButton(name), starButton({ kind: 'nes', game: name }, titleOf(name)));
     return item;
 }
@@ -642,6 +780,35 @@ async function openGameSettings(name) {
     page('game-settings-about').textContent = [name, facts?.mapper.replace(/^MAPPER (\d+) /, 'Mapper $1, ')]
         .filter(Boolean)
         .join(' · ');
+    // Its versions, the one chosen played from now on, its own settings
+    // shown.
+    const versions = versionsOf.get(name) ?? [name];
+    const version = page('game-version');
+    version.closest('label').hidden = versions.length < 2;
+    version.replaceChildren(
+        ...versions.map(
+            (one) => new Option(versionName(one) + (factsOf.get(one)?.problem ? " (won't load)" : ''), one),
+        ),
+    );
+    version.value = name;
+    version.onchange = async () => {
+        const chosen = chosenVersions();
+        chosen[versionKey(name)] = version.value;
+        try {
+            localStorage.setItem(CHOSEN_VERSIONS, JSON.stringify(chosen));
+        } catch {
+            // Not kept, then: chosen till the page is closed.
+        }
+        if (selectedGame === name) {
+            selectedGame = version.value;
+        }
+        dialog.close();
+        await refresh();
+        await openGameSettings(version.value);
+        if (document.body.classList.contains('pointer-gone')) {
+            focusOn(version);
+        }
+    };
     const automatic = { console: facts && (facts.famicom ? 'Famicom' : 'NES'), port2: facts?.zapper && 'Zapper' };
     const selects = [...dialog.querySelectorAll('select[data-setting]')];
     for (const select of selects) {
@@ -715,7 +882,7 @@ function fillKept(wanted) {
 /// A kept game's tile: a NES game's as on its shelf; an Apple game's started
 /// at once. Played, when last and for how long in all in place of its facts.
 function keptTile({ machine, seconds, last }, played) {
-    const item = machine.kind === 'nes' ? gameTile(machine.game) : appleTile(machine);
+    const item = machine.kind === 'nes' ? gameTile(machine.game, true) : appleTile(machine);
     if (played) {
         const words = item.querySelector('.caption');
         const line = words.querySelector('.facts') ?? words.appendChild(document.createElement('span'));
@@ -958,14 +1125,17 @@ function nearest(from, way, options) {
     return best;
 }
 
-/// What stays in view over the shelf as it scrolls: the toolbar, and the
-/// Apple's choices.
-const pinned = (element) => element.closest('.toolbar, .fields');
+/// What stays in view over the shelf as it scrolls: the toolbar, the
+/// Apple's choices, and the strip of letters.
+const pinned = (element) => element.closest('.toolbar, .fields, #letters');
 
 /// `element` moved to, and scrolled to, unless it's pinned, and so in view:
 /// its tile all of it, and clear of what's pinned over it, not under it.
 function focusOn(element) {
     padFocus = element;
+    if (element.closest('#letters')) {
+        jumpToLetter(element.dataset.letter);
+    }
     showSelected();
     if (pinned(element)) {
         return;
@@ -1008,7 +1178,16 @@ function move(way) {
         const at = shelf.indexOf(selectedGame);
         const tile = tiles.get(selectedGame);
         const above = way === 'up' && at >= 0 && at < columns && tile && towards(tile, 'up', focusable());
+        // Right off the last of a row, onto the strip of letters, at this one's.
+        const lastOfRow = at >= 0 && (at % columns === columns - 1 || at === shelf.length - 1);
+        if (way === 'right' && lastOfRow && !page('letters').hidden) {
+            return focusOn(page('letters').querySelector(`[data-letter="${letterOf(selectedGame)}"]`));
+        }
         return above ? focusOn(above) : moveInGames(way);
+    }
+    // Left off the strip, back to the shelf, at its letter.
+    if (way === 'left' && padFocus?.closest('#letters')) {
+        return backToShelf();
     }
     if (way === 'down' && padFocus?.closest('.toolbar') && gamesShowing()) {
         return backToShelf();
@@ -1038,6 +1217,8 @@ function confirmSelected() {
     if (padFocus instanceof HTMLSelectElement) {
         padFocus.selectedIndex = (padFocus.selectedIndex + 1) % padFocus.options.length;
         padFocus.dispatchEvent(new Event('change'));
+    } else if (padFocus?.closest('#letters')) {
+        backToShelf(); // there already: back on the shelf, at its first
     } else if (padFocus) {
         padFocus.click();
     } else if (gamesShowing()) {
@@ -1224,6 +1405,9 @@ function placeShelf(force = true) {
     const rows = Math.ceil(shelf.length / columns);
     const scrolled = Math.max(0, -list.getBoundingClientRect().top);
     const first = Math.max(0, Math.floor(scrolled / (row + down)) - SHELF_EXTRA);
+    // The row nearest the toolbar's foot, the top one shown.
+    const below = document.querySelector('.toolbar').getBoundingClientRect().bottom - list.getBoundingClientRect().top;
+    showLetterAt(Math.max(0, Math.round(below / (row + down))) * columns);
     const count = Math.ceil(innerHeight / (row + down)) + 2 * SHELF_EXTRA + 1;
     if (!force && first === shelfRow && shelfPlaced === columns && shelfSize === row) {
         return;

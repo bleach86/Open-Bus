@@ -64,6 +64,12 @@
       </div>
 
       <section id="nes" class="shelf">
+        <nav
+          id="letters"
+          class="letters"
+          aria-label="Jump to a letter"
+          hidden
+        ></nav>
         <ul id="games" class="grid"></ul>
         <p class="empty"></p>
       </section>
@@ -404,6 +410,10 @@
       <p id="game-settings-about" class="quiet"></p>
       <div class="choices">
         <label
+          >Version
+          <select id="game-version"></select
+        ></label>
+        <label
           >Region
           <select data-setting="region">
             <option value="">Automatic</option>
@@ -464,6 +474,7 @@
         'covers.js',
         'desktop.js',
         'details.js',
+        'versions.js',
         'disks.js',
         'files.js',
         'kept.js',
