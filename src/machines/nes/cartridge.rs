@@ -30,6 +30,17 @@
 //! from CHR bank 0's bit 4; with 32K of PRG RAM, its 8K bank from bits 2
 //! and 3.
 //!
+//! 105, NES-EVENT, Nintendo World Championships 1990's: an MMC1, its 256K
+//! two chips of 128K, its 8K of CHR RAM not banked. Its first 32K's fixed
+//! till CHR bank 0's bit 4, set at power on, is cleared and set again.
+//! Then that register's bit 3 says which chip: the first's 32K banks by its
+//! bits 1 and 2, or the second's as MMC1 banks them, by the PRG bank's low
+//! three bits, the second's own last fixed. Its bit 4 is a timer's too:
+//! cleared, a count up every CPU cycle; set, the count back at 0 and held,
+//! and the IRQ acknowledged; and at the time its DIP switches say, the IRQ
+//! line held, the game over. As the championships had them set: 6 minutes
+//! and 15 seconds.
+//!
 //! 2, UxROM: a 16K bank at $8000, the last fixed at $C000.
 //!
 //! 3, CNROM: an 8K bank of CHR.
@@ -180,6 +191,15 @@
 //! and bit 7 the CHR bank's bit 3. 93, Sunsoft-2 on Fantasy Zone: a 16K bank
 //! (bits 4 to 6), its CHR RAM there only with bit 0 set.
 //!
+//! 68, Sunsoft-4: four 2K banks of CHR ($8000, $9000, $A000, $B000); a
+//! 16K bank at $8000 ($F000, bits 0 to 2), the last fixed, bit 4 its PRG
+//! RAM's enable; the mirroring ($E000: vertical, horizontal, one screen or
+//! the other), and in its bit 4, the nametables 1K of CHR ROM each, from
+//! its last 128K ($C000 and $D000, their top bit set), not the PPU's RAM.
+//! Nantettatte!! Baseball's option cartridge after its 128K: its ROM at
+//! $8000 while bit 3's clear, but only for a while after a write at $6000
+//! up with the RAM off, its licence; after that, open bus.
+//!
 //! Jaleco's: 86, JF-13, a register at $6000 up to $6FFF, a 32K bank (bits
 //! 4 and 5) and an 8K bank of CHR (bits 0 and 1, and 6 its bit 2); its
 //! sound at $7000 up, a speech chip, not here. 87, its CHR's 8K bank in
@@ -268,6 +288,140 @@ pub struct Mmc1 {
     chr: [u8; 2],
     prg: u8,
     written: Option<u64>,
+}
+
+impl Mmc1 {
+    /// As it is at power on: control's PRG mode 3, the last 16K fixed.
+    fn power_on() -> Mmc1 {
+        Mmc1 {
+            shift: 0,
+            bits: 0,
+            control: 0x0C,
+            chr: [0; 2],
+            prg: 0,
+            written: None,
+        }
+    }
+
+    /// `value` written at `addr` on CPU cycle `cycle`, a bit of a register:
+    /// whether a register's filled, or it's started over; and if it filled
+    /// control, the mirroring that says.
+    fn write(&mut self, addr: u16, value: u8, cycle: u64) -> (bool, Option<Mirroring>) {
+        let consecutive = self.written == Some(cycle.wrapping_sub(1));
+        self.written = Some(cycle);
+        if consecutive {
+            return (false, None);
+        }
+        if value & 0x80 != 0 {
+            (self.shift, self.bits) = (0, 0);
+            self.control |= 0x0C;
+            return (true, None);
+        }
+        self.shift |= (value & 1) << self.bits;
+        self.bits += 1;
+        if self.bits < 5 {
+            return (false, None);
+        }
+        let register = self.shift;
+        (self.shift, self.bits) = (0, 0);
+        match addr {
+            0x8000..=0x9FFF => {
+                self.control = register;
+                let mirroring = [
+                    Mirroring::SingleLower,
+                    Mirroring::SingleUpper,
+                    Mirroring::Vertical,
+                    Mirroring::Horizontal,
+                ][register as usize & 3];
+                return (true, Some(mirroring));
+            }
+            0xA000..=0xBFFF => self.chr[0] = register,
+            0xC000..=0xDFFF => self.chr[1] = register,
+            _ => self.prg = register,
+        }
+        (true, None)
+    }
+}
+
+/// NES-EVENT's MMC1; how far it's been started, CHR bank 0's bit 4 cleared
+/// then set again; and its timer's count, whether it's counting, and its
+/// IRQ line.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Nwc {
+    mmc1: Mmc1,
+    started: u8,
+    pub(super) count: u32,
+    counting: bool,
+    irq: bool,
+}
+
+/// NES-EVENT's time, in CPU cycles: bit 29 always, and the DIP switches
+/// bits 25 to 28, as the championships had them, only bit 27's closed.
+pub(super) const NWC_TIME: u32 = 0x2000_0000 | 0x0800_0000;
+
+impl Nwc {
+    fn new() -> Nwc {
+        let mut mmc1 = Mmc1::power_on();
+        mmc1.chr[0] = 0x10;
+        Nwc {
+            mmc1,
+            started: 0,
+            count: 0,
+            counting: false,
+            irq: false,
+        }
+    }
+
+    /// A register filled, or the MMC1 started over: CHR bank 0's bit 4,
+    /// its start, and its timer's reset or run.
+    fn written(&mut self) {
+        let reset = self.mmc1.chr[0] & 0x10 != 0;
+        self.started = match (self.started, reset) {
+            (0, false) => 1,
+            (1, true) => 2,
+            (started, _) => started,
+        };
+        self.counting = !reset;
+        if reset {
+            (self.count, self.irq) = (0, false);
+        }
+    }
+
+    /// A CPU cycle: a count, and at its time, the line held.
+    fn cycle(&mut self) {
+        if self.counting {
+            self.count += 1;
+            if self.count >= NWC_TIME {
+                (self.irq, self.counting) = (true, false);
+            }
+        }
+    }
+}
+
+/// Sunsoft-4's registers: its four 2K banks of CHR, and the two 1K of it
+/// that can be the nametables, and whether they are; its 16K bank, whether
+/// that's an option cartridge's, and its PRG RAM's enable; and the cycles
+/// left of the option cartridge's licence.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sunsoft4 {
+    chr: [u8; 4],
+    tables: [u8; 2],
+    chr_tables: bool,
+    prg: u8,
+    external: bool,
+    ram_on: bool,
+    licence: u32,
+}
+
+/// How long Nantettatte!! Baseball's option cartridge stays licensed, in
+/// CPU cycles, after a write: as the game checks it, 1024 times 105.
+const SUNSOFT4_LICENCE: u32 = 1024 * 105;
+
+impl Sunsoft4 {
+    /// Whether its 16K at $8000 is open bus: an option cartridge's, lapsed.
+    fn lapsed(&self) -> bool {
+        self.external && self.licence == 0
+    }
 }
 
 /// MMC3's registers: bank select, the 8 banks, the PRG RAM's enable and
@@ -631,6 +785,8 @@ pub enum Mapper {
     Vrc3(Vrc3),
     Namco163(Box<Namco163>),
     Bandai(Box<Bandai>),
+    Nwc(Nwc),
+    Sunsoft4(Sunsoft4),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -816,14 +972,9 @@ impl Cartridge {
         let mirroring = known.and_then(|known| known.mirroring).unwrap_or(mirroring);
         let mapper = match number {
             0 => Mapper::Nrom,
-            1 => Mapper::Mmc1(Mmc1 {
-                shift: 0,
-                bits: 0,
-                control: 0x0C,
-                chr: [0; 2],
-                prg: 0,
-                written: None,
-            }),
+            1 => Mapper::Mmc1(Mmc1::power_on()),
+            105 => Mapper::Nwc(Nwc::new()),
+            68 => Mapper::Sunsoft4(Sunsoft4::default()),
             2 => Mapper::Uxrom(0),
             3 => Mapper::Cnrom(0),
             4 | 37 | 47 | 118 | 119 | 206 | 76 | 88 | 95 | 154 => Mapper::Mmc3(Mmc3 {
@@ -1235,6 +1386,21 @@ impl Cartridge {
             Mapper::Mmc2(_) if self.board == Board::Mmc4 => len - PRG_BANK + (addr - 0xC000),
             Mapper::Mmc2(mmc2) if addr < 0xA000 => mmc2.prg as usize * 0x2000 + (addr & 0x1FFF),
             Mapper::Mmc2(_) => len - 0x6000 + (addr - 0xA000),
+            Mapper::Nwc(nwc) if nwc.started < 2 => addr - 0x8000,
+            Mapper::Nwc(nwc) if nwc.mmc1.chr[0] & 0x08 == 0 => {
+                (nwc.mmc1.chr[0] as usize >> 1 & 3) * 0x8000 + (addr & 0x7FFF)
+            }
+            Mapper::Nwc(nwc) => {
+                let bank = (nwc.mmc1.prg as usize & 7) | 8;
+                match (nwc.mmc1.control >> 2) & 3 {
+                    0 | 1 => (bank & !1) * PRG_BANK + (addr & 0x7FFF),
+                    2 => in_16k(if addr < 0xC000 { 8 } else { bank }),
+                    _ => in_16k(if addr < 0xC000 { bank } else { 0x0F }),
+                }
+            }
+            Mapper::Sunsoft4(sunsoft) if addr < 0xC000 => in_16k(sunsoft.prg as usize),
+            // Its own last: an option cartridge's is after it.
+            Mapper::Sunsoft4(_) => in_16k(last_16k.min(7)),
             Mapper::Mmc1(mmc1) => {
                 // On 512K boards, CHR bank 0's bit 4 picks which 256K.
                 let outer = if len > 0x40000 {
@@ -1285,7 +1451,9 @@ impl Cartridge {
             | Mapper::Quattro(_)
             | Mapper::Mmc5(_)
             | Mapper::Fds(_)
-            | Mapper::Vrc3(_) => addr,
+            | Mapper::Vrc3(_)
+            | Mapper::Nwc(_) => addr,
+            Mapper::Sunsoft4(sunsoft) => sunsoft.chr[addr >> 11] as usize * 0x800 + (addr & 0x7FF),
             Mapper::Cnrom(bank) => (*bank as usize) * CHR_BANK + addr,
             Mapper::Jf17(jf) => jf.chr as usize * CHR_BANK + addr,
             Mapper::Caltron(caltron) => caltron.chr as usize * CHR_BANK + addr,
@@ -1374,6 +1542,8 @@ impl Cartridge {
         let addr = addr as usize - 0x6000;
         match &self.mapper {
             Mapper::Mmc1(mmc1) if mmc1.prg & 0x10 != 0 => None,
+            Mapper::Nwc(nwc) if nwc.mmc1.prg & 0x10 != 0 => None,
+            Mapper::Sunsoft4(sunsoft) if !sunsoft.ram_on => None,
             Mapper::Mmc1(mmc1) if self.prg_ram.len() == 0x8000 => {
                 Some(((mmc1.chr[0] as usize >> 2) & 3) * 0x2000 + addr)
             }
@@ -1436,6 +1606,11 @@ impl Cartridge {
             },
             0x8000..=0xFFFF => match &self.mapper {
                 Mapper::Active(active) if active.chip == ACTIVE_NO_CHIP => None,
+                // An option cartridge's, its pages not kept: its licence
+                // lapses with no write.
+                Mapper::Sunsoft4(sunsoft) if sunsoft.external => (addr >= 0xC000
+                    || !sunsoft.lapsed())
+                .then(|| self.prg_rom[self.prg_offset(addr)]),
                 // Its registers read as written, its pages not to be kept
                 // for reads to miss them.
                 Mapper::Maxi15(_) => {
@@ -1550,6 +1725,11 @@ impl Cartridge {
             if let Mapper::Namco163(namco) = &mut self.mapper {
                 namco.ram_written();
             }
+            if let Mapper::Sunsoft4(sunsoft) = &mut self.mapper {
+                if !sunsoft.ram_on {
+                    sunsoft.licence = SUNSOFT4_LICENCE;
+                }
+            }
             let at = match &self.mapper {
                 Mapper::Mmc3(mmc3) if mmc3.mmc6 => self.mmc6_ram(mmc3, addr, true).flatten(),
                 Mapper::Namco163(namco) => {
@@ -1568,6 +1748,7 @@ impl Cartridge {
         }
         let four_screen = self.mirroring == Mirroring::FourScreen;
         let rom = self.prg_rom[self.prg_offset(addr)];
+        let banks = self.prg_rom.len() / PRG_BANK;
         match &mut self.mapper {
             Mapper::Nrom
             | Mapper::Nina03(_)
@@ -1756,38 +1937,42 @@ impl Cartridge {
                 _ => {}
             },
             Mapper::Mmc1(mmc1) => {
-                let consecutive = mmc1.written == Some(cycle.wrapping_sub(1));
-                mmc1.written = Some(cycle);
-                if consecutive {
-                    return;
-                }
-                if value & 0x80 != 0 {
-                    (mmc1.shift, mmc1.bits) = (0, 0);
-                    mmc1.control |= 0x0C;
-                    return;
-                }
-                mmc1.shift |= (value & 1) << mmc1.bits;
-                mmc1.bits += 1;
-                if mmc1.bits < 5 {
-                    return;
-                }
-                let register = mmc1.shift;
-                (mmc1.shift, mmc1.bits) = (0, 0);
-                match addr {
-                    0x8000..=0x9FFF => {
-                        mmc1.control = register;
-                        self.mirroring = [
-                            Mirroring::SingleLower,
-                            Mirroring::SingleUpper,
-                            Mirroring::Vertical,
-                            Mirroring::Horizontal,
-                        ][register as usize & 3];
-                    }
-                    0xA000..=0xBFFF => mmc1.chr[0] = register,
-                    0xC000..=0xDFFF => mmc1.chr[1] = register,
-                    _ => mmc1.prg = register,
+                if let (_, Some(mirroring)) = mmc1.write(addr, value, cycle) {
+                    self.mirroring = mirroring;
                 }
             }
+            Mapper::Nwc(nwc) => {
+                let (filled, mirroring) = nwc.mmc1.write(addr, value, cycle);
+                if let Some(mirroring) = mirroring {
+                    self.mirroring = mirroring;
+                }
+                if filled {
+                    nwc.written();
+                }
+            }
+            Mapper::Sunsoft4(sunsoft) => match addr >> 12 {
+                register @ 0x8..=0xB => sunsoft.chr[register as usize - 8] = value,
+                register @ (0xC | 0xD) => sunsoft.tables[register as usize - 0xC] = value,
+                0xE => {
+                    self.mirroring = [
+                        Mirroring::Vertical,
+                        Mirroring::Horizontal,
+                        Mirroring::SingleLower,
+                        Mirroring::SingleUpper,
+                    ][value as usize & 3];
+                    sunsoft.chr_tables = value & 0x10 != 0;
+                }
+                _ => {
+                    // Bit 3 clear, the option cartridge's, if there's one.
+                    sunsoft.external = banks > 8 && value & 0x08 == 0;
+                    sunsoft.prg = if sunsoft.external {
+                        8 + (value & 7) % (banks - 8) as u8
+                    } else {
+                        value & 7
+                    };
+                    sunsoft.ram_on = value & 0x10 != 0;
+                }
+            },
             Mapper::Mmc3(mmc3) if self.board.is_namco_108() => {
                 if self.board == Board::Namco3453 {
                     self.mirroring = if value & 0x40 != 0 {
@@ -1870,6 +2055,8 @@ impl Cartridge {
             Mapper::Mmc2(_) => true,
             Mapper::Mmc5(mmc5) => !mmc5.plain_fetches(),
             Mapper::Namco163(namco) => namco.moves_tables(),
+            // Its nametables CHR ROM, not what the PPU has.
+            Mapper::Sunsoft4(sunsoft) => sunsoft.chr_tables,
             _ => false,
         }
     }
@@ -1884,6 +2071,11 @@ impl Cartridge {
     pub fn nametable_read(&mut self, addr: u16) -> Option<u8> {
         match &mut self.mapper {
             Mapper::Mmc5(mmc5) => mmc5.nametable_read(addr),
+            Mapper::Sunsoft4(sunsoft) if sunsoft.chr_tables => {
+                let table = sunsoft.tables[self.mirroring.page(addr) & 1] as usize | 0x80;
+                let at = table * 0x400 + (addr as usize & 0x3FF);
+                Some(self.chr_rom[at % self.chr_rom.len()])
+            }
             Mapper::Namco163(namco) => match namco.nametable(addr) {
                 Some(Err(bank)) => {
                     let chr = if self.chr_rom.is_empty() {
@@ -1905,6 +2097,7 @@ impl Cartridge {
             Mapper::Mmc5(mmc5) => mmc5.nametable_write(addr, value),
             // CHR ROM's, as a Namco can have, not written.
             Mapper::Namco163(namco) => matches!(namco.nametable(addr), Some(Err(_))),
+            Mapper::Sunsoft4(sunsoft) => sunsoft.chr_tables,
             _ => false,
         }
     }
@@ -2122,6 +2315,8 @@ impl Cartridge {
                 _ => (93, "SUNSOFT-2"),
             },
             Mapper::Quattro(_) => (232, "QUATTRO"),
+            Mapper::Nwc(_) => (105, "NES-EVENT"),
+            Mapper::Sunsoft4(_) => (68, "SUNSOFT-4"),
         };
         format!("MAPPER {number} {name}")
     }
@@ -2180,6 +2375,14 @@ impl Cartridge {
             bandai.cycle();
             return;
         }
+        if let Mapper::Nwc(nwc) = &mut self.mapper {
+            nwc.cycle();
+            return;
+        }
+        if let Mapper::Sunsoft4(sunsoft) = &mut self.mapper {
+            sunsoft.licence = sunsoft.licence.saturating_sub(1);
+            return;
+        }
         if let Mapper::Fme7(fme7) = &mut self.mapper {
             if fme7.counting {
                 fme7.irq |= fme7.counter == 0 && fme7.irq_enabled;
@@ -2214,6 +2417,7 @@ impl Cartridge {
             Mapper::Vrc3(vrc3) => vrc3.irq(),
             Mapper::Namco163(namco) => namco.irq(),
             Mapper::Bandai(bandai) => bandai.irq(),
+            Mapper::Nwc(nwc) => nwc.irq,
             _ => false,
         }
     }

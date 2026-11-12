@@ -83,7 +83,9 @@ mod tests {
     mod fds;
     mod mmc5;
     mod namco163;
+    mod nwc;
     mod sound;
+    mod sunsoft4;
     mod test_roms;
     mod timing;
     mod vrc;
