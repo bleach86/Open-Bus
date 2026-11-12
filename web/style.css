@@ -8,7 +8,7 @@
 :root {
   --display: Orbitron, system-ui, sans-serif;
   color-scheme: dark;
-  accent-color: #22e6ff;
+  accent-color: #ff2a9d;
   --night: #0d0221;
   --dusk: #1a0540;
   --card: #14062fd9;
@@ -17,7 +17,7 @@
   --text: #f6edff;
   --quiet: #bda8e0;
   --pink: #ff2a9d;
-  --cyan: #22e6ff;
+  --highlight: #ffffff;
   --gold: #ffd319;
   --sunset: linear-gradient(90deg, #ff2a9d, #ff7a3d);
   --on-neon: #14021f;
@@ -48,8 +48,8 @@ h1 {
   letter-spacing: 0.01em;
   color: transparent;
   background: linear-gradient(
-      #22e6ff 0 22%,
-      #e9fbff 46%,
+      #ffffff 0 22%,
+      #f6edff 46%,
       #2b0a5e 49%,
       #ff2a9d 54%,
       #ffd319 92%
@@ -95,8 +95,8 @@ select {
 button:hover,
 .button:hover,
 select:hover {
-  border-color: var(--cyan);
-  box-shadow: 0 0 10px #22e6ff66;
+  border-color: var(--highlight);
+  box-shadow: 0 0 10px #ffffff40;
 }
 select option {
   background: var(--dusk);
@@ -126,7 +126,7 @@ button:disabled:hover {
 }
 :focus-visible,
 .button:focus-within {
-  outline: 2px solid var(--cyan);
+  outline: 2px solid var(--highlight);
   outline-offset: 1px;
 }
 canvas:focus-visible {
@@ -220,7 +220,7 @@ canvas:focus-visible {
 #message {
   margin-top: 0.75rem;
   padding: 0.35rem 0.6rem;
-  color: var(--cyan);
+  color: var(--highlight);
   background: #14062feb;
   border-radius: 3px;
 }
@@ -302,10 +302,10 @@ canvas:focus-visible {
 }
 .tabs button.on .tally {
   color: var(--on-neon);
-  background: var(--cyan);
+  background: var(--highlight);
 }
 .shelf {
-  margin-top: 0.9rem;
+  margin-top: 1.8rem;
 }
 /* The Apple's choices, under the toolbar as the disks go by. */
 .fields {
@@ -349,7 +349,8 @@ ul {
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
-  gap: 1.1rem 0.9rem;
+  /* Down, GAP_DOWN, in app.js: room above a row for a cover to lift into. */
+  gap: 1.8rem 0.9rem;
 }
 .tile {
   position: relative;
@@ -385,8 +386,9 @@ ul {
   width: 100%;
   aspect-ratio: 497 / 680;
   object-fit: cover;
-  border-radius: 3px;
+  border-radius: 6px;
   background: var(--card);
+  transform-origin: 50% 100%;
   box-shadow: 0 4px 10px #05010d;
   transition:
     translate 0.1s,
@@ -507,13 +509,13 @@ ul {
 .play:has(input:focus-visible) .art {
   translate: 0 -3px;
   box-shadow:
-    0 0 0 2px var(--cyan),
-    0 0 18px #22e6ff80;
+    0 0 0 2px var(--highlight),
+    0 0 18px #ffffff60;
 }
 .play:has(input:checked) .art {
   box-shadow:
-    0 0 0 3px var(--cyan),
-    0 0 20px #22e6ffb0;
+    0 0 0 3px var(--highlight),
+    0 0 20px #ffffff80;
 }
 .play.some .art {
   box-shadow: 0 0 0 3px var(--gold);
@@ -579,11 +581,52 @@ ul {
   opacity: 0.3;
   background: none;
 }
-.letters button.on {
-  color: var(--cyan);
+.letters button.on,
+.letters button.on:hover {
+  color: var(--night);
+  background: #ffffffd9;
+  font-weight: 800;
 }
-body.pointer-gone .letters .pad-focus {
-  outline-offset: 0;
+/* On a touch screen, wider to touch, its letters a little bigger. */
+@media (pointer: coarse) {
+  .letters {
+    width: 2rem;
+    right: 0.1rem;
+  }
+  .letters button {
+    font-size: 0.78rem;
+  }
+}
+/* The letter dragged to, big in the middle of the screen while it's
+   dragged, a finger being over the strip's own. */
+.letter-bubble {
+  position: fixed;
+  z-index: 16;
+  top: 50%;
+  left: 50%;
+  width: 6rem;
+  height: 6rem;
+  display: grid;
+  place-items: center;
+  font:
+    700 3.4rem/1 system-ui,
+    sans-serif;
+  color: #fff;
+  background: #0d0221d8;
+  border: 1px solid #ffffff26;
+  border-radius: 1.2rem;
+  box-shadow: 0 8px 30px #000a;
+  transform: translate(-50%, -50%) scale(0.9);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.25s,
+    transform 0.25s;
+}
+.letter-bubble.shown {
+  opacity: 1;
+  transform: translate(-50%, -50%);
+  transition: none;
 }
 #nes:has(.letters:not([hidden])) {
   padding-right: 2.1rem;
@@ -639,6 +682,10 @@ body.pointer-gone .letters .pad-focus {
 body:has(> #pad-hints:not([hidden])) #message {
   bottom: 3.4rem;
 }
+/* Room at the shelf's end for its last row to be seen above the hints. */
+body:has(> #pad-hints:not([hidden])) #library {
+  padding-bottom: 3.6rem;
+}
 
 /* How many versions a game has, on its cover's corner. */
 .art-box {
@@ -682,10 +729,16 @@ body:has(> #pad-hints:not([hidden])) #message {
 .tile .remove:focus-visible {
   opacity: 1;
 }
-/* A game that won't load, as the emulator says: there, but greyed out. */
+/* A game that won't load, as the emulator says: there, but greyed out;
+   not while it's chosen, for its ring to be seen as well as any's. */
 .tile.unplayable .play {
   opacity: 0.45;
   filter: grayscale(1);
+}
+body.pointer-gone .tile.unplayable.selected .play,
+body:not(.pointer-gone) .tile.unplayable .play:hover {
+  opacity: 1;
+  filter: none;
 }
 
 /* A game's star, in the corner opposite its remove button: there on hover,
@@ -742,13 +795,13 @@ body:has(> #pad-hints:not([hidden])) #message {
   font: 500 0.68rem var(--display);
   letter-spacing: 0.02em;
   background: var(--raised);
-  color: var(--cyan);
+  color: var(--pink);
 }
 .opened {
   grid-column: 1 / -1;
   padding: 0.4rem 0.6rem;
   background: var(--card);
-  border: 1px solid #22e6ff60;
+  border: 1px solid #ffffff40;
   border-radius: 4px;
 }
 .opened li {
@@ -781,8 +834,8 @@ body:has(> #pad-hints:not([hidden])) #message {
 .name:hover {
   background: none;
   box-shadow: none;
-  color: var(--cyan);
-  text-shadow: 0 0 8px #22e6ff99;
+  color: var(--highlight);
+  text-shadow: 0 0 8px #ffffff80;
 }
 .drive {
   min-width: 1.4em;
@@ -790,11 +843,11 @@ body:has(> #pad-hints:not([hidden])) #message {
   margin-left: auto;
   text-align: center;
   color: var(--on-neon);
-  background: var(--cyan);
+  background: var(--highlight);
   border-radius: 2px;
   font-size: 0.75rem;
   font-weight: 700;
-  box-shadow: 0 0 8px #22e6ff99;
+  box-shadow: 0 0 8px #ffffff60;
 }
 .drive:empty {
   display: none;
@@ -873,7 +926,7 @@ details.short summary {
 .mark {
   flex: none;
   width: 1.2em;
-  color: var(--cyan);
+  color: var(--highlight);
 }
 li.missing .mark {
   color: var(--gold);
@@ -904,8 +957,8 @@ li.missing .rom {
   min-width: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-  color: var(--cyan);
-  text-shadow: 0 0 8px #22e6ff80;
+  color: var(--highlight);
+  text-shadow: 0 0 8px #ffffff60;
 }
 .controls {
   display: flex;
@@ -922,9 +975,7 @@ li.missing .rom {
   align-items: center;
   background: #000;
   border: 1px solid var(--pink);
-  box-shadow:
-    0 0 18px #ff2a9d80,
-    0 0 42px #22e6ff30;
+  box-shadow: 0 0 18px #ff2a9d80;
 }
 #frame:fullscreen {
   border: 0;
@@ -957,7 +1008,7 @@ canvas {
 }
 kbd {
   font: 500 0.85em var(--display);
-  color: var(--cyan);
+  color: var(--highlight);
   background: var(--dusk);
   border: 1px solid var(--line);
   border-radius: 2px;
@@ -1038,8 +1089,8 @@ kbd {
     font: italic 900 1.05rem var(--display);
     color: transparent;
     background: linear-gradient(
-        #22e6ff 0 22%,
-        #e9fbff 46%,
+        #ffffff 0 22%,
+        #f6edff 46%,
         #2b0a5e 49%,
         #ff2a9d 54%,
         #ffd319 92%
@@ -1086,7 +1137,7 @@ kbd {
     fill: #8d88a8;
   }
   #dpad g.on rect {
-    fill: var(--cyan);
+    fill: var(--highlight);
   }
   #dpad g.on path {
     fill: var(--on-neon);
@@ -1141,10 +1192,10 @@ kbd {
   .round.on {
     translate: 0 2px;
     color: var(--on-neon);
-    background: var(--cyan);
+    background: var(--highlight);
     box-shadow:
       0 1px 0 #0b6f80,
-      0 0 16px #22e6ffa0;
+      0 0 16px #ffffff80;
   }
 
   #pills {
@@ -1180,7 +1231,7 @@ kbd {
     pointer-events: none;
   }
   .pill [data-shows].on {
-    background: var(--cyan);
+    background: var(--highlight);
   }
 
   .grille {
@@ -1281,8 +1332,8 @@ body.dropping::after {
   display: grid;
   place-items: center;
   font: italic 900 2rem var(--display);
-  color: var(--cyan);
-  text-shadow: 0 0 14px var(--cyan);
+  color: var(--highlight);
+  text-shadow: 0 0 14px var(--pink);
   background: #0d0221e0;
   border: 2px dashed var(--pink);
   border-radius: 4px;
@@ -1305,7 +1356,7 @@ body.dropping::after {
   padding: 0.6rem 0.6rem 0.6rem 1rem;
   color: var(--text);
   background: #14062f;
-  border: 1px solid var(--cyan);
+  border: 1px solid #ffffff40;
   border-radius: 6px;
   box-shadow: 0 6px 24px #000a;
 }
@@ -1458,7 +1509,7 @@ body.dropping::after {
   cursor: pointer;
 }
 .check input {
-  accent-color: var(--cyan);
+  accent-color: var(--pink);
 }
 .rows {
   margin: 0.5rem 0;
@@ -1566,10 +1617,18 @@ body.dropping::after {
   border-radius: 5px;
 }
 
-/* A long shelf: nothing to repaint as it goes by. */
+/* A long shelf: nothing to repaint as it goes by, but its chosen cover's
+   lift, both ways. */
 .art {
   box-shadow: none;
-  transition: none;
+  transition:
+    transform 0.18s cubic-bezier(0.2, 0.7, 0.3, 1),
+    box-shadow 0.18s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .art {
+    transition: none;
+  }
 }
 
 /* What only the desktop app has, or only a browser. */
@@ -1593,10 +1652,12 @@ html:not(.native) .for-desktop,
 #game-settings {
   width: min(30rem, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
+  /* The screen as it's shown, between a phone browser's bars. */
+  max-height: calc(100dvh - 2rem);
   padding: 1.1rem 1.25rem;
   color: var(--text);
   background: #14062f;
-  border: 1px solid var(--cyan);
+  border: 1px solid #ffffff40;
   border-radius: 8px;
   box-shadow: 0 10px 40px #000c;
 }
@@ -1630,6 +1691,18 @@ html:not(.native) .for-desktop,
 #game-settings-about {
   margin: 0;
   overflow-wrap: anywhere;
+}
+#game-settings:focus {
+  outline: none;
+}
+/* Its buttons kept at its foot, what's above scrolling under them. */
+#game-settings > .row-actions {
+  position: sticky;
+  bottom: -1.1rem;
+  margin: 0 -1.25rem -1.1rem;
+  padding: 0.8rem 1.25rem 1.1rem;
+  background: #14062f;
+  border-top: 1px solid #ffffff14;
 }
 
 /* A game's details: its cover beside what's known of it, its versions and
@@ -1693,7 +1766,7 @@ html:not(.native) .for-desktop,
 }
 .dialog-tabs button.on {
   color: var(--on-neon);
-  background: var(--cyan);
+  background: var(--highlight);
   border-color: transparent;
 }
 #control-status {
@@ -1707,36 +1780,47 @@ html:not(.native) .for-desktop,
   }
 }
 
-/* What's chosen: a game's box ringed a little way out, the ring slowly
-   pulsing, its title lit. By the mouse, the one under it; by a gamepad or the
-   arrow keys, the one they've moved to, shown only while they're what's in
-   use, so that there's only ever one. Out past the edge the shelf of games
-   clips a tile at otherwise. */
+/* What's chosen, as a TV's home screen shows it: no outline, but its cover
+   lifted, grown from its foot into the gap above its row, so its title
+   below stays still and sharp, with a deep soft shadow; its title lit, the
+   others' quiet. By a gamepad, the one it's on; by the mouse, the one under
+   it, a little less. Shown only while they're what's in use, so that
+   there's only ever one. Out past the edge the shelf of games clips a tile
+   at otherwise; over its neighbours. Anything else a gamepad's on, as the
+   strip of letters' is, white. */
 #games .tile.selected,
 #games .tile:hover {
   overflow: visible;
+  z-index: 1;
 }
 body.pointer-gone .tile.selected .art,
-body:not(.pointer-gone) .play:hover .art,
-body.pointer-gone .pad-focus {
-  outline: 3px solid #3fe7ff;
-  outline-offset: 4px;
-  animation: chosen 1.6s ease-in-out infinite;
+body:not(.pointer-gone) .play:hover .art {
+  position: relative;
+  transform: scale(1.1);
+  box-shadow: 0 24px 40px -14px #000000f0;
 }
-@keyframes chosen {
-  50% {
-    outline-color: #1f6bff;
-  }
+body:not(.pointer-gone) .play:hover .art {
+  transform: scale(1.05);
 }
 body.pointer-gone .tile.selected .tile-title,
 body:not(.pointer-gone) .play:hover .tile-title {
-  color: #3fe7ff;
+  color: #ffffff;
+}
+body.pointer-gone :focus-visible {
+  outline: none;
+}
+body.pointer-gone .pad-focus,
+body.pointer-gone .pad-focus:hover {
+  color: var(--night);
+  background: #ffffffd9;
+  border-color: transparent;
+  box-shadow: none;
+  outline: none;
 }
 @media (prefers-reduced-motion: reduce) {
   body.pointer-gone .tile.selected .art,
-  body:not(.pointer-gone) .play:hover .art,
-  body.pointer-gone .pad-focus {
-    animation: none;
+  body:not(.pointer-gone) .play:hover .art {
+    transition: none;
   }
 }
 
@@ -1802,8 +1886,8 @@ html.tv {
 /* Below the toolbar, and below the last row, the gap between rows, GAP_DOWN,
    as when it's scrolled: rows line up with the screen to the end. */
 .tv.native .shelf {
-  margin-top: 1.1rem;
+  margin-top: 1.8rem;
 }
 .tv.native #library {
-  padding-bottom: 1.1rem;
+  padding-bottom: 1.8rem;
 }

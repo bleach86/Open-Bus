@@ -92,7 +92,7 @@ const SHOWN_EVERY = 24;
 const SMALLEST_TILE = 9;
 const TV_TILE = 14;
 const GAP_ACROSS = 0.9;
-const GAP_DOWN = 1.1;
+const GAP_DOWN = 1.8;
 const CAPTION = 3.7;
 const COVER_SHAPE = 680 / 497;
 const SHELF_EXTRA = 2;
@@ -615,22 +615,72 @@ function showLetters() {
     );
     letterShown = null;
 }
-const scrub = (event) => {
-    const button = document.elementFromPoint(event.clientX, event.clientY)?.closest('#letters button');
-    if (button && !button.disabled) {
-        jumpToLetter(button.dataset.letter);
+/// Dragged along, by a finger or the mouse: the letter level with it, by
+/// height alone, the finger free to wander off to the side; one with no
+/// games, the nearest that has. A fingertip covers more than a letter, so
+/// the one it's on stays till it's moved a third of a letter past it, not
+/// flicking between two as it rests on their edge; and only the first
+/// finger's followed. As it goes, the letter big in the middle of the
+/// screen, the finger over the strip's own, and a tap of a phone's buzzer
+/// each time it changes.
+const STAY = 1 / 3;
+let scrubbing = null;
+let scrubber = null;
+/// Where the strip was on the screen when it was touched: the finger's
+/// measured against that, on the screen, not the page, which a phone's
+/// browser can move under it as its address bar comes and goes.
+let stripOnScreen = null;
+function scrub(event) {
+    const letters = [...page('letters').children];
+    const { top, height } = stripOnScreen;
+    const along = ((event.screenY - top) / height) * letters.length;
+    const now = letters.findIndex((button) => button.dataset.letter === scrubbing);
+    if (now >= 0 && along >= now - STAY && along < now + 1 + STAY) {
+        return;
     }
-};
+    const at = Math.min(letters.length - 1, Math.max(0, Math.floor(along)));
+    const nearest = letters
+        .map((button, place) => ({ button, away: Math.abs(place - at) }))
+        .filter(({ button }) => !button.disabled)
+        .sort((a, b) => a.away - b.away)[0]?.button;
+    if (!nearest || nearest.dataset.letter === scrubbing) {
+        return;
+    }
+    scrubbing = nearest.dataset.letter;
+    jumpToLetter(scrubbing);
+    const bubble = page('letter-bubble');
+    bubble.textContent = scrubbing;
+    bubble.classList.add('shown');
+    navigator.vibrate?.(5);
+}
 page('letters').onpointerdown = (event) => {
-    if (event.pointerType === 'touch') {
-        page('letters').setPointerCapture(event.pointerId);
+    event.preventDefault();
+    if (scrubber !== null) {
+        return;
+    }
+    scrubber = event.pointerId;
+    page('letters').setPointerCapture(event.pointerId);
+    const { top, height } = page('letters').getBoundingClientRect();
+    stripOnScreen = { top: top + event.screenY - event.clientY, height };
+    scrubbing = null;
+    scrub(event);
+};
+// Nor the page scrolled by a finger on the strip, as some browsers still
+// would, the two then fighting.
+for (const kind of ['touchstart', 'touchmove']) {
+    page('letters').addEventListener(kind, (event) => event.preventDefault(), { passive: false });
+}
+page('letters').onpointermove = (event) => {
+    if (event.pointerId === scrubber) {
         scrub(event);
     }
 };
-page('letters').onpointermove = (event) => {
-    if (event.pointerType === 'touch' && event.buttons) {
-        scrub(event);
+page('letters').onpointerup = page('letters').onpointercancel = (event) => {
+    if (event.pointerId !== scrubber) {
+        return;
     }
+    scrubber = scrubbing = null;
+    page('letter-bubble').classList.remove('shown');
 };
 
 /// The shelf of games at the first game of `letter`: its row at the top,
@@ -874,8 +924,12 @@ async function openGameSettings(name) {
     };
     page('game-settings-close').onclick = () => dialog.close();
     dialog.showModal();
+    // A gamepad's on Play; a finger or the mouse, on nothing yet, not its
+    // first choice ringed for no reason.
     if (document.body.classList.contains('pointer-gone')) {
         focusOn(page('game-settings-play'));
+    } else {
+        dialog.focus();
     }
 }
 page('game-settings').addEventListener('close', () => {
@@ -1152,9 +1206,14 @@ function showPadHints() {
     if (bar.hidden) {
         return;
     }
-    const home = settingsOpen() ? page('game-settings') : document.body;
-    if (bar.parentElement !== home) {
-        home.append(bar);
+    // In a game's details, above its buttons, which keep to its foot.
+    if (settingsOpen()) {
+        const actions = page('game-settings').querySelector(':scope > .row-actions');
+        if (bar.nextElementSibling !== actions) {
+            actions.before(bar);
+        }
+    } else if (bar.parentElement !== document.body) {
+        document.body.append(bar);
     }
     const hints = padHints().filter(([button]) => button);
     const said = JSON.stringify(hints);
@@ -1187,6 +1246,16 @@ function showSelected() {
     showPadHints();
 }
 
+/// How much of the screen's foot the gamepad's hints cover, if they're
+/// showing over the shelf, and a little more: what's scrolled to, above it.
+function hintsCover() {
+    const bar = page('pad-hints');
+    if (bar.hidden || bar.parentElement !== document.body) {
+        return 0;
+    }
+    return innerHeight - bar.getBoundingClientRect().top + 8;
+}
+
 /// The selection on the shelf of games moved, and scrolled to.
 function moveInGames(way) {
     const list = page('games');
@@ -1208,9 +1277,12 @@ function moveInGames(way) {
     const toolbar = document.querySelector('.toolbar').getBoundingClientRect().height;
     if (top < scrolled + toolbar) {
         scroller.scrollTo(0, top - toolbar - down);
-    } else if (top + row > scrolled + innerHeight) {
+    } else if (top + row > scrolled + innerHeight - hintsCover()) {
         // The TV's shelf, whole rows to the screen, lined up by the top one.
-        scroller.scrollTo(0, rows ? top - toolbar - down - (rows - 1) * height : top + row + down - innerHeight);
+        scroller.scrollTo(
+            0,
+            rows ? top - toolbar - down - (rows - 1) * height : top + row + down + hintsCover() - innerHeight,
+        );
     }
     placeShelf();
     showSelected();
@@ -1294,8 +1366,11 @@ function focusOn(element) {
     const covered = Math.max(...[...bars].map((bar) => bar.getBoundingClientRect().bottom));
     const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
     const top = box.getBoundingClientRect().top - GAP_DOWN * rem;
+    const bottom = box.getBoundingClientRect().bottom + hintsCover();
     if (top < covered) {
         scroller.scrollBy(0, top - covered);
+    } else if (bottom > innerHeight) {
+        scroller.scrollBy(0, bottom - innerHeight);
     }
 }
 

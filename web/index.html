@@ -70,6 +70,7 @@
           aria-label="Jump to a letter"
           hidden
         ></nav>
+        <div id="letter-bubble" class="letter-bubble" aria-hidden="true"></div>
         <ul id="games" class="grid"></ul>
         <p class="empty"></p>
       </section>
@@ -406,7 +407,11 @@
       </p>
     </dialog>
 
-    <dialog id="game-settings" aria-labelledby="game-settings-title">
+    <dialog
+      id="game-settings"
+      aria-labelledby="game-settings-title"
+      tabindex="-1"
+    >
       <div class="details">
         <div id="game-cover" class="details-cover"></div>
         <div class="details-info">
