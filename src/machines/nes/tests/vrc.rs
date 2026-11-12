@@ -1,5 +1,8 @@
 //! Konami's VRC2 and VRC4: its banks, each board's wiring of its registers,
 //! a guess's of both, and VRC4's IRQ. VRC1's banks; VRC3's, and its IRQ.
+//! VRC6's banks, 26's wiring, its CHR's banking and its nametables, of the
+//! PPU's RAM or CHR ROM; its RAM's enable, its IRQ; and its sound, a step
+//! at a time.
 
 #[cfg(test)]
 mod tests {
@@ -194,5 +197,183 @@ mod tests {
         held_after(&mut cart, 2);
         cart.cpu_write(0xD000, 0, 0);
         held_after(&mut cart, 2);
+    }
+
+    /// VRC6's cartridge, `number` 24 or 26, an old header's: 256K of PRG,
+    /// each 8K its number in every byte, and 256K of CHR, each 1K its
+    /// number.
+    fn vrc6(number: u8) -> Cartridge {
+        let mut image = b"NES\x1A\x10\x20".to_vec();
+        image.extend([number << 4, number & 0xF0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        for bank in 0..32 {
+            image.extend([bank; 0x2000]);
+        }
+        for page in 0..256 {
+            image.extend([page as u8; 0x400]);
+        }
+        Cartridge::new(&image).unwrap()
+    }
+
+    fn pages(cart: &mut Cartridge) -> Vec<u8> {
+        (0..8).map(|page| cart.chr_read(page * 0x400)).collect()
+    }
+
+    #[test]
+    fn vrc6s_banks_and_26s_wiring() {
+        let mut cart = vrc6(24);
+        assert_eq!(cart.mapper_name(), "MAPPER 24 VRC6");
+        cart.cpu_write(0x8000, 3, 0);
+        cart.cpu_write(0xC000, 9, 0);
+        assert_eq!(prg(&mut cart), [6, 7, 9, 31], "16K, 8K, the last fixed");
+        for (n, at) in [
+            0xD000, 0xD001, 0xD002, 0xD003, 0xE000, 0xE001, 0xE002, 0xE003,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            cart.cpu_write(at, 0x40 + n as u8, 0);
+        }
+        assert_eq!(
+            pages(&mut cart),
+            [0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47]
+        );
+        // 26's: A0 and A1 the other way round.
+        let mut cart = vrc6(26);
+        assert_eq!(cart.mapper_name(), "MAPPER 26 VRC6");
+        cart.cpu_write(0xD001, 0x55, 0);
+        cart.cpu_write(0xD002, 0x66, 0);
+        assert_eq!(pages(&mut cart)[1..3], [0x66, 0x55]);
+    }
+
+    #[test]
+    fn vrc6s_chr_banked_by_1k_or_2k() {
+        let mut cart = vrc6(24);
+        for register in 0..8 {
+            let at = [0xD000, 0xE000][register / 4] + register as u16 % 4;
+            cart.cpu_write(at, 0x10 * register as u8 + 1, 0);
+        }
+        // Four 2K, each its number's even and odd, or each half all of it.
+        cart.cpu_write(0xB003, 0x21, 0);
+        assert_eq!(
+            pages(&mut cart),
+            [0x00, 0x01, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31]
+        );
+        cart.cpu_write(0xB003, 0x01, 0);
+        assert_eq!(
+            pages(&mut cart),
+            [0x01, 0x01, 0x11, 0x11, 0x21, 0x21, 0x31, 0x31]
+        );
+        // Four 1K, then registers 4 and 5 2K.
+        cart.cpu_write(0xB003, 0x22, 0);
+        assert_eq!(
+            pages(&mut cart),
+            [0x01, 0x11, 0x21, 0x31, 0x40, 0x41, 0x50, 0x51]
+        );
+    }
+
+    #[test]
+    fn vrc6s_nametables_the_ppus_or_chr_roms() {
+        let mut cart = vrc6(24);
+        let tables = |cart: &mut Cartridge| {
+            [0x2000, 0x2400, 0x2800, 0x2C00].map(|addr| cart.nametable_page(addr))
+        };
+        for (mode, want) in [
+            (0x20, [0, 1, 0, 1]),
+            (0x24, [0, 0, 1, 1]),
+            (0x28, [0, 0, 0, 0]),
+            (0x2C, [1, 1, 1, 1]),
+        ] {
+            cart.cpu_write(0xB003, mode, 0);
+            assert_eq!(tables(&mut cart), want, "mode {mode:02X}");
+        }
+        // Without bit 5, registers 6 and 7's bit 0.
+        cart.cpu_write(0xE002, 0x11, 0);
+        cart.cpu_write(0xE003, 0x20, 0);
+        cart.cpu_write(0xB003, 0x00, 0);
+        assert_eq!(tables(&mut cart), [1, 1, 0, 0]);
+        assert_eq!(cart.nametable_read(0x2000), None);
+        assert!(!cart.watches_fetches());
+        // CHR ROM's, those pages, not written.
+        cart.cpu_write(0xB003, 0x30, 0);
+        let read = [0x2000, 0x2400, 0x2800, 0x2C00].map(|addr| cart.nametable_read(addr));
+        assert_eq!(
+            read,
+            [0x10, 0x11, 0x20, 0x21].map(Some),
+            "vertical, of CHR ROM"
+        );
+        assert!(cart.watches_fetches());
+        assert!(cart.nametable_write(0x2000, 0x99));
+    }
+
+    #[test]
+    fn vrc6s_ram_once_enabled_and_its_irq() {
+        let mut cart = vrc6(24);
+        cart.cpu_write(0x6000, 0x5A, 0);
+        assert_eq!(cart.cpu_read(0x6000), None);
+        cart.cpu_write(0xB003, 0x80, 0);
+        cart.cpu_write(0x6000, 0x5A, 0);
+        assert_eq!(cart.cpu_read(0x6000), Some(0x5A));
+        // As VRC4's: up from its latch, held going past $FF.
+        cart.cpu_write(0xF000, 0xFE, 0);
+        cart.cpu_write(0xF001, 0x06, 0);
+        held_after(&mut cart, 2);
+        cart.cpu_write(0xF002, 0, 0);
+        assert!(!cart.irq(), "acknowledged");
+    }
+
+    /// The VRC6's sound now: its channels' levels added.
+    fn level(cart: &Cartridge) -> u8 {
+        (cart.output() / 0.015).round() as u8
+    }
+
+    /// Its level after each of `cycles` cycles.
+    fn levels(cart: &mut Cartridge, cycles: usize) -> Vec<u8> {
+        (0..cycles)
+            .map(|_| {
+                cart.cycle();
+                level(cart)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn vrc6s_pulses_their_duty_in_16ths() {
+        let mut cart = vrc6(24);
+        cart.cpu_write(0x9000, 0x1F, 0); // volume 15, on for 2 steps of 16
+        cart.cpu_write(0x9002, 0x80, 0); // period 0: a step a cycle
+        assert_eq!(level(&cart), 15);
+        let mut want = vec![15];
+        want.extend([0; 14]);
+        want.push(15);
+        assert_eq!(levels(&mut cart, 16), want);
+        cart.cpu_write(0x9000, 0x8F, 0);
+        assert_eq!(levels(&mut cart, 16), [15; 16], "always on");
+        // A period of 1, two cycles a step; shifted right 4, the same.
+        cart.cpu_write(0x9000, 0x0F, 0);
+        cart.cpu_write(0x9002, 0x00, 0); // disabled: back at its first step
+        cart.cpu_write(0xA001, 0x10, 0);
+        cart.cpu_write(0xA000, 0x17, 0); // volume 7, on for 2 steps of 16
+        cart.cpu_write(0xA002, 0x80, 0);
+        cart.cpu_write(0x9003, 0x02, 0);
+        assert_eq!(levels(&mut cart, 4)[..], [7, 7, 0, 0]);
+        // Halted: none of them steps.
+        cart.cpu_write(0x9003, 0x01, 0);
+        assert_eq!(levels(&mut cart, 4), [0; 4]);
+    }
+
+    #[test]
+    fn vrc6s_sawtooth_its_rate_added_every_other_step_of_14() {
+        let mut cart = vrc6(24);
+        cart.cpu_write(0xB000, 0x08, 0);
+        cart.cpu_write(0xB002, 0x80, 0);
+        assert_eq!(
+            levels(&mut cart, 14),
+            [0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 0]
+        );
+        levels(&mut cart, 4);
+        cart.cpu_write(0xB002, 0x00, 0);
+        assert_eq!(level(&cart), 0, "disabled");
+        cart.cpu_write(0xB002, 0x80, 0);
+        assert_eq!(levels(&mut cart, 2), [0, 1], "started over");
     }
 }

@@ -63,7 +63,8 @@
 //!
 //! 5, the MMC5: in mmc5.rs, there being so much of it.
 //!
-//! 21, 22, 23 and 25, Konami's VRC2 and VRC4; 75, VRC1; 73, VRC3: in vrc.rs.
+//! 21, 22, 23 and 25, Konami's VRC2 and VRC4; 75, VRC1; 73, VRC3; 24 and
+//! 26, VRC6, with its sound: in vrc.rs.
 //!
 //! 20, the Famicom Disk System: not a cartridge, but it's in the slot, and
 //! all of it, in fds.rs.
@@ -247,7 +248,7 @@ use super::fds::Fds;
 use super::mmc5::{self, Mmc5};
 use super::namco163::{CHIP_RAM, Chip, Namco163};
 use super::region::Region;
-use super::vrc::{Vrc, Vrc1, Vrc3, Wiring};
+use super::vrc::{Vrc, Vrc1, Vrc3, Vrc6, Wiring};
 use serde::{Deserialize, Serialize};
 
 /// How the PPU's four nametables, $2000, $2400, $2800 and $2C00, are
@@ -787,6 +788,7 @@ pub enum Mapper {
     Bandai(Box<Bandai>),
     Nwc(Nwc),
     Sunsoft4(Sunsoft4),
+    Vrc6(Box<Vrc6>),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -1003,6 +1005,7 @@ impl Cartridge {
             21 | 22 | 23 | 25 => Mapper::Vrc(Vrc::default()),
             75 => Mapper::Vrc1(Vrc1::default()),
             73 => Mapper::Vrc3(Vrc3::default()),
+            24 | 26 => Mapper::Vrc6(Box::new(Vrc6::new(number == 26))),
             // An old header's 16 with 512K of PRG and CHR RAM: Famicom Jump
             // II's 153, the only board so, and the only game.
             16 if !told && prg_size == 0x80000 && chr_size == 0 => {
@@ -1181,6 +1184,7 @@ impl Cartridge {
         match &self.mapper {
             Mapper::Fds(fds) => fds.output(),
             Mapper::Namco163(namco) => namco.output(),
+            Mapper::Vrc6(vrc6) => vrc6.output(),
             _ => 0.0,
         }
     }
@@ -1296,6 +1300,9 @@ impl Cartridge {
             }
             Mapper::Namco163(namco) => {
                 namco.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF)
+            }
+            Mapper::Vrc6(vrc6) => {
+                vrc6.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF)
             }
             Mapper::Bandai(bandai) => in_16k(bandai.prg_bank(addr as u16, len / PRG_BANK)),
             Mapper::Vrc3(vrc3) => in_16k(if addr < 0xC000 {
@@ -1464,6 +1471,7 @@ impl Cartridge {
             Mapper::Maxi15(maxi) => maxi.banks().1 * CHR_BANK + addr,
             Mapper::Vrc1(vrc1) => vrc1.chr_bank(addr as u16) * 0x1000 + (addr & 0x0FFF),
             Mapper::Namco163(namco) => namco.chr_bank(addr as u16) * 0x400 + (addr & 0x3FF),
+            Mapper::Vrc6(vrc6) => vrc6.chr_bank(addr as u16) * 0x400 + (addr & 0x3FF),
             Mapper::Bandai(bandai) => bandai.chr_offset(addr as u16),
             Mapper::Latch(latch) => {
                 let latch = *latch as usize;
@@ -1544,6 +1552,7 @@ impl Cartridge {
             Mapper::Mmc1(mmc1) if mmc1.prg & 0x10 != 0 => None,
             Mapper::Nwc(nwc) if nwc.mmc1.prg & 0x10 != 0 => None,
             Mapper::Sunsoft4(sunsoft) if !sunsoft.ram_on => None,
+            Mapper::Vrc6(vrc6) if !vrc6.ram_on() => None,
             Mapper::Mmc1(mmc1) if self.prg_ram.len() == 0x8000 => {
                 Some(((mmc1.chr[0] as usize >> 2) & 3) * 0x2000 + addr)
             }
@@ -1773,6 +1782,7 @@ impl Cartridge {
                 }
             }
             Mapper::Vrc3(vrc3) => vrc3.write(addr, value),
+            Mapper::Vrc6(vrc6) => vrc6.write(addr, value),
             Mapper::Caltron(caltron) => {
                 if caltron.prg >= 4 {
                     caltron.chr = (caltron.chr & 0x0C) | (value & 3);
@@ -2032,6 +2042,7 @@ impl Cartridge {
                 (mmc3.banks[(addr as usize >> 11) & 1] as usize >> 5) & 1
             }
             Mapper::Mmc5(mmc5) => mmc5.nametable_page(addr),
+            Mapper::Vrc6(vrc6) => vrc6.table(addr) & 1,
             Mapper::Namco163(namco) => match namco.nametable(addr) {
                 Some(Ok(page)) => page,
                 _ => self.mirroring.page(addr),
@@ -2057,6 +2068,7 @@ impl Cartridge {
             Mapper::Namco163(namco) => namco.moves_tables(),
             // Its nametables CHR ROM, not what the PPU has.
             Mapper::Sunsoft4(sunsoft) => sunsoft.chr_tables,
+            Mapper::Vrc6(vrc6) => vrc6.rom_tables(),
             _ => false,
         }
     }
@@ -2071,6 +2083,14 @@ impl Cartridge {
     pub fn nametable_read(&mut self, addr: u16) -> Option<u8> {
         match &mut self.mapper {
             Mapper::Mmc5(mmc5) => mmc5.nametable_read(addr),
+            Mapper::Vrc6(vrc6) if vrc6.rom_tables() => {
+                let chr = if self.chr_rom.is_empty() {
+                    &self.chr_ram
+                } else {
+                    &self.chr_rom
+                };
+                Some(chr[(vrc6.table(addr) * 0x400 + (addr as usize & 0x3FF)) % chr.len()])
+            }
             Mapper::Sunsoft4(sunsoft) if sunsoft.chr_tables => {
                 let table = sunsoft.tables[self.mirroring.page(addr) & 1] as usize | 0x80;
                 let at = table * 0x400 + (addr as usize & 0x3FF);
@@ -2098,6 +2118,7 @@ impl Cartridge {
             // CHR ROM's, as a Namco can have, not written.
             Mapper::Namco163(namco) => matches!(namco.nametable(addr), Some(Err(_))),
             Mapper::Sunsoft4(sunsoft) => sunsoft.chr_tables,
+            Mapper::Vrc6(vrc6) => vrc6.rom_tables(),
             _ => false,
         }
     }
@@ -2317,6 +2338,7 @@ impl Cartridge {
             Mapper::Quattro(_) => (232, "QUATTRO"),
             Mapper::Nwc(_) => (105, "NES-EVENT"),
             Mapper::Sunsoft4(_) => (68, "SUNSOFT-4"),
+            Mapper::Vrc6(vrc6) => (if vrc6.swapped() { 26 } else { 24 }, "VRC6"),
         };
         format!("MAPPER {number} {name}")
     }
@@ -2364,6 +2386,10 @@ impl Cartridge {
         }
         if let Mapper::Vrc3(vrc3) = &mut self.mapper {
             vrc3.cycle();
+            return;
+        }
+        if let Mapper::Vrc6(vrc6) = &mut self.mapper {
+            vrc6.cycle();
             return;
         }
         if let Mapper::Namco163(namco) = &mut self.mapper {
@@ -2415,6 +2441,7 @@ impl Cartridge {
             Mapper::Fds(fds) => fds.irq(),
             Mapper::Vrc(vrc) => vrc.irq(),
             Mapper::Vrc3(vrc3) => vrc3.irq(),
+            Mapper::Vrc6(vrc6) => vrc6.irq(),
             Mapper::Namco163(namco) => namco.irq(),
             Mapper::Bandai(bandai) => bandai.irq(),
             Mapper::Nwc(nwc) => nwc.irq,

@@ -1,5 +1,5 @@
-//! Konami's VRCs: VRC2 and VRC4, mappers 21, 22, 23 and 25; VRC1, 75; and
-//! VRC3, 73. As Mesen has them.
+//! Konami's VRCs: VRC2 and VRC4, mappers 21, 22, 23 and 25; VRC1, 75;
+//! VRC3, 73; and VRC6, 24 and 26, with its sound. As Mesen has them.
 //!
 //! Its registers are in four 4K blocks from $8000 up, four in each, which
 //! of the four by two of the CPU's address lines, wired to the chip's A0 and
@@ -31,6 +31,25 @@
 //! banks there, the last fixed at $E000; $9000, bit 0 the nametables,
 //! horizontal, not vertical, and bits 1 and 2 the high bits of its CHR's
 //! two 4K banks, $E000 and $F000 their low four.
+//!
+//! VRC6's, 26's with A0 and A1 the other way round: $8000, the 16K at
+//! $8000; $C000, the 8K at $C000, the last fixed at $E000. $D000 to $E003,
+//! its eight CHR registers; $B003, how they're banked: bits 0 and 1, eight
+//! 1K banks, four 2K, or four 1K and two 2K; bit 5, a 2K bank's two halves
+//! its register's number's even and odd, or both its number. Then the
+//! nametables, each a 1K page by registers 4 to 7: bits 2 and 3 which, as
+//! vertical, horizontal, or one screen or the other with bit 5 set; and
+//! with bit 4, those pages of CHR ROM, or without it, the PPU's RAM, the
+//! pages' bit 0. Bit 7, its PRG RAM's enable. Its IRQ as VRC4's: $F000 its
+//! latch, $F001 its control, $F002 acknowledging.
+//!
+//! VRC6's sound: two pulses ($9000 to $9002, $A000 to $A002), their
+//! volume, their duty in 16ths (or bit 7, always on), a 12-bit period and
+//! an enable; and a sawtooth ($B000 to $B002), a rate its accumulator's
+//! added every other step of 14, a period and an enable. Each counts its
+//! period down every CPU cycle, a step on going past 0. $9003: bit 0 halts
+//! them all, bits 1 and 2 shift their periods 4 or 8 bits right. The
+//! pulses' volumes and the sawtooth's accumulator's top 5 bits are added.
 //!
 //! VRC3's: a 16K bank at $8000 ($F000, bits 0 to 2), the last fixed, and
 //! 8K of CHR RAM; its IRQ's 16 bits of latch, a nibble each at $8000 to
@@ -124,6 +143,44 @@ struct Irq {
     held: bool,
 }
 
+impl Irq {
+    /// Its control written: bit 1 enabling it, the counter then reloaded;
+    /// bit 2 counting CPU cycles, not lines; bit 0, its enabling again
+    /// when acknowledged.
+    fn control(&mut self, value: u8) {
+        self.enabled_on_acknowledging = value & 0x01 != 0;
+        self.enabled = value & 0x02 != 0;
+        self.counting_cycles = value & 0x04 != 0;
+        if self.enabled {
+            self.counter = self.latch;
+            self.prescaler = 341;
+        }
+        self.held = false;
+    }
+
+    fn acknowledge(&mut self) {
+        self.enabled = self.enabled_on_acknowledging;
+        self.held = false;
+    }
+
+    /// A CPU cycle: it or a line of them counted.
+    fn cycle(&mut self) {
+        if !self.enabled {
+            return;
+        }
+        self.prescaler -= 3;
+        if self.counting_cycles || self.prescaler <= 0 {
+            if self.counter == 0xFF {
+                self.counter = self.latch;
+                self.held = true;
+            } else {
+                self.counter += 1;
+            }
+            self.prescaler += 341;
+        }
+    }
+}
+
 impl Vrc {
     /// A write to `addr`, $8000 up, as `wiring` has it, `guessed` or not:
     /// the nametables, if they're what's written.
@@ -161,20 +218,8 @@ impl Vrc {
             }
             0xF000 => self.irq.latch = (self.irq.latch & 0xF0) | (value & 0x0F),
             0xF001 => self.irq.latch = (self.irq.latch & 0x0F) | (value & 0x0F) << 4,
-            0xF002 => {
-                self.irq.enabled_on_acknowledging = value & 0x01 != 0;
-                self.irq.enabled = value & 0x02 != 0;
-                self.irq.counting_cycles = value & 0x04 != 0;
-                if self.irq.enabled {
-                    self.irq.counter = self.irq.latch;
-                    self.irq.prescaler = 341;
-                }
-                self.irq.held = false;
-            }
-            0xF003 => {
-                self.irq.enabled = self.irq.enabled_on_acknowledging;
-                self.irq.held = false;
-            }
+            0xF002 => self.irq.control(value),
+            0xF003 => self.irq.acknowledge(),
             _ => {}
         }
         None
@@ -201,27 +246,281 @@ impl Vrc {
         }
     }
 
-    /// A CPU cycle: VRC4's IRQ counting, it or a line of them.
+    /// A CPU cycle: VRC4's IRQ counting.
     pub fn cycle(&mut self) {
-        let irq = &mut self.irq;
-        if !irq.enabled {
-            return;
-        }
-        irq.prescaler -= 3;
-        if irq.counting_cycles || irq.prescaler <= 0 {
-            if irq.counter == 0xFF {
-                irq.counter = irq.latch;
-                irq.held = true;
-            } else {
-                irq.counter += 1;
+        self.irq.cycle();
+    }
+
+    /// Whether its IRQ line's held.
+    pub fn irq(&self) -> bool {
+        self.irq.held
+    }
+}
+
+/// VRC6's registers: whether A0 and A1 are the other way round, 26's; its
+/// 16K and 8K banks, its CHR registers, how they're banked; its IRQ, and
+/// its sound.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Vrc6 {
+    swapped: bool,
+    prg: [u8; 2],
+    chr: [u8; 8],
+    mode: u8,
+    irq: Irq,
+    sound: Sound,
+}
+
+/// VRC6's sound: its two pulses and its sawtooth, whether they're halted,
+/// and how far right their periods are shifted.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct Sound {
+    pulses: [Pulse; 2],
+    saw: Saw,
+    halted: bool,
+    shift: u8,
+}
+
+/// A pulse: its volume and duty, or always on; its period, enable, and
+/// where it is in it; its step of 16.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct Pulse {
+    volume: u8,
+    duty: u8,
+    always: bool,
+    period: u16,
+    enabled: bool,
+    timer: u16,
+    step: u8,
+}
+
+/// The sawtooth: its rate, its accumulator; its period, enable, and where
+/// it is in it; its step of 14.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct Saw {
+    rate: u8,
+    accumulator: u8,
+    period: u16,
+    enabled: bool,
+    timer: u16,
+    step: u8,
+}
+
+/// How a period's counted: down every cycle, a step on going past 0, and
+/// reloaded, shifted `shift` bits right. Whether it stepped.
+fn count(timer: &mut u16, period: u16, shift: u8) -> bool {
+    if *timer == 0 {
+        *timer = period >> shift;
+        true
+    } else {
+        *timer -= 1;
+        false
+    }
+}
+
+impl Pulse {
+    /// Register `register`, 0 to 2, written.
+    fn write(&mut self, register: u16, value: u8) {
+        match register {
+            0 => {
+                self.volume = value & 0x0F;
+                self.duty = (value >> 4) & 7;
+                self.always = value & 0x80 != 0;
             }
-            irq.prescaler += 341;
+            1 => self.period = (self.period & 0x0F00) | value as u16,
+            _ => {
+                self.period = (self.period & 0x00FF) | ((value & 0x0F) as u16) << 8;
+                self.enabled = value & 0x80 != 0;
+                if !self.enabled {
+                    self.step = 0;
+                }
+            }
+        }
+    }
+
+    fn cycle(&mut self, shift: u8) {
+        if self.enabled && count(&mut self.timer, self.period, shift) {
+            self.step = (self.step + 1) & 0x0F;
+        }
+    }
+
+    fn output(&self) -> u8 {
+        if self.enabled && (self.always || self.step <= self.duty) {
+            self.volume
+        } else {
+            0
+        }
+    }
+}
+
+impl Saw {
+    /// Register `register`, 0 to 2, written: disabled, its accumulator
+    /// cleared and its steps started over.
+    fn write(&mut self, register: u16, value: u8) {
+        match register {
+            0 => self.rate = value & 0x3F,
+            1 => self.period = (self.period & 0x0F00) | value as u16,
+            _ => {
+                self.period = (self.period & 0x00FF) | ((value & 0x0F) as u16) << 8;
+                self.enabled = value & 0x80 != 0;
+                if !self.enabled {
+                    (self.accumulator, self.step) = (0, 0);
+                }
+            }
+        }
+    }
+
+    /// A cycle: at a step, the accumulator cleared at the first, its rate
+    /// added at every other.
+    fn cycle(&mut self, shift: u8) {
+        if self.enabled && count(&mut self.timer, self.period, shift) {
+            self.step = (self.step + 1) % 14;
+            if self.step == 0 {
+                self.accumulator = 0;
+            } else if self.step & 1 == 0 {
+                self.accumulator = self.accumulator.wrapping_add(self.rate);
+            }
+        }
+    }
+
+    fn output(&self) -> u8 {
+        if self.enabled {
+            self.accumulator >> 3
+        } else {
+            0
+        }
+    }
+}
+
+impl Vrc6 {
+    /// 24's, or with A0 and A1 `swapped`, 26's.
+    pub fn new(swapped: bool) -> Vrc6 {
+        Vrc6 {
+            swapped,
+            ..Vrc6::default()
+        }
+    }
+
+    /// Whether it's 26's.
+    pub fn swapped(&self) -> bool {
+        self.swapped
+    }
+
+    /// A write to `addr`, $8000 up.
+    pub fn write(&mut self, addr: u16, value: u8) {
+        let addr = if self.swapped {
+            (addr & 0xFFFC) | (addr & 1) << 1 | (addr & 2) >> 1
+        } else {
+            addr
+        };
+        let register = addr & 3;
+        match addr & 0xF003 {
+            0x8000..=0x8003 => self.prg[0] = value & 0x0F,
+            0x9003 => {
+                self.sound.halted = value & 0x01 != 0;
+                self.sound.shift = if value & 0x04 != 0 {
+                    8
+                } else if value & 0x02 != 0 {
+                    4
+                } else {
+                    0
+                };
+            }
+            0x9000..=0x9002 => self.sound.pulses[0].write(register, value),
+            0xA000..=0xA002 => self.sound.pulses[1].write(register, value),
+            0xB000..=0xB002 => self.sound.saw.write(register, value),
+            0xB003 => self.mode = value,
+            0xC000..=0xC003 => self.prg[1] = value & 0x1F,
+            0xD000..=0xE003 => {
+                self.chr[((addr >> 12) as usize - 0xD) * 4 + register as usize] = value;
+            }
+            0xF000 => self.irq.latch = value,
+            0xF001 => self.irq.control(value),
+            0xF002 => self.irq.acknowledge(),
+            _ => {}
+        }
+    }
+
+    /// Which 8K of its PRG ROM `addr`, $8000 up, is in, of `banks`.
+    pub fn prg_bank(&self, addr: u16, banks: usize) -> usize {
+        match addr {
+            0x8000..=0xBFFF => (self.prg[0] as usize) << 1 | (addr as usize >> 13 & 1),
+            0xC000..=0xDFFF => self.prg[1] as usize,
+            _ => banks - 1,
+        }
+    }
+
+    /// Which 1K of its CHR pattern table address `addr` is in.
+    pub fn chr_bank(&self, addr: u16) -> usize {
+        let slot = addr as usize >> 10 & 7;
+        let chr = |register: usize| self.chr[register] as usize;
+        // A 2K bank's halves: its number's even and odd, or both it.
+        let half = |register: usize, odd: usize| {
+            if self.mode & 0x20 != 0 {
+                (chr(register) & !1) | odd
+            } else {
+                chr(register)
+            }
+        };
+        match (self.mode & 3, slot) {
+            (0, _) => chr(slot),
+            (1, _) => half(slot >> 1, slot & 1),
+            (_, 0..=3) => chr(slot),
+            _ => half(4 + ((slot - 4) >> 1), slot & 1),
+        }
+    }
+
+    /// Whether its PRG RAM's enabled.
+    pub fn ram_on(&self) -> bool {
+        self.mode & 0x80 != 0
+    }
+
+    /// Whether its nametables are CHR ROM's.
+    pub fn rom_tables(&self) -> bool {
+        self.mode & 0x10 != 0
+    }
+
+    /// The 1K page nametable address `addr` is: of CHR ROM, or of the
+    /// PPU's RAM, its bit 0.
+    pub fn table(&self, addr: u16) -> usize {
+        let slot = (addr as usize >> 10) & 3;
+        let chr = |register: usize| self.chr[register] as usize;
+        let (even_6, even_7) = (chr(6) & !1, chr(7) & !1);
+        match self.mode & 0x2F {
+            // Vertical, horizontal, one screen or the other.
+            0x20 | 0x27 => [even_6, even_6 | 1, even_7, even_7 | 1][slot],
+            0x23 | 0x24 => [even_6, even_7, even_6 | 1, even_7 | 1][slot],
+            0x28 | 0x2F => [even_6, even_6, even_7, even_7][slot],
+            0x2B | 0x2C => [even_6 | 1, even_7 | 1, even_6 | 1, even_7 | 1][slot],
+            _ => match self.mode & 7 {
+                0 | 6 | 7 => [chr(6), chr(6), chr(7), chr(7)][slot],
+                1 | 5 => [chr(4), chr(5), chr(6), chr(7)][slot],
+                _ => [chr(6), chr(7), chr(6), chr(7)][slot],
+            },
+        }
+    }
+
+    /// A CPU cycle: its IRQ counting, and its sound, unless it's halted.
+    pub fn cycle(&mut self) {
+        self.irq.cycle();
+        let sound = &mut self.sound;
+        if !sound.halted {
+            sound.pulses[0].cycle(sound.shift);
+            sound.pulses[1].cycle(sound.shift);
+            sound.saw.cycle(sound.shift);
         }
     }
 
     /// Whether its IRQ line's held.
     pub fn irq(&self) -> bool {
         self.irq.held
+    }
+
+    /// Its sound's output, as a share of the NES's own, as Mesen mixes it:
+    /// 0 to about .9.
+    pub fn output(&self) -> f32 {
+        let sound = &self.sound;
+        let level = sound.pulses[0].output() + sound.pulses[1].output() + sound.saw.output();
+        level as f32 * 0.015
     }
 }
 
