@@ -106,6 +106,7 @@ mod tests {
     static KNOWN: Known = Known {
         mapper: 0,
         submapper: Some(0),
+        board: "",
         prg_rom: 0x8000,
         chr_rom: 0x2000,
         chr_ram: 0,
@@ -1480,7 +1481,8 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
         let (good, bad) = (folder.join("Good (J).nes"), folder.join("Bad.nes"));
         std::fs::write(&good, image(2, 1, [0; 10])).unwrap();
-        std::fs::write(&bad, image(2, 1, [0x30, 0x10, 0, 0, 0, 0, 0, 0, 0, 0])).unwrap();
+        // Mapper 188, Bandai's karaoke, not worth its microphone.
+        std::fs::write(&bad, image(2, 1, [0xC0, 0xB0, 0, 0, 0, 0, 0, 0, 0, 0])).unwrap();
         let crc = crate::host::zip::crc32(&image(2, 1, [0; 10])[16..]);
         assert_eq!(
             crate::machines::nes::facts(&good),
@@ -1490,7 +1492,7 @@ mod tests {
         assert_eq!(
             crate::machines::nes::facts(&bad),
             format!(
-                "\t\t0\t0\tmapper 19, which isn't here yet\t{}",
+                "\t\t0\t0\tmapper 188, which isn't here yet\t{}",
                 bad.display()
             )
         );

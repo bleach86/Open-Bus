@@ -66,6 +66,7 @@ pub mod cartridge;
 mod database;
 pub mod fds;
 pub mod mmc5;
+pub mod namco163;
 pub mod palette;
 pub mod ppu;
 pub mod region;
@@ -79,6 +80,7 @@ mod tests {
     mod database;
     mod fds;
     mod mmc5;
+    mod namco163;
     mod sound;
     mod test_roms;
     mod timing;

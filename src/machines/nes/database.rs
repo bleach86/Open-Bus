@@ -26,6 +26,8 @@ const DATABASE: &str = include_str!("MesenNesDB.txt");
 pub struct Known {
     pub mapper: u16,
     pub submapper: Option<u8>,
+    /// The board's name, if it has one: NAMCOT-163, say.
+    pub board: &'static str,
     pub prg_rom: usize,
     pub chr_rom: usize,
     pub chr_ram: usize,
@@ -58,7 +60,7 @@ pub fn find(crc: u32) -> Option<&'static Known> {
 
 /// A line's game, unless it's a comment, or a board known only by its UNIF
 /// name, which none of the mappers here are.
-pub(super) fn game(line: &str) -> Option<(u32, Known)> {
+pub(super) fn game(line: &'static str) -> Option<(u32, Known)> {
     if line.starts_with('#') {
         return None;
     }
@@ -80,6 +82,7 @@ pub(super) fn game(line: &str) -> Option<(u32, Known)> {
     let known = Known {
         mapper,
         submapper: fields[15].parse().ok(),
+        board: fields[2],
         prg_rom: k(6),
         chr_rom: k(7),
         chr_ram: k(8),

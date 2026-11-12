@@ -224,6 +224,7 @@
 use super::database::{self, Known};
 use super::fds::Fds;
 use super::mmc5::{self, Mmc5};
+use super::namco163::{CHIP_RAM, Chip, Namco163};
 use super::region::Region;
 use super::vrc::{Vrc, Vrc1, Vrc3, Wiring};
 use serde::{Deserialize, Serialize};
@@ -627,6 +628,7 @@ pub enum Mapper {
     Vrc(Vrc),
     Vrc1(Vrc1),
     Vrc3(Vrc3),
+    Namco163(Box<Namco163>),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -792,6 +794,11 @@ impl Cartridge {
         if number == 5 {
             prg_ram_size = mmc5::PRG_RAM;
         }
+        // The Namcos' 128 bytes of their own after their RAM, saved with
+        // it, as Mesen saves them.
+        if matches!(number, 19 | 210) {
+            prg_ram_size += CHIP_RAM;
+        }
         let mirroring = match header[6] & 0x09 {
             0x00 => Mirroring::Horizontal,
             0x01 => Mirroring::Vertical,
@@ -836,6 +843,11 @@ impl Cartridge {
             21 | 22 | 23 | 25 => Mapper::Vrc(Vrc::default()),
             75 => Mapper::Vrc1(Vrc1::default()),
             73 => Mapper::Vrc3(Vrc3::default()),
+            19 | 210 => Mapper::Namco163(Box::new(Namco163::new(
+                number,
+                submapper,
+                known.map_or("", |known| known.board),
+            ))),
             234 => Mapper::Maxi15(Maxi15::default()),
             72 => Mapper::Jf17(Jf17::default()),
             // The last 16K at $C000 at first, as JF-19's is.
@@ -990,6 +1002,7 @@ impl Cartridge {
     pub fn output(&self) -> f32 {
         match &self.mapper {
             Mapper::Fds(fds) => fds.output(),
+            Mapper::Namco163(namco) => namco.output(),
             _ => 0.0,
         }
     }
@@ -1002,6 +1015,12 @@ impl Cartridge {
         }
         match &mut self.mapper {
             Mapper::Fds(fds) if addr < 0x4100 => fds.read(addr, open_bus),
+            Mapper::Namco163(namco) if (0x4800..0x6000).contains(&addr) => {
+                let chip_ram = self.prg_ram.len() - CHIP_RAM;
+                namco
+                    .read(addr, &self.prg_ram[chip_ram..])
+                    .unwrap_or(open_bus)
+            }
             _ => self.cpu_read(addr).unwrap_or(open_bus),
         }
     }
@@ -1091,6 +1110,9 @@ impl Cartridge {
             Mapper::Vrc(vrc) => vrc.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF),
             Mapper::Vrc1(vrc1) => {
                 vrc1.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF)
+            }
+            Mapper::Namco163(namco) => {
+                namco.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF)
             }
             Mapper::Vrc3(vrc3) => in_16k(if addr < 0xC000 {
                 vrc3.prg_bank()
@@ -1240,6 +1262,7 @@ impl Cartridge {
             },
             Mapper::Maxi15(maxi) => maxi.banks().1 * CHR_BANK + addr,
             Mapper::Vrc1(vrc1) => vrc1.chr_bank(addr as u16) * 0x1000 + (addr & 0x0FFF),
+            Mapper::Namco163(namco) => namco.chr_bank(addr as u16) * 0x400 + (addr & 0x3FF),
             Mapper::Latch(latch) => {
                 let latch = *latch as usize;
                 match self.board {
@@ -1372,6 +1395,9 @@ impl Cartridge {
                     let at = (fme7.window as usize & 0x3F) * 0x2000 + (addr as usize & 0x1FFF);
                     Some(self.prg_rom[at % self.prg_rom.len()])
                 }
+                Mapper::Namco163(namco) => namco
+                    .ram_offset(addr, self.prg_ram.len() - CHIP_RAM, false)
+                    .map(|at| self.prg_ram[at]),
                 _ => self.prg_ram_offset(addr, false).map(|at| self.prg_ram[at]),
             },
             0x8000..=0xFFFF => match &self.mapper {
@@ -1421,6 +1447,20 @@ impl Cartridge {
             }
             return;
         }
+        // A Namco's registers, from $4800 up but for its RAM. Its own 128
+        // bytes, written, are saved only if they're all the RAM there is:
+        // a game with more keeps its saves there, and the sound writes
+        // these every frame.
+        if let Mapper::Namco163(namco) = &mut self.mapper {
+            if (0x4800..0x6000).contains(&addr) || addr >= 0x8000 {
+                let chip_ram = self.prg_ram.len() - CHIP_RAM;
+                if let Some(mirroring) = namco.write(addr, value, &mut self.prg_ram[chip_ram..]) {
+                    self.mirroring = mirroring;
+                }
+                self.written |= self.battery && chip_ram == 0 && addr & 0xF800 == 0x4800;
+                return;
+            }
+        }
         if let (0x4020..=0x5FFF, Mapper::Nina03(banks)) = (addr, &mut self.mapper) {
             if addr & 0xE100 == 0x4100 {
                 (banks.prg, banks.chr) = ((value >> 3) & 1, value & 7);
@@ -1458,8 +1498,14 @@ impl Cartridge {
                     _ => {}
                 }
             }
+            if let Mapper::Namco163(namco) = &mut self.mapper {
+                namco.ram_written();
+            }
             let at = match &self.mapper {
                 Mapper::Mmc3(mmc3) if mmc3.mmc6 => self.mmc6_ram(mmc3, addr, true).flatten(),
+                Mapper::Namco163(namco) => {
+                    namco.ram_offset(addr, self.prg_ram.len() - CHIP_RAM, true)
+                }
                 _ => self.prg_ram_offset(addr, true),
             };
             if let Some(at) = at {
@@ -1478,7 +1524,8 @@ impl Cartridge {
             | Mapper::Nina03(_)
             | Mapper::Nina001(_)
             | Mapper::Mmc5(_)
-            | Mapper::Fds(_) => {}
+            | Mapper::Fds(_)
+            | Mapper::Namco163(_) => {}
             Mapper::Uxrom(bank) | Mapper::Cnrom(bank) => *bank = value,
             Mapper::Latch(_) if self.board.register_at_6000() => {}
             Mapper::Vrc(vrc) => {
@@ -1750,6 +1797,10 @@ impl Cartridge {
                 (mmc3.banks[(addr as usize >> 11) & 1] as usize >> 5) & 1
             }
             Mapper::Mmc5(mmc5) => mmc5.nametable_page(addr),
+            Mapper::Namco163(namco) => match namco.nametable(addr) {
+                Some(Ok(page)) => page,
+                _ => self.mirroring.page(addr),
+            },
             _ => self.mirroring.page(addr),
         }
     }
@@ -1768,6 +1819,7 @@ impl Cartridge {
         match &self.mapper {
             Mapper::Mmc2(_) => true,
             Mapper::Mmc5(mmc5) => !mmc5.plain_fetches(),
+            Mapper::Namco163(namco) => namco.moves_tables(),
             _ => false,
         }
     }
@@ -1782,6 +1834,17 @@ impl Cartridge {
     pub fn nametable_read(&mut self, addr: u16) -> Option<u8> {
         match &mut self.mapper {
             Mapper::Mmc5(mmc5) => mmc5.nametable_read(addr),
+            Mapper::Namco163(namco) => match namco.nametable(addr) {
+                Some(Err(bank)) => {
+                    let chr = if self.chr_rom.is_empty() {
+                        &self.chr_ram
+                    } else {
+                        &self.chr_rom
+                    };
+                    Some(chr[(bank * 0x400 + (addr as usize & 0x3FF)) % chr.len()])
+                }
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -1790,7 +1853,19 @@ impl Cartridge {
     pub fn nametable_write(&mut self, addr: u16, value: u8) -> bool {
         match &mut self.mapper {
             Mapper::Mmc5(mmc5) => mmc5.nametable_write(addr, value),
+            // CHR ROM's, as a Namco can have, not written.
+            Mapper::Namco163(namco) => matches!(namco.nametable(addr), Some(Err(_))),
             _ => false,
+        }
+    }
+
+    /// Which 1K of the PPU's nametable RAM pattern table address `addr` is
+    /// in, if that's where its mapper has it: a Namco 163's can be.
+    #[inline]
+    pub fn chr_nametable(&self, addr: u16) -> Option<usize> {
+        match &self.mapper {
+            Mapper::Namco163(namco) => namco.chr_nametable(addr),
+            _ => None,
         }
     }
 
@@ -1965,6 +2040,12 @@ impl Cartridge {
             Mapper::Maxi15(_) => (234, "MAXI 15"),
             Mapper::Vrc1(_) => (75, "VRC1"),
             Mapper::Vrc3(_) => (73, "VRC3"),
+            Mapper::Namco163(namco) => match namco.chip {
+                Chip::N175 => (namco.number, "NAMCO 175"),
+                Chip::N340 => (namco.number, "NAMCO 340"),
+                Chip::N163 => (namco.number, "NAMCO 163"),
+                Chip::Unknown => (namco.number, "NAMCO 175 OR 340"),
+            },
             Mapper::Latch(_) => match self.board {
                 Board::Un1rom => (94, "UN1ROM"),
                 Board::Unrom180 => (180, "UNROM"),
@@ -2033,6 +2114,11 @@ impl Cartridge {
             vrc3.cycle();
             return;
         }
+        if let Mapper::Namco163(namco) = &mut self.mapper {
+            let chip_ram = self.prg_ram.len() - CHIP_RAM;
+            namco.cycle(&mut self.prg_ram[chip_ram..]);
+            return;
+        }
         if let Mapper::Fme7(fme7) = &mut self.mapper {
             if fme7.counting {
                 fme7.irq |= fme7.counter == 0 && fme7.irq_enabled;
@@ -2065,6 +2151,7 @@ impl Cartridge {
             Mapper::Fds(fds) => fds.irq(),
             Mapper::Vrc(vrc) => vrc.irq(),
             Mapper::Vrc3(vrc3) => vrc3.irq(),
+            Mapper::Namco163(namco) => namco.irq(),
             _ => false,
         }
     }

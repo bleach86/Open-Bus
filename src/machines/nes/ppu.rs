@@ -291,7 +291,10 @@ impl Ppu {
             cart.ppu_read(addr);
         }
         match addr {
-            0x0000..=0x1FFF => cart.chr_read(addr),
+            0x0000..=0x1FFF => match cart.chr_nametable(addr) {
+                Some(page) => self.nametables[page * 0x400 + (addr as usize & 0x3FF)],
+                None => cart.chr_read(addr),
+            },
             0x2000..=0x3EFF => match cart.nametable_read(addr) {
                 Some(byte) => byte,
                 None => {
@@ -308,7 +311,10 @@ impl Ppu {
             cart.ppu_bus(addr, self.dots);
         }
         match addr {
-            0x0000..=0x1FFF => cart.chr_write(addr, value),
+            0x0000..=0x1FFF => match cart.chr_nametable(addr) {
+                Some(page) => self.nametables[page * 0x400 + (addr as usize & 0x3FF)] = value,
+                None => cart.chr_write(addr, value),
+            },
             0x2000..=0x3EFF => {
                 if !cart.nametable_write(addr, value) {
                     self.nametables[cart.nametable_page(addr) * 0x400 + (addr as usize & 0x3FF)] =

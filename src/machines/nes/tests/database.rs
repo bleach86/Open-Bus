@@ -15,6 +15,7 @@ mod tests {
                 Known {
                     mapper: 4,
                     submapper: Some(0),
+                    board: "",
                     prg_rom: 512 * 1024,
                     chr_rom: 0,
                     chr_ram: 8 * 1024,
@@ -26,6 +27,11 @@ mod tests {
                 }
             ))
         );
+        // Its board, named.
+        let (_, named) =
+            database::game("0C47946D,Famicom,NAMCOT-175,60-19,175,210,128,128,0,0,0,0,v,1,,1,,")
+                .unwrap();
+        assert_eq!(named.board, "NAMCOT-175");
         // No submapper: not checked, its RAMs only what it adds.
         let (_, unchecked) = database::game("0FB244C8,Famicom,,,,4,128,128,,8,0,0,,,,,,").unwrap();
         assert!(!unchecked.checked());
