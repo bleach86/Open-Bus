@@ -43,6 +43,7 @@ pub mod objects;
 pub mod palette;
 pub mod riot;
 pub mod sound;
+pub mod supercharger;
 pub mod tia;
 
 #[cfg(test)]
@@ -284,8 +285,9 @@ impl Atari2600 {
 impl Bus for Atari2600 {
     fn read(&mut self, addr: u16) -> u8 {
         let addr = addr & 0x1FFF;
+        self.cartridge.seen(addr);
         let value = if addr & 0x1000 != 0 {
-            self.cartridge.read(addr)
+            self.cartridge.read_on(addr, &mut self.riot.ram)
         } else if addr & 0x80 == 0 {
             self.tia.read(addr, self.data_bus)
         } else {
@@ -298,6 +300,7 @@ impl Bus for Atari2600 {
 
     fn write(&mut self, addr: u16, value: u8) {
         let addr = addr & 0x1FFF;
+        self.cartridge.seen(addr);
         self.data_bus = value;
         if addr & 0x1000 != 0 {
             self.cartridge.write(addr, value);

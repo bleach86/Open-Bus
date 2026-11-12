@@ -1,7 +1,7 @@
 //! The cartridges: each type's banks and its hotspots, switched before the
 //! read; the Superchip's and CBS's RAM; FE's switch by the stack; 3F's by
-//! a write to the TIA's; E7's RAM; and the DPC's data fetchers and random
-//! number.
+//! a write to the TIA's; E7's RAM; the DPC's data fetchers and random
+//! number; and the Supercharger's loads, banks and writes.
 
 #[cfg(test)]
 mod tests {
@@ -144,5 +144,60 @@ mod tests {
         assert_ne!(first, second);
         dpc.write(0x1070, 0);
         assert_eq!(dpc.read(0x1000), first, "the same again from 1");
+    }
+
+    /// A Supercharger tape of one load, numbered 7: its 24 pages each its
+    /// number in every byte, each to bank (its number / 8), page (its
+    /// number % 8); its banks $0E, its start $F123.
+    fn tape() -> Vec<u8> {
+        let mut load: Vec<u8> = (0..24).flat_map(|page| vec![page as u8; 0x100]).collect();
+        let mut header = vec![0u8; 0x100];
+        header[..6].copy_from_slice(&[0x0E, 0x23, 0xF1, 24, 0, 7]);
+        for page in 0..24 {
+            header[16 + page] = ((page % 8) << 2 | page / 8) as u8;
+        }
+        load.extend(vec![0xFF; 0x800]); // where the BIOS is, in a dump
+        load.extend(header);
+        load
+    }
+
+    #[test]
+    fn a_superchargers_load_goes_where_its_header_says() {
+        let mut ar = Cartridge::new(&tape(), None, CLOCK).unwrap();
+        assert_eq!(ar.kind, Kind::Supercharger);
+        assert_eq!(ar.name(), "AR, 1 LOAD");
+        assert_eq!(ar.read(0x1FFC), 0x0A, "its BIOS, its reset to $F80A");
+        let mut console = vec![0; 128];
+        console[0] = 7; // the load the BIOS asks for
+        ar.read_on(0x1850, &mut console);
+        assert_eq!(&ar.ram[..1], &[0], "bank 0, page 0");
+        assert_eq!(ar.ram[0x800 + 0x300], 11, "bank 1, page 3: its 11th");
+        assert_eq!(
+            [console[0x7E], console[0x7F], console[0]],
+            [0x0E, 0x23, 0xF1]
+        );
+    }
+
+    #[test]
+    fn a_superchargers_banks_are_as_the_byte_held_says() {
+        let mut ar = Cartridge::new(&tape(), None, CLOCK).unwrap();
+        let mut console = vec![0; 128];
+        console[0] = 7;
+        ar.read_on(0x1850, &mut console);
+        let mut access = |ar: &mut Cartridge, addr: u16| {
+            ar.seen(addr);
+            ar.read(addr)
+        };
+        // $0E held, then $1FF8: bank 0 at $1000, bank 2 at $1800, written.
+        access(&mut ar, 0x100E);
+        access(&mut ar, 0x1FF8);
+        assert_eq!([access(&mut ar, 0x1200), access(&mut ar, 0x1B00)], [2, 19]);
+        // $42 held, then written by the fifth distinct access after.
+        access(&mut ar, 0x1042);
+        for addr in [0x1300, 0x1301, 0x1302, 0x1303] {
+            access(&mut ar, addr);
+        }
+        assert_eq!(access(&mut ar, 0x1123), 0x42);
+        assert_eq!(ar.ram[0x123], 0x42);
     }
 }

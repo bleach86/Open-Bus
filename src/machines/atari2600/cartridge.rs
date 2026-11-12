@@ -27,6 +27,8 @@
 //! at $1800, but for $1800 to $19FF, a 256-byte bank of RAM (written at
 //! $1800, read at $1900), of 4, $1FE8 to $1FEB.
 //!
+//! The Starpath Supercharger: in supercharger.rs.
+//!
 //! DPC, Pitfall II's: F8, and a chip with 2K of graphics ROM of its own, read
 //! through 8 counters, its data fetchers. Written at $1040 to $107F, each
 //! fetcher's top, bottom, and counter's low and high bits (5 to 7, bit 4
@@ -37,6 +39,7 @@
 //! by its own 20 kHz clock, from their tops round, read together as a
 //! volume, its tune.
 
+use super::supercharger::{self, Supercharger};
 use serde::{Deserialize, Serialize};
 
 /// The types of board.
@@ -53,6 +56,7 @@ pub enum Kind {
     Tigervision,
     E7,
     Dpc,
+    Supercharger,
 }
 
 impl Kind {
@@ -71,6 +75,7 @@ impl Kind {
             "3F" => Kind::Tigervision,
             "E7" => Kind::E7,
             "DPC" => Kind::Dpc,
+            "AR" => Kind::Supercharger,
             _ => return Err(format!("its cartridge's type, {name}, isn't here yet")),
         }))
     }
@@ -87,6 +92,7 @@ impl Kind {
             Kind::Tigervision => "3F",
             Kind::E7 => "E7",
             Kind::Dpc => "DPC",
+            Kind::Supercharger => "AR",
         }
     }
 }
@@ -112,6 +118,8 @@ pub struct Cartridge {
     pub start_bank: Option<u16>,
     /// DPC's chip.
     dpc: Option<Box<Dpc>>,
+    /// The Supercharger, its RAM the cartridge's, its tape the ROM.
+    supercharger: Option<Box<Supercharger>>,
 }
 
 /// The DPC's oscillator, for its music.
@@ -353,6 +361,7 @@ impl Cartridge {
             0x8000 if !superchip(image) && tigervision(image) => Kind::Tigervision,
             0x8000 => Kind::F4,
             0x2800..=0x2900 => Kind::Dpc,
+            _ if size % supercharger::LOAD == 0 => Kind::Supercharger,
             _ => return Err(format!("a {} byte ROM, of no type that's here", size)),
         };
         let kind = kind.unwrap_or(detected);
@@ -361,6 +370,7 @@ impl Cartridge {
             _ if superchip => 128,
             Kind::Fa => 256,
             Kind::E7 => 2048,
+            Kind::Supercharger => supercharger::RAM,
             _ => 0,
         };
         // A 2K ROM's the same 2K twice.
@@ -378,6 +388,7 @@ impl Cartridge {
             after_01fe: false,
             start_bank: None,
             dpc: (kind == Kind::Dpc).then(|| Box::new(Dpc::new(clock_hz))),
+            supercharger: (kind == Kind::Supercharger).then(|| Box::new(Supercharger::new())),
         };
         cartridge.reset();
         Ok(cartridge)
@@ -389,6 +400,10 @@ impl Cartridge {
         let size = self.rom.len() / 1024;
         match self.kind {
             Kind::K4 => format!("{size}K"),
+            Kind::Supercharger => {
+                let loads = self.rom.len() / supercharger::LOAD;
+                format!("AR, {loads} LOAD{}", if loads == 1 { "" } else { "S" })
+            }
             kind => {
                 let superchip = if self.superchip { "SC" } else { "" };
                 format!("{}{superchip} {size}K", kind.name())
@@ -513,10 +528,32 @@ impl Cartridge {
         }
     }
 
+    /// An access of the CPU's, any, for the Supercharger to count.
+    pub fn seen(&mut self, addr: u16) {
+        if let Some(supercharger) = &mut self.supercharger {
+            supercharger.seen(addr);
+        }
+    }
+
+    /// A read of $1000 to $1FFF, `console` the console's RAM, as the
+    /// Supercharger's BIOS has a load put in it.
+    pub fn read_on(&mut self, addr: u16, console: &mut [u8]) -> u8 {
+        if let Some(supercharger) = &mut self.supercharger {
+            if supercharger.loading(addr) {
+                supercharger.load(&self.rom, &mut self.ram, console);
+                return supercharger::bios(addr as usize & 0x7FF);
+            }
+        }
+        self.read(addr)
+    }
+
     /// A read of $1000 to $1FFF: a hotspot's bank switched first. Of RAM's
     /// write half, nothing drives the bus but the RAM's written anyway, with
     /// what's left on it: the address's high byte, an absolute read's last.
     pub fn read(&mut self, addr: u16) -> u8 {
+        if let Some(supercharger) = &mut self.supercharger {
+            return supercharger.read(addr, &mut self.ram);
+        }
         let at = addr & 0x0FFF;
         if let Some(dpc) = &mut self.dpc {
             dpc.step_random();
@@ -537,6 +574,10 @@ impl Cartridge {
 
     /// A write of $1000 to $1FFF: a hotspot's, or its RAM's.
     pub fn write(&mut self, addr: u16, value: u8) {
+        if let Some(supercharger) = &mut self.supercharger {
+            supercharger.write(addr, &mut self.ram);
+            return;
+        }
         let at = addr & 0x0FFF;
         if let Some(dpc) = &mut self.dpc {
             dpc.step_random();
