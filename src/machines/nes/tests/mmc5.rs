@@ -1,6 +1,8 @@
 //! The MMC5: its PRG modes and RAM, its CHR's modes and two sets, its
 //! nametables and ExRAM, extended attributes, the split, its multiplier and
-//! its scanline IRQ, found as it finds them, from the PPU's reads.
+//! its scanline IRQ, found as it finds them, from the PPU's reads. Its
+//! sound: its pulses, with no short period silenced, their lengths at 240
+//! Hz; its PCM, written or read, its IRQ.
 
 #[cfg(test)]
 mod tests {
@@ -475,5 +477,77 @@ mod tests {
         assert!(!cart.irq(), "the last frame's count kept");
         line_start(&mut cart);
         assert!(cart.irq());
+    }
+
+    /// Its sound's level now: its pulses' and its PCM's, added.
+    fn level(cart: &Cartridge) -> u16 {
+        (cart.output() / -0.0086).round() as u16
+    }
+
+    #[test]
+    fn its_pulses_sound_with_a_short_period() {
+        let mut cart = mmc5();
+        cart.cpu_write(0x5015, 0x01, 0);
+        cart.cpu_write(0x5000, 0xBF, 0); // half on, halted, volume 15
+        cart.cpu_write(0x5002, 0x02, 0); // a period of 2: the APU's silent
+        cart.cpu_write(0x5003, 0x08, 0);
+        let levels: Vec<u16> = (0..48)
+            .map(|_| {
+                cart.cycle();
+                level(&cart)
+            })
+            .collect();
+        assert_eq!(levels.iter().filter(|&&level| level == 15).count(), 24);
+        assert_eq!(levels.iter().filter(|&&level| level == 0).count(), 24);
+        assert_eq!(cart.register_read(0x5015, 0), 0x01, "sounding");
+        cart.cpu_write(0x5015, 0x00, 0);
+        assert_eq!(cart.register_read(0x5015, 0), 0x00, "disabled");
+    }
+
+    #[test]
+    fn its_pulses_lengths_count_at_240_hz() {
+        let mut cart = mmc5();
+        cart.cpu_write(0x5015, 0x02, 0);
+        cart.cpu_write(0x5004, 0x1F, 0);
+        cart.cpu_write(0x5007, 0x18, 0); // a length of 2
+        for _ in 0..7457 * 2 - 1 {
+            cart.cycle();
+        }
+        assert_eq!(cart.register_read(0x5015, 0), 0x02);
+        cart.cycle();
+        assert_eq!(cart.register_read(0x5015, 0), 0x00, "two clocks of 240 Hz");
+    }
+
+    #[test]
+    fn its_pcm_written_a_0_tripping_its_irq() {
+        let mut cart = mmc5();
+        cart.cpu_write(0x5011, 0x40, 0);
+        assert_eq!(level(&cart), 0x40);
+        cart.cpu_write(0x5011, 0x00, 0);
+        assert_eq!(level(&cart), 0x40, "0 not taken");
+        assert!(!cart.irq(), "its IRQ not enabled");
+        cart.cpu_write(0x5010, 0x80, 0);
+        cart.cpu_write(0x5011, 0x00, 0);
+        assert!(cart.irq());
+        assert_eq!(cart.register_read(0x5010, 0), 0x80);
+        assert!(!cart.irq(), "acknowledged, read");
+        assert_eq!(cart.register_read(0x5010, 0), 0x00);
+    }
+
+    #[test]
+    fn its_pcm_in_read_mode_takes_every_read_of_8000_to_bfff() {
+        let mut cart = mmc5();
+        prg_banks(&mut cart, [5, 6, 7, 8]);
+        cart.cpu_write(0x5010, 0x01, 0);
+        cart.cpu_write(0x5011, 0x22, 0);
+        assert_eq!(level(&cart), 0, "not written in read mode");
+        for (addr, want) in [(0xA000, 6), (0x8000, 5), (0xA001, 6), (0xC000, 6)] {
+            cart.cpu_read(addr);
+            assert_eq!(level(&cart), want, "read at {addr:04X}");
+        }
+        // Reset: written again.
+        cart.reset();
+        cart.cpu_write(0x5011, 0x30, 0);
+        assert_eq!(level(&cart), 0x30);
     }
 }

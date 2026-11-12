@@ -37,8 +37,18 @@
 //!
 //! Its multiplier: $5205 and $5206 written, read back the product.
 //!
-//! Left out: its sound (at $5000 to $5015), and the MMC5A's timer and pins.
+//! Its sound: two pulses, the APU's ($5000 to $5007), but with no sweep or
+//! frame counter, their envelopes and length counters clocked together at
+//! 240 Hz, and $5015 their enables and lengths, as $4015 has the APU's; and
+//! an 8-bit DAC, PCM, written at $5011, or with $5010's bit 0 set, read
+//! mode, the byte of any read of $8000 to $BFFF. A 0 isn't taken: it trips
+//! the PCM's IRQ, held with $5010's bit 7 its enable, and read in $5010's
+//! bit 7 and cleared. All of it inverted, as the APU isn't, and mixed as
+//! Mesen mixes it. Reset clears $5010.
+//!
+//! Left out: the MMC5A's timer and pins.
 
+use super::apu::Mmc5Pulse;
 use serde::{Deserialize, Serialize};
 
 /// PRG RAM, kept as all a board can have.
@@ -47,6 +57,32 @@ pub const PRG_RAM: usize = 0x10000;
 const EXRAM: usize = 0x400;
 /// A nametable's attribute table, in it.
 const ATTRIBUTES: usize = 0x3C0;
+
+/// The CPU cycles of each clock of its pulses' envelopes and lengths, at
+/// 240 Hz, as Mesen has it.
+const SOUND_CLOCK: u16 = 7457;
+
+/// Its sound: its two pulses and the cycles to their clock; the PCM's
+/// level, read mode, and IRQ's enable and flag.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Sound {
+    pulses: [Mmc5Pulse; 2],
+    clock: u16,
+    pcm: u8,
+    read_mode: bool,
+    pcm_irq_enabled: bool,
+    pcm_irq: bool,
+}
+
+impl Sound {
+    /// The PCM given `value`, written or read: not 0, which trips its IRQ.
+    fn pcm(&mut self, value: u8) {
+        self.pcm_irq = value == 0;
+        if value != 0 {
+            self.pcm = value;
+        }
+    }
+}
 
 /// Where a CPU address is in the PRG, by the banks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +137,10 @@ pub struct Mmc5 {
     tile_bank: Option<usize>,
     tile_palette: Option<u8>,
     in_split: bool,
+    /// Its sound: not in a save state, which it's newer than, but the
+    /// game's next notes.
+    #[serde(skip)]
+    sound: Sound,
 }
 
 impl Mmc5 {
@@ -139,6 +179,7 @@ impl Mmc5 {
             tile_bank: None,
             tile_palette: None,
             in_split: false,
+            sound: Sound::default(),
         }
     }
 
@@ -173,8 +214,11 @@ impl Mmc5 {
     }
 
     /// Where each 4K of $8000 up is in `len` of ROM, if that's where they
-    /// all are.
+    /// all are; none while the PCM's to see every read.
     pub fn rom_pages(&self, len: usize) -> Option<[u32; 8]> {
+        if self.sound.read_mode {
+            return None;
+        }
         let mut pages = [0; 8];
         for (page, offset) in pages.iter_mut().enumerate() {
             match self.place(0x8000 + page as u16 * 0x1000) {
@@ -192,6 +236,16 @@ impl Mmc5 {
     /// A read of $5000 up: `rom` and `ram` its PRG's; None's open bus.
     pub fn cpu_read(&mut self, addr: u16, rom: &[u8], ram: &[u8]) -> Option<u8> {
         match addr {
+            0x5010 => {
+                let sound = &mut self.sound;
+                let status = ((sound.pcm_irq && sound.pcm_irq_enabled) as u8) << 7;
+                sound.pcm_irq = false;
+                Some(status)
+            }
+            0x5015 => {
+                let [first, second] = &self.sound.pulses;
+                Some(first.sounding() as u8 | (second.sounding() as u8) << 1)
+            }
             0x5204 => {
                 let status = (self.irq_pending as u8) << 7 | (self.in_frame as u8) << 6;
                 self.irq_pending = false;
@@ -207,10 +261,14 @@ impl Mmc5 {
                     self.frame_over();
                     self.irq_pending = false;
                 }
-                match self.place(addr) {
+                let value = match self.place(addr) {
                     Place::Rom(at) => Some(rom[at % rom.len()]),
                     Place::Ram(at) => ram.get(at).copied(),
+                };
+                if let (0x8000..=0xBFFF, true, Some(value)) = (addr, self.sound.read_mode, value) {
+                    self.sound.pcm(value);
                 }
+                value
             }
             _ => None,
         }
@@ -219,6 +277,17 @@ impl Mmc5 {
     /// A write of $5000 up: true if it was to `ram`.
     pub fn cpu_write(&mut self, addr: u16, value: u8, ram: &mut [u8]) -> bool {
         match addr {
+            0x5000..=0x5003 => self.sound.pulses[0].write(addr, value),
+            0x5004..=0x5007 => self.sound.pulses[1].write(addr, value),
+            0x5010 => {
+                self.sound.read_mode = value & 0x01 != 0;
+                self.sound.pcm_irq_enabled = value & 0x80 != 0;
+            }
+            0x5011 if !self.sound.read_mode => self.sound.pcm(value),
+            0x5015 => {
+                self.sound.pulses[0].enable(value & 0x01 != 0);
+                self.sound.pulses[1].enable(value & 0x02 != 0);
+            }
             0x5100 => self.prg_mode = value & 3,
             0x5101 => self.chr_mode = value & 3,
             0x5102 | 0x5103 => self.ram_protect[addr as usize - 0x5102] = value & 3,
@@ -318,8 +387,14 @@ impl Mmc5 {
         }
     }
 
-    /// A CPU cycle: three of them with no PPU read end the frame.
+    /// A CPU cycle: its sound; and three of them with no PPU read end the
+    /// frame.
     pub fn cycle(&mut self) {
+        let sound = &mut self.sound;
+        sound.clock = sound.clock.checked_sub(1).unwrap_or(SOUND_CLOCK - 1);
+        let clocked = sound.clock == 0;
+        sound.pulses[0].cycle(clocked);
+        sound.pulses[1].cycle(clocked);
         if self.reading {
             self.idle = 0;
         } else {
@@ -332,12 +407,23 @@ impl Mmc5 {
     }
 
     pub fn irq(&self) -> bool {
-        self.irq_pending && self.irq_enabled
+        self.irq_pending && self.irq_enabled || self.sound.pcm_irq && self.sound.pcm_irq_enabled
     }
 
-    /// Reset: all it does is disable the IRQ.
+    /// Reset: all it does is disable the IRQs, and the PCM's read mode.
     pub fn reset(&mut self) {
         self.irq_enabled = false;
+        let sound = &mut self.sound;
+        (sound.read_mode, sound.pcm_irq_enabled, sound.pcm_irq) = (false, false, false);
+    }
+
+    /// Its sound's output, as a share of the NES's own: inverted, as Mesen
+    /// mixes it, its pulses as loud as the APU's.
+    pub fn output(&self) -> f32 {
+        let sound = &self.sound;
+        let level =
+            sound.pulses[0].output() as u16 + sound.pulses[1].output() as u16 + sound.pcm as u16;
+        level as f32 * -0.0086
     }
 
     /// Whether it's substituting what's fetched: drawing, and rendering.

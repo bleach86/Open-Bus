@@ -100,7 +100,7 @@ const FRAMES: [Frame; 6] = [
 ];
 
 /// A length counter, and its load and halt to come, at the cycle's end.
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Length {
     counter: u8,
     halt: bool,
@@ -146,7 +146,7 @@ impl Length {
 
 /// An envelope: its volume, or its decay from 15 down, a step each time
 /// its divider counts through the volume, over again if it loops.
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Envelope {
     constant: bool,
     looping: bool,
@@ -189,7 +189,7 @@ impl Envelope {
     }
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Pulse {
     /// Pulse 1's sweep negates in ones' complement, 2's in two's.
     second: bool,
@@ -289,6 +289,52 @@ impl Pulse {
             0
         } else {
             self.envelope.output()
+        }
+    }
+}
+
+/// A pulse of the MMC5's two: the APU's, but with no sweep, not silenced
+/// by a short period, and with no frame counter, its envelope and length
+/// counter clocked together at 240 Hz.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mmc5Pulse(Pulse);
+
+impl Mmc5Pulse {
+    /// Its register `register`, 0 to 3, written: 1, the sweep's, isn't
+    /// there.
+    pub fn write(&mut self, register: u16, value: u8) {
+        if register & 3 != 1 {
+            self.0.write(register, value);
+        }
+    }
+
+    /// Enabled, or disabled and silenced, as $5015 says.
+    pub fn enable(&mut self, on: bool) {
+        self.0.length.enable(on);
+    }
+
+    /// Whether its length counter's not 0, as $5015 reads.
+    pub fn sounding(&self) -> bool {
+        self.0.length.counter > 0
+    }
+
+    /// A CPU cycle: its timer; at 240 Hz, `clocked`, its envelope and
+    /// length counter; then a length's load.
+    pub fn cycle(&mut self, clocked: bool) {
+        self.0.cycle();
+        if clocked {
+            self.0.envelope.clock();
+            self.0.length.clock();
+        }
+        self.0.length.settle();
+    }
+
+    pub fn output(&self) -> u8 {
+        let pulse = &self.0;
+        if pulse.length.counter == 0 || DUTIES[pulse.duty as usize][pulse.step as usize] == 0 {
+            0
+        } else {
+            pulse.envelope.output()
         }
     }
 }

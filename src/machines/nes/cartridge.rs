@@ -61,7 +61,7 @@
 //! reads and writes enabled by $A001's top bits, a half written only if
 //! it's read too, a half not read reading 0 while the other is.
 //!
-//! 5, the MMC5: in mmc5.rs, there being so much of it.
+//! 5, the MMC5, and its sound: in mmc5.rs, there being so much of it.
 //!
 //! 21, 22, 23 and 25, Konami's VRC2 and VRC4; 75, VRC1; 73, VRC3; 24 and
 //! 26, VRC6, with its sound: in vrc.rs.
@@ -1185,6 +1185,7 @@ impl Cartridge {
             Mapper::Fds(fds) => fds.output(),
             Mapper::Namco163(namco) => namco.output(),
             Mapper::Vrc6(vrc6) => vrc6.output(),
+            Mapper::Mmc5(mmc5) => mmc5.output(),
             _ => 0.0,
         }
     }
