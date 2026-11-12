@@ -1045,9 +1045,10 @@ const NEXT_REPEAT = 110;
 const appleShowing = () => !page('apple-shelf').hidden;
 const gamesShowing = () => !page('nes').hidden;
 
-/// What's pressed for moving around, on any gamepad, as the first player's
-/// are bound. In the app, what the emulator says, which it hasn't yet, just
-/// back from a game.
+/// What's pressed for moving around, on any gamepad: its directions, Select
+/// and Start as the first player's are bound; confirming and going back by
+/// its maker's convention. In the app, what the emulator says, which it
+/// hasn't yet, just back from a game.
 function navigationPressed() {
     if (native) {
         return padsSaid;
@@ -1062,15 +1063,113 @@ function navigationPressed() {
             left: state.stickX < -0.5,
             right: state.stickX > 0.5,
         };
-        for (const action of ['up', 'down', 'left', 'right', 'a', 'b', 'select', 'start']) {
+        for (const action of ['up', 'down', 'left', 'right', 'select', 'start']) {
             pressed[action] ||= steered[action] || boundHeld(0, action, pad, state);
         }
+        // Confirming and going back where the pad's maker has them, not as
+        // the game's A and B are bound: Nintendo's A on the right.
+        const nintendo = makerOf(pad) === 'nintendo';
+        pressed.a ||= nintendo ? state.east : state.a;
+        pressed.b ||= nintendo ? state.a : state.east;
         pressed.previous ||= shoulders(pad, 4);
         pressed.next ||= shoulders(pad, 5);
         pressed.pageup ||= shoulders(pad, 6);
         pressed.pagedown ||= shoulders(pad, 7);
     }
     return pressed;
+}
+
+/// Whether it's a gamepad that's going round the library: not the mouse, nor
+/// the keyboard.
+let padInUse = false;
+
+/// Whose a pad is, by its name: Sony's, Nintendo's, or, as most are laid
+/// out, an Xbox pad's. In the desktop app, whose pads the page doesn't see,
+/// as it says.
+let padMaker = 'xbox';
+function makerOf(pad) {
+    const id = pad?.id ?? '';
+    if (/054c|sony|playstation|dualshock|dualsense/i.test(id)) {
+        return 'playstation';
+    }
+    return /057e|nintendo|pro controller|joy-con/i.test(id) ? 'nintendo' : 'xbox';
+}
+
+/// The library's buttons on the pad in use, by its maker's labels: those
+/// that confirm and go back where its maker has them, Nintendo's A on the
+/// right and B at the bottom, the others' at the bottom and on the right;
+/// and its Select and Start, shoulders and triggers.
+function padNames() {
+    const pad = native ? null : padsNow()[0];
+    const maker = native ? padMaker : makerOf(pad);
+    if (maker === 'playstation') {
+        const select = /dualsense|0ce6/i.test(pad?.id ?? '') ? 'Create' : 'Share';
+        return { confirm: '✕', back: '○', select, start: 'Options', shoulders: 'L1 R1', triggers: 'L2 R2' };
+    }
+    if (maker === 'nintendo') {
+        return { confirm: 'A', back: 'B', select: '−', start: '+', shoulders: 'L R', triggers: 'ZL ZR' };
+    }
+    return { confirm: 'A', back: 'B', select: 'Select', start: 'Start', shoulders: 'LB RB', triggers: 'LT RT' };
+}
+
+/// What the gamepad's buttons do here: on a game, a disk, the strip of
+/// letters, anything else moved to, or in a game's details.
+function padHints() {
+    const { confirm: A, back: B, select, start, shoulders, triggers } = padNames();
+    const press = [A, padFocus instanceof HTMLSelectElement ? 'Change' : 'Press'];
+    if (settingsOpen()) {
+        return [press, [B, 'Close']];
+    }
+    const shelves = [shoulders, 'Shelves'];
+    if (padFocus?.closest('#letters')) {
+        return [['↑ ↓', 'Letters'], [A, 'Back to the games'], shelves];
+    }
+    const tile = padFocus ? padFocus.closest('.tile') : gamesShowing() ? tiles.get(selectedGame) : null;
+    if (tile?.closest('#disks')) {
+        return [[A, 'Choose'], [start, 'Start the Apple'], shelves];
+    }
+    if (tile) {
+        return [
+            [A, 'Play'],
+            ...(tile.dataset.game ? [[start, 'Details']] : []),
+            [select, 'Favourite'],
+            ...(!padFocus && gamesShowing() ? [[triggers, 'Page']] : []),
+            shelves,
+        ];
+    }
+    if (padFocus) {
+        return [press, ...(gamesShowing() ? [[B, 'Back to the games']] : []), shelves];
+    }
+    return [shelves];
+}
+
+/// The gamepad's buttons, what they do here, along the foot of the library
+/// while it's a gamepad that's in use; in a game's details, under them. Made
+/// again only when they've changed.
+function showPadHints() {
+    const bar = page('pad-hints');
+    bar.hidden = !padInUse || page('library').hidden || page('controls-dialog').open;
+    if (bar.hidden) {
+        return;
+    }
+    const home = settingsOpen() ? page('game-settings') : document.body;
+    if (bar.parentElement !== home) {
+        home.append(bar);
+    }
+    const hints = padHints().filter(([button]) => button);
+    const said = JSON.stringify(hints);
+    if (bar.dataset.said !== said) {
+        bar.dataset.said = said;
+        bar.replaceChildren(
+            ...hints.map(([button, what]) => {
+                const hint = document.createElement('span');
+                const name = document.createElement('b');
+                name.textContent = button;
+                hint.append(name, what);
+                return hint;
+            }),
+        );
+    }
 }
 
 /// The selection shown: a tile's, on the shelf of games or a disk's; or
@@ -1085,6 +1184,7 @@ function showSelected() {
     } else {
         padFocus.classList.add('pad-focus');
     }
+    showPadHints();
 }
 
 /// The selection on the shelf of games moved, and scrolled to.
@@ -1177,6 +1277,10 @@ const pinned = (element) => element.closest('.toolbar, .fields, #letters');
 /// its tile all of it, and clear of what's pinned over it, not under it.
 function focusOn(element) {
     padFocus = element;
+    // In a game's details, the browser's focus there too: one ring, not two.
+    if (settingsOpen()) {
+        element.focus({ preventScroll: true });
+    }
     if (element.closest('#letters')) {
         jumpToLetter(element.dataset.letter);
     }
@@ -1289,6 +1393,8 @@ addEventListener('mousemove', (event) => {
     if (event.movementX || event.movementY) {
         pointerGone(false);
         pointerAt = [event.clientX, event.clientY];
+        padInUse = false;
+        showPadHints();
     }
 });
 
@@ -1369,11 +1475,14 @@ function navigate(now) {
     const pressing = Object.values(pressed).some(Boolean);
     if (pressing && !Object.values(wasPressed).some(Boolean) && takeUp()) {
         pointerGone(true);
+        padInUse = true;
+        showPadHints();
         [moving, moveAgainAt, wasPressed] = [way, now + FIRST_REPEAT, pressed];
         return;
     }
     if (pressing) {
         pointerGone(true);
+        padInUse = true;
     }
     if (way !== moving) {
         moveAgainAt = now + FIRST_REPEAT;
@@ -1411,6 +1520,9 @@ function navigate(now) {
     } else if (newly('next')) {
         nextTab(1);
     }
+    if (pressing) {
+        showPadHints();
+    }
     wasPressed = pressed;
 }
 
@@ -1423,6 +1535,7 @@ addEventListener('keydown', (event) => {
     const confirming = event.code === 'Enter' && (selectedGame || padFocus) && document.activeElement === document.body;
     if (way || confirming) {
         event.preventDefault();
+        padInUse = false;
         const taken = takeUp();
         pointerGone(true);
         if (taken) {
@@ -2064,8 +2177,9 @@ function playNatively(machine) {
     const rewind = page('rewind').checked;
     native.play({ ...machine, fullscreen, fast, ram, resume, rewind }).catch((problem) => say(String(problem), true));
 }
-native?.whenPads((pressed) => {
+native?.whenPads((pressed, maker) => {
     padsSaid = pressed;
+    padMaker = maker;
 });
 /// The TV layout: everything bigger, for across a room, the window
 /// fullscreen, and the pointer out of the way until the mouse moves.
@@ -2406,6 +2520,7 @@ async function start(make, machine, using, game) {
     say('');
     page('no-sound').hidden = sound;
     page('library').hidden = true;
+    showPadHints(); // the library's, gone with it
     page('machine').hidden = false;
     page('machine').dataset.machine = machine;
     page('disk').hidden = page('disk-help').hidden = !emulator.disk_system();

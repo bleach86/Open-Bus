@@ -230,17 +230,13 @@ export async function sortRoms(paths) {
 }
 
 /// `told` of what the gamepads hold for moving around the library, by name,
-/// each time that changes.
+/// each time that changes; and whose the first player's pad is, `maker`:
+/// xbox, playstation or nintendo.
 export const whenPads = (told) =>
     listen('pads', ({ payload }) => {
-        told(
-            Object.fromEntries(
-                payload
-                    .split(' ')
-                    .filter(Boolean)
-                    .map((name) => [name, true]),
-            ),
-        );
+        const words = payload.split(' ').filter(Boolean);
+        const maker = words.find((word) => word.startsWith('maker:'))?.slice('maker:'.length) ?? 'xbox';
+        told(Object.fromEntries(words.filter((word) => !word.startsWith('maker:')).map((name) => [name, true])), maker);
     });
 
 /// The window fullscreen, or back as it was.

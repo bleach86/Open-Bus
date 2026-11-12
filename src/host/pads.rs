@@ -24,14 +24,13 @@ const LOOK_EVERY: Duration = Duration::from_millis(4);
 const SETTLE: Duration = Duration::from_millis(150);
 
 /// What the library moves by, as it's bound (Select a game's star), and its
-/// shoulders and triggers.
-const LIBRARY: [Action; 8] = [
+/// shoulders and triggers. Its A and B, confirming and going back, aren't
+/// the game's: they're where the pad's maker has them, `Pad::convention`.
+const LIBRARY: [Action; 6] = [
     Action::Up,
     Action::Down,
     Action::Left,
     Action::Right,
-    Action::A,
-    Action::B,
     Action::Select,
     Action::Start,
 ];
@@ -72,6 +71,44 @@ impl Pad {
             controller,
             stick: (0.0, 0.0),
             held: HashSet::new(),
+        }
+    }
+
+    /// Whose pad it is, by its name: Sony's, Nintendo's, or, as most are
+    /// laid out, an Xbox pad's.
+    fn maker(&self) -> &'static str {
+        let name = self.controller.name().to_lowercase();
+        if [
+            "playstation",
+            "sony",
+            "dualshock",
+            "dualsense",
+            "ps3",
+            "ps4",
+            "ps5",
+        ]
+        .iter()
+        .any(|word| name.contains(word))
+        {
+            "playstation"
+        } else if ["nintendo", "switch", "pro controller", "joy-con"]
+            .iter()
+            .any(|word| name.contains(word))
+        {
+            "nintendo"
+        } else {
+            "xbox"
+        }
+    }
+
+    /// Its buttons for confirming and going back, by where they are, as its
+    /// maker has them: Nintendo's A on the right and B at the bottom; the
+    /// others', A or ✕ at the bottom and B or ○ on the right.
+    fn convention(&self) -> (&'static str, &'static str) {
+        if self.maker() == "nintendo" {
+            ("b", "a")
+        } else {
+            ("a", "b")
         }
     }
 }
@@ -193,7 +230,8 @@ impl Pads {
     }
 
     /// What's held for moving around the library, on either gamepad, as a
-    /// line of words.
+    /// line of words; and first, which maker's the first player's pad is,
+    /// for the library to name its buttons as they're labelled.
     fn library(&self, controls: &Controls) -> String {
         let mut words: Vec<&str> = Vec::new();
         for player in 0..2 {
@@ -202,6 +240,15 @@ impl Pads {
                     .strip_prefix("pad:")
                     .is_some_and(|button| self.holds(player, button))
             };
+            if let Some(pad) = &self.places[player] {
+                let (confirm, back) = pad.convention();
+                words.extend(
+                    [(confirm, "a"), (back, "b")]
+                        .into_iter()
+                        .filter(|&(button, _)| pad.held.contains(button))
+                        .map(|(_, word)| word),
+                );
+            }
             words.extend(
                 LIBRARY
                     .iter()
@@ -217,7 +264,8 @@ impl Pads {
         }
         words.sort_unstable();
         words.dedup();
-        words.join(" ")
+        let maker = self.first().map_or("xbox", Pad::maker);
+        format!("maker:{maker} {}", words.join(" "))
     }
 }
 
