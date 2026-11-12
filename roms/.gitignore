@@ -25,3 +25,5 @@ apple2/disks/
 # collections)
 *.nes
 nes/tests/
+# Atari 2600 ROMs, likewise
+*.a26

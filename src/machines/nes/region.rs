@@ -12,32 +12,10 @@
 //! game of both, "(USA, Europe)", is one ROM for them, and runs as NTSC.
 //! One whose name says Japan alone, "(J)" or "(Japan)", is a Famicom's.
 
-/// The first's the default: what a header's silence means.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Region {
-    #[default]
-    Ntsc,
-    Pal,
-}
+pub use crate::machines::region::{Region, japans_alone};
 
 /// The CPU's clock, a PAL crystal's 26,601,712 Hz, a sixteenth.
 pub const PAL_CLOCK_HZ: u32 = 1_662_607;
-
-/// A name's tags, in brackets, for each.
-const PAL_TAGS: [&str; 11] = [
-    "Europe",
-    "Australia",
-    "Germany",
-    "France",
-    "Spain",
-    "Italy",
-    "Sweden",
-    "Netherlands",
-    "PAL",
-    "E",
-    "A",
-];
-const NTSC_TAGS: [&str; 8] = ["USA", "Japan", "World", "Korea", "NTSC", "U", "J", "JU"];
 
 impl Region {
     /// The CPU's cycles a second.
@@ -80,46 +58,4 @@ impl Region {
             Region::Pal => 1.386,
         }
     }
-
-    /// The region a file's `name` says, if it says one: PAL's tags only if
-    /// there's no NTSC's with them.
-    pub fn from_name(name: &str) -> Option<Region> {
-        let tags = tags(name);
-        if tags.iter().any(|tag| NTSC_TAGS.contains(tag)) {
-            return Some(Region::Ntsc);
-        }
-        tags.iter()
-            .any(|tag| PAL_TAGS.contains(tag))
-            .then_some(Region::Pal)
-    }
-
-    /// As `--region=` names it.
-    pub fn parse(name: &str) -> Option<Region> {
-        match name {
-            "ntsc" => Some(Region::Ntsc),
-            "pal" => Some(Region::Pal),
-            _ => None,
-        }
-    }
-}
-
-/// A name's tags: what's in its brackets, each a comma apart.
-fn tags(name: &str) -> Vec<&str> {
-    name.split('(')
-        .skip(1)
-        .filter_map(|group| group.split(')').next())
-        .flat_map(|group| group.split(','))
-        .map(str::trim)
-        .collect()
-}
-
-/// Whether a file's `name` says Japan alone, no other country with it: a
-/// Famicom's game.
-pub fn japans_alone(name: &str) -> bool {
-    let japan = |tag: &&str| matches!(*tag, "Japan" | "J");
-    let tags = tags(name);
-    tags.iter().any(japan)
-        && !tags
-            .iter()
-            .any(|tag| !japan(tag) && (NTSC_TAGS.contains(tag) || PAL_TAGS.contains(tag)))
 }

@@ -66,7 +66,7 @@ fn main() {
     if args.iter().any(|arg| arg == "--launched") {
         cpu_emu::host::window::LAUNCHED.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal] [--console=nes|famicom] [--port2=controller|zapper]";
+    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal] [--console=nes|famicom] [--port2=controller|zapper] | atari2600 ROM [--fullscreen] [--region=ntsc|pal]";
     match args.get(1).map(String::as_str) {
         Some("controls") => machines::nes::controls(),
         Some("pads") => cpu_emu::host::pads::report(),
@@ -119,6 +119,17 @@ fn main() {
                 fast,
                 ram,
             );
+        }
+        Some("atari2600") => {
+            let rom = args[2..]
+                .iter()
+                .find(|arg| !arg.starts_with("--"))
+                .expect(usage);
+            let region = args
+                .iter()
+                .find_map(|arg| arg.strip_prefix("--region="))
+                .map(|name| cpu_emu::machines::region::Region::parse(name).expect(usage));
+            machines::atari2600::run(rom, args.iter().any(|arg| arg == "--fullscreen"), region);
         }
         Some(machine @ ("apple2" | "apple2e")) => {
             let files: Vec<&String> = args[2..]

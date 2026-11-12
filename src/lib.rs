@@ -27,6 +27,7 @@ pub mod host {
     pub mod files;
     pub mod font;
     pub mod machine;
+    pub mod md5;
     pub mod notice;
     #[cfg(not(target_arch = "wasm32"))]
     pub mod pads;
@@ -46,6 +47,7 @@ pub mod host {
         mod controls;
         mod files;
         mod machine;
+        mod md5;
         mod notice;
         mod page;
         mod run;
@@ -57,8 +59,10 @@ pub mod host {
 /// The machines the CPU runs in.
 pub mod machines {
     pub mod apple2;
+    pub mod atari2600;
     pub mod basic;
     pub mod nes;
+    pub mod region;
 }
 
 /// What a web page calls.

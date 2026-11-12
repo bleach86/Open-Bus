@@ -1,0 +1,951 @@
+# Stella's game properties (src/emucore/DefProps.hxx, from stella.pro), GPL-2 or later,
+# those of them that say something: each a line of its ROM's MD5, then tab apart, its
+# start bank, cartridge type, left and right difficulties, ports swapped, left and
+# right controllers, paddles swapped, display format, phosphor, and phosphor blend.
+008543ae43497af015e9428a5e3e874e										YES	
+00b7b4cbec81570642283e7fc1ef17af										YES	
+00ce0bdd43aed84a983bef38fe7f5ee3										YES	
+0164f26f6b38a34208cd4a2d0212afc3										YES	
+01abcc1d2d3cba87a3aa0eb97a9d7b9c										YES	
+025668e36a788e8af8ac4f1be7e72043					YES						
+02ced7ea2b7cb509748db6bfa227ebec										YES	
+0383dc02cb82302da3d155fd108bfe3a						JOYSTICK				YES	
+03c3f7ba4585e349dd12bfa7b34b7729										YES	
+04014d563b094e79ac8974366f616308										YES	
+0443cfa9872cdb49069186413275fa21										YES	
+047ac3b9faea64522b7a23c4465a7aa8										YES	
+04856e3006a4f5f7b4638da71dad3d88										YES	
+056f5d886a4e7e6fdd83650554997d0d			A	A						YES	
+056ff67dd9715fafa91fb8b0ddcc4a46										YES	
+05b45ba09c05befa75ac70476829eda0								YES			
+05ccf96247af12eef59698f1a060a54f										YES	
+05eb4347f0ec8f4783983ca35ffd8d1b										YES	
+0619e1c3286bbfbace040b8c3ec5add2									PAL60	YES	
+0653285db216755085bd025b93ea6a25										YES	
+069c17beb1e8e0557adb8539fdcf6cba									PAL60		
+06d2f7674cea977607f74c464ce600a2						BOOSTERGRIP				YES	
+06e5dc181a8eda1c31cc7c581c68b6ef										YES	
+0751f342ee4cf28f2c9a6e8467c901be										YES	
+07973be3ecfd55235bf59aa56bdef28c										YES	
+079fe9103515d15bc108577e234a484d										YES	
+07f42847a79e4f5ae55cc03304b18c25										YES	
+07f5004d26ea2b776169bbfc41cc05a8										YES	
+0805366f1b165a64b6d4df20d2c39d25										YES	
+08188785e2b8300983529946dbeff4d2						DRIVING	DRIVING				
+081e2c114c9c20b61acf25fc95c71bf4										YES	
+082fdc8bd47fef01482ce5883c4ffdb8										YES	
+083e7cae41a874b2f9b61736c37d2ffe										YES	
+0891252ee4e307689febccf3cfd8a8ab									PAL60	YES	
+08bd4c1dcc843f6a0b563d9fd80b3b11										YES	
+08bf437d012db07b05ff57a0c745c49e										YES	
+08d1b6d75206edb999252caf542a2c7f					YES					YES	
+08ea2fdaa22e5802c839ee7dfb0483dc									PAL60		
+0906c6e0e4bda9c10cfa4c5fc64d2f4b										YES	
+096649575e451508006b17e0353259a5										YES	
+097074f24cde141fe6a0f26a10333265										YES	
+097936b07e0e0117b9026ae6835eb168										YES	
+09abfe9a312ce7c9f661582fdf12eab6										YES	
+09e1ecf9bd2a3030d5670dba7a65e78d										YES	
+09e9ba0762fd0c3cf3c2e072cff79cac										YES	
+0a981c03204ac2b278ba392674682560						PADDLES_IAXIS					
+0aa208060d7c140f20571e3341f5a3f8					YES					YES	
+0b170a67e97f0c3fd908e7529a218ae9										YES	
+0b17ed42984000da8b727ca46143f87a						KEYBOARD					
+0b55399cf640a2a00ba72dd155a0c140										YES	
+0b8d3002d8f744a753ba434a4d39249a										YES	
+0bf19e40d5cd8aa5afb33b16569313e6										YES	
+0bf1e354304f46c0caf8fc0f6f5e9525										YES	
+0bfabf1e98bdb180643f35f2165995d0					YES					YES	
+0c336f83b0e6e3bc86c77f368448e77b						JOYSTICK	JOYSTICK				
+0c48e820301251fbb6bcdc89bd3555d9										YES	
+0c72cc3a6658c1abd4b735ef55fa72e4									PAL60		
+0c7bd935d9a7f2522155e48315f44fa0					YES					YES	
+0cb7af80fd0ddef84844481d85e5d29b										YES	
+0cec9e46a25d338bf595a29aa2606516									PAL60		
+0d5af65ad3f19558e6f8e29bf2a9d0f8										YES	
+0d6b974fe58a1bdd453600401c407856		16IN1									
+0dfbdadf8f1bc718e7e1bb3ccd5fef3d										YES	
+0e23d0ed4c33b2011ab4cc93a7619683									PAL60	YES	
+0e7e73421606873b544e858c59dc283e		F8								YES	
+0e86470791b26292abe1c64545c47985						PADDLES_IAXIS					
+0efc91e45f61023cda9d086a7d3c402f										YES	
+0effef4a341f8eebab65621c60c48787										YES	
+0f2e09c71cc216f79d22a804152ba24b										YES	
+0f341d1f4e144e3163d9a5fc5a662b79										YES	
+0f643c34e40e3f1daafd9c524d3ffe64										YES	
+104468e44898b8e9fa4a1500fde8d4cb						JOYSTICK				YES	
+106855474c69d08c8ffa308d47337269										YES	
+10958cd0a1a81d599005f1797ab0e51d										YES	
+10f0ecaf962aef1fc28abed870b01b65						MINDLINK	MINDLINK				
+11ad7b3e15c8cb3223d5349795bef4ad						DRIVING	DRIVING				
+11bcf5c752088b5aaf86d6c7a6a11e8d										YES	
+1228c01cd3c4b9c477540c5adb306d2a					YES						
+1267e3c6ca951ff1df6f222c8f813d97										YES	
+126f7f64b7b00e25dcf5e3710b4cf8b8										YES	
+1287535256bf5dff404839ac9e25c3e7										YES	
+1343de49c2a50d99176255f99f0d0234										YES	55
+1345e972dbe08ea3e70850902e20e1a5										YES	
+136f75c4dd02c29283752b7e5799f978										YES	
+137373599e9b7bf2cf162a102eb5927f						PADDLES					
+13e133a1efc1b55fcd76cbb3ae7cf333										YES	
+14163eb2a3ddd35576bd8527eae3b45e										YES	
+1428029e762797069ad795ce7c6a1a93										YES	
+14c2548712099c220964d7f044c59fd9										YES	
+14d365bbfaac3d20c6119591f57acca4										YES	
+151fa3218d8d7600114eb5bcd79c85cb						KEYBOARD					
+159e5cd6ccb968015f49aed5adbc91eb										YES	
+15fe28d0c8893be9223e8cb2d032e557										YES	
+1619bc27632f9148d8480cd813aa74c3				A						YES	
+16229d61d7b0c89b01853660a8da22bb		4A50									
+16baafb06c06aa475aa671f234399e05										YES	
+16cc6d1b4ddce51c767a1ba8e5ff196c										YES	
+16ee443c990215f61f7dd1e55a0d2256						PADDLES					
+170e7589a48739cfb9cc782cbb0fe25a						PADDLES		YES			
+171ebf135b13ba907f462c10d88a2c25									PAL60		
+17512d0c38f448712f49f36f9d185c4e										YES	
+17d000a2882f9fdaa8b4a391ad367f00										YES	
+17ee158d15e4a34f57a837bc1ce2b0ce										YES	
+1802cc46b879b229272501998c5de04f						KEYBOARD	KEYBOARD				
+183020a80848e06a1238a1ab74079d52										YES	
+1862fca4f98e66f363308b859b5863af		16IN1									
+18be8981b8201638f3ed8ae92bb4c215									PAL60		
+18ed63e3ce5bc3dd2d8bd188b807f1a2										YES	
+191449e40b0c56411c70772706f79224										YES	
+1986f864e32e3e8d198b5becf3022257										YES	
+19a9d3f9fa1b1358fb53009444247aaf						PADDLES_IAXIS					
+19abaf2144b6a7b281c4112cff154904										YES	
+19d6956ff17a959c48fcd8f4706a848d										YES	
+1a613ce60fc834d4970e1e674b9196b3										YES	
+1a8204a2bcd793f539168773d9ad6230										YES	
+1b0f3d7af668eeea38ddd6182d8f48fb										YES	
+1b5a8da0622bffcee4c5b42aed4e0ef0						JOYSTICK	JOYSTICK				
+1b8d35d93697450ea26ebf7ff17bd4d1										YES	
+1bef389e3dd2d4ca4f2f60d42c932509										YES	
+1bfae770e089fa81412d04eb299f4c3f										YES	
+1c8c42d1aee5010b30e7f1992d69216e										YES	
+1cafa9f3f9a2fce4af6e4b85a2bbd254					YES						
+1cca2197d95c5a41f2add49a13738055						KEYBOARD	KEYBOARD				
+1cf59fc7b11cdbcefe931e41641772f6										YES	
+1e0ef01e330e5b91387f75f700ccaf8f										YES	
+1e1290ea102e12d7ac52820961457e2b										YES	
+1e89f722494608d6ea15a00d99f81337									NTSC50		
+1ea980574416bfd504f62575ba524005										YES	
+1ee9c1ba95cef2cf987d63f176c54ac3										YES	
+1ef04e7e508296a8d9eb61cc7dae2e5d										YES	
+1f60e48ad98b659a05ce0c1a8e999ad9						PADDLES_IAXDR					
+1fa86282403fa35d103ab88a9d603c31									PAL60	YES	
+200a9d2a7cb4441ce4f002df6aa47e38										YES	
+203abb713c00b0884206dcc656caa48f										YES	
+203b1efc6101d4b9d83bb6cc1c71f67f										YES	
+2058cf3fefad4d2bc03ed817cedddcd4									PAL60	YES	
+213e5e82ecb42af237cfed8612c128ac										YES	
+2162266b906c939b35c84ff9a0f50ad1						KEYBOARD	KEYBOARD				
+217b1452881264ac75126bf77b8d0db8										YES	
+218c0fe53dfaaa37f3c823f66eafd3fc					YES						
+21b09c40295c2d7074a83ae040f22edf										YES	
+2353725ec98e0f0073462109e886efd7						JOYSTICK			PAL60	YES	
+2365e1534d67f94d8670394ab99150ce						ATARIMOUSE	ATARIMOUSE			YES	
+23d445ea19a18fb78d5035878d9fb649										YES	
+23fad5a125bcd4463701c8ad8a0043a9			A	A	YES					YES	
+2418fa5ecfb685f7bb70bc4527e9d966										YES	
+2432f33fd278dea5fe6ae94073627fcc										YES	
+2434102f30eeb47792cf0825e368229b	0										
+24b5f4bbdb853eca38ea0cae2dfe73a1					YES					YES	
+24d9a55d8f0633e886a1b33ee1e0e797										YES	
+24df052902aa9de21c2b2525eb84a255										YES	
+25265d0e7f88b3026003809f25ee025e										YES	
+257bc3b72a6b5db3fd0d47619125b387						BOOSTERGRIP	BOOSTERGRIP			YES	
+25f879ff678130fea615ac418e7943f1									SECAM		
+260c787e8925bf3649c8aeae5b97dcc0					YES						
+262ccb882ff617d9b4b51f24aee02cbe										YES	
+274d17ccd825ef9c728d68394b4569d2						PADDLES_IAXIS				YES	
+277fa4b9a6bb7a8dcea2c5f38a4c25f0										YES	
+278531cc31915747018d22145823d2c9										YES	
+27a5d2d0c74c8e4b2c05b94c9f098eea								YES			
+27c6a2ca16ad7d814626ceea62fa8fb4										YES	
+2808dc745ff4321dc5c8122abef6711f										YES	
+283dee88f295834c4c077d788f151125										YES	
+284ca61b2407bdba3938048b0a559015										YES	
+28d5df3ed036ed63d33a31d0d8b85c47										YES	
+291bcdb05f2b37cdf9452d2bf08e0321		32IN1									
+291dd47588b9158beebe4accc3a093a6		32IN1									
+292a0bb975b2587f9ac784c960e1b453										YES	
+292f2446a0325b7b423e88a2ebfeb5a0										YES	
+297c405afd01f3ac48cdb67b00d273fe										YES	
+29843f43b81f3736bf35c00b1bb88fb2										YES	55
+2a1b454a5c3832b0240111e7fd73de8a										YES	
+2a2f46b3f4000495239cbdad70f17c59										YES	
+2ae700c9dba843a68dfdca40d7d86bd6										YES	
+2aeedcc6eb1602efb77161b0cef832ab										YES	
+2b71a59a53be5883399917bf582b7772										YES	
+2bc26619e31710a9884c110d8430c1da						PADDLES_IAXIS					
+2c2aea31b01c6126c1a43e10cacbfd58										YES	
+2ca6445204ffb7686ddee3e33ba64d5b							ATARIVOX				
+2cb42cf62b2f25f59f909b5447821b14						KEYBOARD	KEYBOARD				
+2cccc079c15e9af94246f867ffc7e9bf										YES	
+2d1af6442d6d5f15de37e47dd5a78411										YES	
+2d6388a8389f1d59108fd169c3356d79										YES	
+2d6741cda3000230f6bbdd5e31941c01										YES	
+2d69a5f23784f1c2230143292a073b53										YES	
+2dbdca3058035d2b40c734dcf06a86d9							DRIVING			YES	
+2de41a11c6767e54a5ee9ebaffec72af										YES	55
+2dfec1615c49501fefc02165c81955e6										YES	
+2e0aed5bb619edcefa3fafb4fbe7c551										YES	
+2eda6a49a49fcb2b674ea9e160b6a617										YES	
+2f11ba54609777e2c6a5da9b302c98e8										YES	
+2f7772879a1ed04f660aa9d77a86a4bd										YES	
+2facd460a6828e0e476d3ac4b8c5f4f7										YES	
+3051b6071cb26377cd428af155e1bfc4						PADDLES_IAXDR		YES			
+30997031b668e37168d4d0e299ccc46f										YES	
+30e012e8d50330c8972f126b8e913bc4						DRIVING	DRIVING				
+30f0b49661cfcfd4ec63395fab837dc3										YES	
+318046ae3711c05fd16e479b298e5fcc										YES	
+319a142aab6260842ab616382848c204										YES	
+31bb9b8ceed46cb3e506777a9e65f3ce		4IN1									
+327468d6c19697e65ab702f06502c7ed										YES	
+3276c777cbe97cdd2b4a63ffc16b7151										YES	
+328949872e454181223a80389d03c122					YES					YES	
+332f01fd18e99c6584f61aa45ee7791e										YES	
+335a7c5cfa6fee0f35f5824d1fa09aed										YES	
+336ea20d38f98926919d4b4651d1a03f										YES	
+33d68c3cd74e5bc4cf0df3716c5848bc										YES	
+345758747b893e4c9bdde8877de47788										YES	
+34b269387fa1aa5a396636f5ecdd63dd										YES	
+34e37eaffc0d34e05e40ed883f848b40										YES	
+35163b56f4a692a232ae96ad3e23310f										YES	
+3577e19714921912685bb0e32ddf943c										YES	
+35b10a248a7e67493ec43aeb9743538c										YES	
+35be55426c1fec32dfb503b4f0651572									NTSC50	YES	
+35fa32256982774a4f134c3347882dff										YES	
+36547bc6faa5132b87504e18d088e1d7										YES	
+3685060707df27d4091ba0ea2dc4b059										YES	
+36a701c60a9f9768d057bc2a83526a80										YES	
+36c29ceee2c151b23a1ad7aa04bd529d										YES	
+376944889dcfa96c73d3079f308e3d32										YES	
+3783f12821b88b08814da8adb1a9f220				A						YES	
+378a62af6e9c12a760795ff4fc939656										YES	
+37e828675d556775ae8285c0caf7d11c						GENESIS					
+38cf93eacfb2fa9a2c5e39059ff35a74										YES	
+391764720140c432aec454a468f77a40										YES	
+392f00fd1a074a3c15bc96b0a57d52a1										YES	
+396f7bc90ab4fa4975f8c74abe4e81f0								YES			
+3974e2d1f614fbd3a092533ecae2e84d						KEYBOARD	KEYBOARD				
+39b94d41bd3b01c12b4054c1a8733783										YES	
+3a2e2d0c6892aa14544083dfb7762782										YES	
+3a51a6860848e36e6d06ffe01b71fb13										YES	
+3a521b7e29123b2d38e34e3ff8dc255c										YES	
+3a771876e4b61d42e3a3892ad885d889										YES	
+3ab5d138e26d88c8190e7cc629a89493										YES	
+3b69f8929373598e1752f43f8da61aa4										YES	
+3b6dba1a24bb2893bd3bd0593f92016b										YES	
+3b76242691730b2dd22ec0ceab351bc6				A						YES	
+3b8aacf5f5638492b926b5124de19f18										YES	
+3c21a89bc38d8cd0b010a2916bcff5c2										YES	50
+3c4223316c835ceaad619651e25df0f9										YES	
+3c4a6f613ca8ba27ce9e43c6c92a3128										YES	
+3c57748c8286cf9e821ecd064f21aaa9										YES	
+3c7a7b3a0a7e6319b2fa0f923ef6c9af	0										
+3c853d864a1d5534ed0d4b325347f131										YES	
+3ca51b5c08f5a0ecfb17d0c1ec6d0942										YES	
+3cdd91e1c28d28e856c0063d602da166										YES	
+3d48b8b586a09bdbf49f1a016bf4d29a										YES	
+3d7aad37c55692814211c8b590a0334c							MINDLINK				
+3dfb7c1803f937fadc652a3e95ff7dc6										YES	
+3e03086da53ecc29d855d8edf10962cb										YES	
+3e22c7eaf6459b67388602e4bebbb3a8										YES	
+3e33ac10dcf2dff014bc1decf8a9aea4										YES	
+3e4b1137433cc1e617b5508619e13063										YES	
+3e899eba0ca8cd2972da1ae5479b4f0d										YES	
+3ec12372ca3e870b11ca70edc7ec26a4										YES	
+3f01bd6d059396f495a4cde7de0ab180										YES	
+402d876ec4a73f9e3133f8f7f7992a1e							ATARIVOX				
+41810dd94bd0de1110bedc5092bef5b0										YES	
+41b554c6970b18670acc7b6baef8ed2e										YES	
+4209e9dcdf05614e290167a1c033cfd2										YES	
+4233eb824c2b4811abef9b6d00355ae9										YES	
+42ae81ae8ac51e5c238639f9f77d91ae										YES	
+4326edb70ff20d0ee5ba58fa5cb09d60										YES	
+4427f06085bb4c22ff047027f7acecc2								YES			
+4431428a7500c96fc0e2798a5dbd36d6										YES	
+4543b7691914dfd69c3755a5287a95e1										YES	
+463dd4770506e6c0ef993a40c52c47be										YES	
+468483e15091818b493983399e00d8f8										YES	
+468f2dec984f3d4114ea84f05edf82b6										YES	
+469473ff6fed8cc8d65f3c334f963aab										YES	
+46e9428848c9ea71a4d8f91ff81ac9cc						PADDLES		YES			
+471f7bdc933e8db0e44aa3dde2dd92af										YES	
+47585c047802dd9af888b998fb921f32									PAL60		
+47911752bf113a2496dbb66c70c9e70c						KEYBOARD	KEYBOARD				
+4799a40b6e889370b7ee55c17ba65141										YES	
+47aef18509051bab493589cb2619170b										YES	
+47b82d47e491ac7fdb5053a88fccc832										YES	
+47cd61f83457a0890de381e478f5cf5f										YES	
+4857f8bb88bb63c640d3ea5aac7f5d6d										YES	
+4892b85c248131d6a42c66a4163a40d0					YES			YES		YES	
+48f18d69799a5f5451a5f0d17876acef										YES	
+4904a2550759b9b4570e886374f9d092										YES	
+490e3cc59d82f85fae817cdf767ea7a0										YES	
+49366f41aa7a54baf263426e99ce4312		MDM				JOYSTICK	JOYSTICK				
+493de059b32f84ab29cde6213964aeee										YES	
+494c0fb944d8d0d6b13c6b4b50ccbd11		WF8									
+494cda91cc640551b4898c82be058dd9										YES	
+497f3d2970c43e5224be99f75e97cbbb										YES	
+4a6be79310f86f0bebc7dfcba4d74161										YES	
+4af4103759d603c82b1c9c5acd2d8faf										YES	
+4afe528a082f0d008e7319ebd481248d										YES	
+4b205ef73a5779acc5759bde3f6d33ed										YES	
+4b379b885e2694f992c6cc932f18327f									PAL60		
+4b854623357e511c2fac852529f0ae2c									NTSC50		
+4b94fd272785d7ec6c95fb7279d0f522						KEYBOARD	KEYBOARD				
+4baada22435320d185c95b7dd2bcdb24										YES	
+4bcc7f6ba501a26ee785b7efbfb0fdc8										YES	
+4bdf54a454470ba015a217a8f5e61320									PAL60	YES	
+4c030667d07d1438f0e5c458a90978d8										YES	
+4c606235f4ec5d2a4b89139093a69437										YES	
+4d5f6db55f7f44fd0253258e810bde21						PADDLES		YES			
+4dd6c7ab9ef77f2b4950d8fc7cd42ee1										YES	
+4df9d7352a56a458abb7961bf10aba4e					YES						
+4e15ddfd48bca4f0bf999240c47b49f5										YES	
+4e2c884d04b57b43f23a5a2f4e9d9750										YES	
+4f32b24869d8c1310fecf039c6424db6										YES	
+4f634893d54e9cabe106e0ec0b7bdcdf										YES	
+4f781f0476493c50dc578336f1132a67						DRIVING	DRIVING				
+4f7b07ec2bef5ccffe06403a142f80db										YES	
+4fae08027365d31c558e400b687adf21										YES	
+4fc1b85b8074b4b9436d097900e34f29										YES	
+5079bfbc7b8f5770f84215ed2e3bdd1b						GENESIS	GENESIS				
+522b27a8afeb951b5a5a667f8d1a46a1										YES	
+52385334ac9e9b713e13ffa4cc5cb940										YES	
+523f5cbb992f121e2d100f0f9965e33f						PADDLES_IAXDR					
+525f2dfc8b21b0186cff2568e0509bfc							PADDLES				
+52615ae358a68de6e76467e95eb404c7										YES	
+52e1954dc01454c03a336b30c390fb8d										YES	
+52ec33be79c05b9218c9b55f7ccc1bfa									NTSC50		
+5336f86f6b982cc925532f2e80aa1e17										YES	
+5355f80cacf0e63a49cbf4ade4e27034										YES	
+536bf56baa70acb17113884ac41f2820								YES			
+53e03df47e76329b701641f8bdc206f5										YES	
+541cac55ebcf7891d9d51c415922303f						JOYSTICK				YES	
+5485d2da1341512840054ec02ac3b6a8									PAL60		
+54bafc299423f5a50b8bc3a797914706										YES	
+553dbf9358cfd2195e2fa0e08b01fb6a										YES	
+5678ebaa09ca3b699516dba4671643ed										YES	
+56f72247eb9ebfd33bfd0cca23ab7ef4									PAL60		
+575c0fb61e66a31d982c95c9dea6865c						PADDLES_IAXIS					
+57a66b6db7efc5df17b0b0f2f2c2f078										YES	
+57c5b351d4de021785cf8ed8191a195c							KEYBOARD				
+5835a78a88f97acea38c964980b7dbc6										YES	
+58e313e2b5613b2439b5f12bb41e3eef										YES	
+5a0ff99ba10bd26d542e1d6f59f56850						JOYSTICK			PAL60	YES	
+5a4205aeedd3b0588f973f38bbd9dfd4										YES	
+5a5390f91437af9951a5f8455b61cd43										YES	
+5a9685c4d51a6c1d6a9544946d9e8dc3							DRIVING				
+5a9d188245aff829efde816fcade0b16										YES	
+5b124850de9eea66781a50b2e9837000						PADDLES_IAXIS				YES	
+5b5d04887922b430de0b7b2a21f9cd25										YES	
+5bba254e18257e578c245ed96f6b003b										YES	
+5bc9998b7e9a970e31d2cb60e8696cc4										YES	
+5c618a50dfa23daac97ba459b9ff5206										YES	
+5ced13931c21ef4fc77d3fe801a1cbfa										YES	
+5d132d121aabc5235dd039dfc46aa024					YES						
+5d25df9dc2cde746ceac48e834cf84a7									SECAM		
+5d8f1ab95362acdf3426d572a6301bf2									PAL60		
+5d9592756425192ec621d2613d0e683d										YES	
+5e43c0391f7412ae64fae6f3742d6ee9						BOOSTERGRIP	DRIVING				
+5f681403b1051a0822344f467b05a94d										YES	
+5f786b67e05fb9985b77d4beb35e06ee										YES	
+5f950a2d1eb331a1276819520705df94										YES	
+60cd61a2dfccb0e2736434f9792c1672										YES	
+60e0ea3cbe0913d39803477945e9e5ec						PADDLES_IAXDR	PADDLES_IAXDR	YES			
+613abf596c304ef6dbd8f3351920c37a										YES	
+61baadddc2c8f6e5faa57d4d0f285462		MDM				JOYSTICK	JOYSTICK				
+6238ac888871fec301d1b9fc4fc613c9										YES	
+624e0a77f9ec67d628211aaf24d8aea6										YES	
+6272f348a9a7f2d500a4006aa93e0d08										YES	
+62921652f6634eb1a0940ed5489c7e18						PADDLES_IAXDR					
+62f74a2736841191135514422b20382d									PAL60	YES	
+63166867f75869a3592b7a94ea62d147						DRIVING	DRIVING				
+6333ef5b5cbb77acd47f558c8b7a95d3										YES	
+6339d28c9a7f92054e70029eb0375837										YES	
+6354f9c7588a27109c66905b0405825b										YES	
+6358f7f8bf0483402a080efccf250d61										YES	
+640a08e9ca019172d612df22a9190afb										YES	
+643e6451eb6b8ab793eb60ba9c02e000										YES	
+650df778c6ce22d3fd1a7c33c565bcc3						GENESIS					
+651d2b6743a3a18b426bce2c881af212										YES	
+6538e454b0498ad2befe1ef0f87815c0						PADDLES_IAXDR					
+656dc247db2871766dffd978c71da80c						PADDLES_IAXIS					
+65949de96b741046269379289189b3de										YES	
+6596b3737ae4b976e4aadb68d836c5c7										YES	
+659a20019de4a23c748ec2292ea5f221										YES	
+65a6f1255fe22468a8bf84ff28a4d289						JOYSTICK	JOYSTICK				
+663ef22eb399504d5204c543b8a86bcd					YES					YES	
+6651e2791d38edc02c5a5fd7b47a1627										YES	
+66706459e62514d0c39c3797cbf73ff1				A							
+668dc528b7ea9345140f4fcfbecf7066										YES	
+66f49b3248791b9803fa3e2f4165d072										YES	
+67931b0d37dc99af250dd06f1c095e8d										YES	
+679e910b27406c6a2072f9569ae35fc8										YES	
+67bd3d4dc5ac6a42a99950b4245bdc81										YES	
+67c05ae94bf8b83a666c3ae2c4bc14de										YES	
+67ce6cdf788d324935fd317d064ed842										YES	
+67f90d74fd0b72fdc6d9b92436780ea9									PAL60		
+6803fa7c2c094b428b859a58dc1dd06a										YES	
+6833c26f385e866f3a0fa0dff311216e									PAL60	YES	
+6847ce70819b74febcfd03e99610243b										YES	
+685e9668dc270b6deeb9cfbfd4d633c3										YES	
+687c23224e26f81c56e431c24faea36d										YES	
+689f49e31cac68db8a2cf8f44fa7a01a									PAL60	YES	
+68cd2adc6b1fc9a1f263ab4561112f30										YES	
+693137592a7f5ccc9baae2d1041b7a85										YES	
+6936aa6763835f62ac13d1aaa79b9f91										YES	
+6982854657a2cc87d712f718e402bf85										YES	
+69e79b1352b9ee1754bbe63b4a7062c3										YES	
+69edfb4e1810a523311b3e250fc1e275										YES	
+6a222c26bcece3a510ddda21398f72c6										YES	
+6a76d5f0ed721639474aa9bbde69ebf0										YES	
+6a882fb1413912d2ce5cf5fa62cf3875										YES	
+6b1fc959e28bd71aed7b89014574bdc2										YES	
+6b4eb5b3df80995b8d9117cb7e9aeb3c										YES	
+6b683be69f92958abe0e2a9945157ad5										YES	
+6b6ca32228ae352b4267e4bd2cddf10c										YES	
+6b75f8fa4fd011a6698c58315f83d2ac						DRIVING	DRIVING				
+6bde3f6ac31aceef447ce57d4d2c2ec0						PADDLES_IAXDR					
+6cab04277e7cd552a3e40b3c0e6e1e3d										YES	
+6ccd8ca17a0e4429b446cdcb66327bf1										YES	
+6cd506509e8fd5627f55603780e862a8										YES	
+6cf054cd23a02e09298d2c6f787eb21d										YES	
+6d8a04ee15951480cb7c466e5951eee0										YES	
+6e372f076fb9586aff416144f5cfe1cb										YES	
+6e5d5ba193d2540aec2e847aafb2a5fb										YES	
+6ed5012793f5ddf4353a48c11ea9b8d3						PADDLES_IAXIS					
+6efe876168e2d45d4719b6a61355e5fe										YES	
+6f084daf265599f65422ef4173b69bc7										YES	
+6f3e3306da2aa6e74a5e046ff43bf028										YES	
+6fc394dbf21cf541a60e3b3631b817f1										YES	
+6fe67f525c39200a798985e419431805										YES	
+6ff4156d10b357f61f09820d03c0f852								YES			
+6ffc95108e5add6f9b8abcaf330be835										YES	
+703d32062436e4c20c48313dff30e257										YES	
+703f0f7af350b0fa29dfe5fbf45d0d75		4IN1									
+709910c2e83361bc4bf8cd0c20c34fbf										YES	
+70a43fbdb1c039283ee5048d99842469										YES	
+713fde2af865b6ec464dfd72e2ebb83e										YES	
+715dd9e0240638d441a3add49316c018		16IN1									
+718ae62c70af4e5fd8e932fee216948a										YES	
+718ee85ea7ec27d5bea60d11f6d40030										YES	
+71edab64f54783132536bef7c141a63f						JOYSTICK					
+72305c997f2cec414fe6f8c946172f83										YES	
+726af33d9acfc8616a8df05de4f560af									PAL60	YES	
+72876fd7c7435f41d571f1101fc456ea										YES	
+72a63bcb5eb31bd0fd5e98ed05125ec1									PAL60		
+72b342fbaacdb62f0fcf90e6e29c4920							QUADTARI		PAL60		
+72b7ce89859d240558a5baf57b06c8dd									PAL60	YES	
+72db1194b1cc7d45b242f25eb1c148d3										YES	
+73cb1f1666f3fd30b52b4f3d760c928f										YES	
+7412f6788087d7e912c33ba03b36dd1b										YES	
+7454786af7126ccc7a0c31fcf5af40f1										YES	
+7465b06b6e25a4a6c6d77d02242af6d6		8IN1									
+749fec9918160921576f850b2375b516										YES	
+74d072e8a34560c36cacbc57b2462360										YES	
+75169c08b56e4e6c36681e599c4d8cc5						PADDLES		YES			
+752da1c0acd7d132ccfb0b1067f53cf6										YES	
+753375d183c713cfa0aa7298d1f3067b										YES	
+75ea60884c05ba496473c23a58edf12f										YES	
+75ee371ccfc4f43e7d9b8f24e1266b55	0										
+7608abdfd9b26f4a0ecec18b232bea54										YES	
+76f66ce3b83d7a104a899b4b3354a2f2										YES	
+77be57d872e3f5b7ecf8d19d97f73281					YES						
+77cd9a9dd810ce8042bdb9d40e256dfe										YES	
+77d0a577636e1c9212aeccde9d0baa4b						PADDLES_IAXDR	PADDLES_IAXDR	YES			
+784abfdb31d5341e5bd404d8d2a71c3b						KEYBOARD	KEYBOARD				
+7867ee819b53d69cfcfe740f7ddca574										YES	
+791c88eca9836af8c34bf32b07cb58a7						JOYSTICK			PAL60	YES	
+7926083ad423ed685de3b3a04a914315						PADDLES		YES			
+798b8921276eec9e332dfcb47a2dbb17							KEYBOARD				
+7991e1797e5e9f311fd957e62d889dff						PADDLES_IAXDR					
+79b649fb812c50b4347d12e7ddbb8400										YES	
+7a48dd03d839da082dc2287ede070383		16IN1									
+7ad257833190bc60277c1ca475057051										YES	
+7adbcf78399b19596671edbffc3d34aa										YES	
+7b0ebb6bc1d700927f6efe34bac2ecd2		WF8									
+7b33407b2b198af74906b936ce1eecbb										YES	
+7b4be337ac4d73eda75c848355f6f480									PAL60		
+7b57318c489ff178f7ff500da1ec9e8c										YES	
+7bc4fd254ec8c0a25a13f02fd3f762ff										YES	
+7ca7a471d70305c673fedd08174a81e8										YES	
+7cedffa0db65d610568b90aeca705ac6										YES	
+7cf3a9267cdb95aba91abc5838d61cc5									PAL60	YES	
+7d24f3054be9950aa263e005581c4786										YES	
+7da9de8d62fcdd3a2c545b2e720c2a61						KEYBOARD	KEYBOARD				
+7dcbfd2acc013e817f011309c7504daa										YES	
+7ded20e88b17c8149b4de0d55c795d37						BOOSTERGRIP	DRIVING				
+7dfd100bda9abb0f3744361bc7112681										YES	
+7e51a58de2c0db7d33715f518893b0db										YES	
+7e8aa18bc9502eb57daaf5e7c1e94da7					YES					YES	
+7e9f088e15b2af9ff3411991393e6b1f									NTSC		
+7eaf009a892f03d90682dc1e67e85f07										YES	
+7f525b07bc98080cc8950f7284e52ede		16IN1									
+7f5da5dc44bb5e0b959507bb0ea31cd6										YES	
+7f790939f7eaa8c47a246c4283981f84										YES	
+7fcd1766de75c614a3ccc31b25dd5b7a										YES	
+805f9a32ef97ac25f999a25014dc5c23										YES	
+807a8ff6216b00d52aba2dfea5d8d860							ATARIVOX				
+80dcbe1b55f12be731a224a53ee4ad5f										YES	
+80f7bf7418a462e8687ecefeaf6eb9c2										YES	
+81073d0377a2badef8d5e74fc44fc323									PAL60		
+8108ad2679bd055afec0a35a1dca46a4									NTSC		
+81414174f1816d5c1e583af427ac89fc				A							
+81591a221419024060b890665beb0fb8						DRIVING	DRIVING				
+81a010abdba1a640f7adf7f84e13d307										YES	
+81b3bf17cf01039d311b4cd738ae608e										YES	
+827a22b9dffee24e93ed0df09ff8414a										YES	
+82de957d155fc041fc6afb8315a28550										YES	
+82ee056af81203af58092ff2e6cf079d										YES	
+83b8c01c72306d60dd9b753332ebd276										YES	
+841057f83ce3731e6bbfda1707cbca58						JOYSTICK				YES	
+843435eb360ed72085f7ab9374f9749a						PADDLES_IAXDR					
+84535afb9a69712ec0af4947329e08b8										YES	
+8454ed9787c9d8211748ccddb673e920										YES	
+85564dd0665aa0a1359037aef1a48d58										YES	
+8556b42aa05f94bc29ff39c39b11bff4						PADDLES_IAXDR					
+85b1bca93e69f13905107cc802a02470						PADDLES_IAXDR					
+85bbefb90e16bf386b304c1e9a1f6084									PAL60		
+85e564dae5687e431955056fbda10978										YES	
+8619da7f6796cedff59e5aa20712fb4e							DRIVING			YES	30
+8712cceec5644aacc2c21203d9ebe2ec										YES	
+874c76726f68c166fcfac48ce78eef95										YES	
+876a953daae0e946620cf05ed41989f4										YES	
+8786f4609a66fbea2cd9aa48ca7aa11c										YES	
+87b6a17132fc32f576bc49ea18729506										YES	
+87e79cd41ce136fd4f72cc6e2c161bee										YES	
+896ec58f26e930e02f5e4f046602c3a1										YES	
+89a65b83203980d5d4d60f52a584a5b8										YES	
+89afff4a10807093c105740c73e9b544										YES	
+8a183b6357987db5170c5cf9f4a113e5									NTSC		
+8a6c84f481acf42abcb78ba5064ad755								YES			
+8a9d874a38608964f33ec0c35cab618d										YES	
+8ad3b8e7436816db03e7824406bdc670									NTSC50		
+8af58a9b90b25907da0251ec0facf3b8										YES	
+8b504b417c8626167a7e02f44229f0e7										YES	
+8b556c3d9ca8e5e6e665bd759b93ffae										YES	
+8bbfd951c89cc09c148bfabdefa08bec										YES	
+8bebac614571135933116045204f0f00						TRAKBALL	TRAKBALL			YES	
+8c146c61817edd376bc1354c7f1ddc63									PAL60		
+8c2fa33048f055f38358d51eefe417db										YES	
+8ccaa442d26b09139685f5b22bf189c4										YES	
+8ccf63141a029603572d1056e772990e										YES	
+8ce9126066f2ddd5173e9f1f9ce1494e						TRAKBALL	TRAKBALL			YES	
+8cf0d333bbe85b9549b1e6b1e2390b8d										YES	
+8d1e2a6d2885966e6d86717180938f87										YES	
+8dda212b5d92a3b21812890b472f0e7a										YES	
+8df4be9ddc54ac363b13dc57ceaf161a										YES	
+8e48ea6ea53709b98e6f4bd8aa018908										YES	
+8e7241bfc8380aac3c0ef1b6881cdded										YES	
+8e879aa58db41edb67cbf318b77766c4									PAL60		
+8ed73106e2f42f91447fb90b6f0ea4a4										YES	
+8ef96ace4a1d6dfb65926c1e868b0188									PAL60	YES	
+8fe00172e7fff4c1878dabcf11bb8dce										YES	
+8fffc8f15bb2e6d24e211884a5479aa5										YES	
+90578a63441de4520be5324e8f015352										YES	
+90b647bfb6b18af35fcf613573ad2eec							ATARIVOX			YES	
+91c2098e88a6b13f977af8c003e0bca5										YES	
+9222b25a0875022b412e8da37e7f6887										YES	
+9281eccd7f6ef4b3ebdcfd2204c9763a										YES	
+929e8a84ed50601d9af8c49b0425c7ea										YES	
+93096a1038cd558ed0b48741bbf17c64										YES	
+93420cc4cb1af1f2175c63e52ec18332										YES	
+9364ad51c321e0f15c96a8c0aff47ceb										YES	
+939ce554f5c0e74cc6e4e62810ec2111										YES	
+93b9229fc0ea4fb959d604f83f8f603c										YES	
+93c9f9239a4e5c956663dd7affa70da2										YES	
+93db185c3b3dc382f3aecd6a2fea7fd9									PAL60		
+9436b7ad131b5a1f7753ce4309ba3dee										YES	
+943798452ceba9357e2c56303cadb4f7						JOYSTICK	DRIVING				
+9446940866c9417f210f8552cf6c3078									PAL60	YES	
+94e3fbc19107a169909e274187247a9d		2IN1									
+94e4c9b924286038527f49cdc20fda69										YES	
+94e7cc6342d11e508e7e8b2ddf53c255										YES	
+951e8cec7a1a1d6c01fd649e7ff7743a										YES	
+952a63b8305154a7969743c7b8671243										YES	
+95a89d1bf767d7cc9d0d5093d579ba61										YES	
+95e542a7467c94b1e4ab24a3ebe907f1										YES	
+9628554ab40db73617a621a2266a1a7f							QUADTARI				
+962ffd3eaf865230a7a312b80e6c5cfd										YES	
+966c955e4aaca7082d9ffb9a68e3f3ed										YES	
+96e798995af6ed9d8601166d4350f276										YES	
+96eccc2277043508a6c481ea432d7dd9						ATARIMOUSE	ATARIMOUSE			YES	
+9713537765b4c6532f6ee40025d8f182										YES	
+97184b263722748757cfdc41107ca5c0										YES	
+9784290f422e7aeeab4d542318bd9a1f										YES	50
+97933c9f20873446e4c1f8a4da21575f										YES	
+97f4da9f1031486f4e588f1e53572e53										YES	
+98555b95cb38e0e0b22b482b2b60a5b6										YES	
+98ccd15345b1aee6caf51e05955f0261										YES	
+9905f9f4706223dadee84f6867ede8e3	0										
+9947f1ebabb56fd075a96c6d37351efa				A		BOOSTERGRIP	BOOSTERGRIP			YES	
+9a36d828f413fdd370faee2295cdb07b							QUADTARI		PAL60		
+9ad362179c2eea4ea115c7640b4b003e									NTSC50		
+9af615951e9719df2244bc77fc50cb95										YES	
+9bb136b62521c67ac893213e01dd338f						JOYSTICK					
+9c40bf810f761ffc9c1b69c4647a8b84		2IN1									
+9c6d65bd3b477aace0376f705b354d68										YES	
+9c729017dd2f9ccbadcb511187f80e6b										YES	
+9dec0be14d899e1aac4337acef5ab94a										YES	
+9e192601829f5f5c2d3b51f8ae25dbe5										YES	
+9e5007131695621d06902ab3c960622a										YES	
+9efa877a98dd5a075e058214da428abb						PADDLES_IAXDR					
+9f48eeb47836cf145a15771775f0767a										YES	
+9f52271759f8a2004d207b2247ae0bb3										YES	
+9f59eddf9ba91a7d93bce7ee4b7693bc									PAL60		
+9f8fad4badcd7be61bbd2bcaeef3c58f										YES	
+9f901509f0474bf9760e6ebd80e629cd					YES					YES	
+a00ee0aed5c8979add4c170f5322c706										YES	
+a0297c4788f9e91d43e522f4c561b4ad							KEYBOARD				
+a100eff2d7ae61ca2b8e65baf7e2aae8										YES	
+a174cece06b3abc0aec3516913cdf9cc						PADDLES_IAXIS					
+a20d931a8fddcd6f6116ed21ff5c4832										YES	
+a256ebbfefdc7b5ff8cc6697a868ec3a										YES	
+a29df35557f31dfea2e2ae4609c6ebb7						JOYSTICK	JOYSTICK				
+a2d7cc2e5419a9e4ab91fdb26339b726									PAL60		
+a2de0fc85548871279ed2a3c1325c13e										YES	
+a30ece6dc4787e474fbc4090512838dc						JOYSTICK	JOYSTICK				
+a3fee8ce15525ea00d45a06f04c215d1									PAL60		
+a412c8577b2d57b09185ae51739ac54f										YES	
+a484638990de7b12c62947c79dafa4c6									PAL60	YES	
+a4e885726af9d97b12bb5a36792eab63						JOYSTICK					
+a50f921c2000760b099dcf1ed353895f									PAL60		
+a5855d73d304d83ef07dde03e379619f										YES	
+a69f5b1761a8a11c98e706ec7204937f										YES	
+a6ed8d72ed691fd3aad5b6974fa17978										YES	
+a74689a08746a667a299b0507e1e6dd9										YES	
+a7673809068062106db8e9d10b56a5b3										YES	
+a7a58e9291aefa1064e933071f60d4ef										YES	
+a7cf2b9afdbb3a161bf418dbcf0321dc										YES	
+a8101cb667e50a46165c6fb48c608b6b										YES	
+a89a3e0547d6887279c34aba4b17a560		4K									
+a8c447efbec3a2b5d08b05a09999bd92						JOYSTICK	JOYSTICK				
+a936d80083e99d48752ad15c2b5f7c96										YES	
+a957dbe7d85ea89133346ad56fbda03f										YES	
+a9784c24cddb33bd0d14442b97784f3d										YES	
+a995b6cbdb1f0433abc74050808590e6										YES	
+a9d9e19d0c89fb31780b5d63e1f8c6a4									PAL60		
+a9e3c23599c0d77151602f8e31daf879						GENESIS					
+aa1c41f86ec44c0a44eb64c332ce08af						PADDLES					
+aa5cfe3b20395aba1d479135943ad85c										YES	
+aa7bb54d2c189a31bb1fa20099e42859										YES	
+aab840db22075aa0f6a6b83a597f8890					YES						
+ab4ac994865fb16ebb85738316309457					YES						
+ab8d318da4addd39c65b7f9c408df2a6										YES	
+abb740bea0a6842831b4f53112fb8145										YES	
+abc64037ca5d5b04ae8a7eedbca3ed74										YES	
+ac53b83e1b57a601eeae9d3ce1b4a458										YES	
+ac7c2260378975614192ca2bc3d20e0b							PADDLES				
+acb7750b4d0c4bd34969802a7deb2990			A	A						YES	
+ad72d616030a17634ff29ce8680d3c4c									PAL60	YES	
+ad8072675109d13fdd31a2e0403d5cff										YES	
+adfbd2e8a38f96e03751717f7422851d				A						YES	
+ae0d4f3396cb49de0fabdff03cb2756f										YES	
+ae18c11e4d7ed2437f0bf5d167c0e96c										YES	
+ae2f1f69bb38355395c1c75c81acc644										YES	
+ae682886058cd6981c4b8e93e7b019cf										YES	
+aeb104f1e7b166bc0cbaca0a968fde51										YES	
+afb3bc45c6a82739cc82582127cd96e6										YES	
+afd2cf258d51ae4965ee21abba3627ab						KEYBOARD					
+afe4eefc7d885c277fc0649507fbcd84										YES	
+afe88aae81d99e0947c0cfb687b16251										YES	
+b011d8fdc450597c0762c2c0010a9b17										YES	
+b06050f686c6b857d0df1b79fea47bb4										YES	
+b061e98a4c854a672aadefa233236e51										YES	
+b0e1ee07fbc73493eac5651a52f90f00										YES	
+b1276417fb0f79bc52e741bb8f4d8360										YES	
+b129d7541cff79ebe33852a83057c524										YES	
+b15026b43c6758609667468434766dd8										YES	
+b182d9708e00709830caab9cf8205ca0									PAL60	YES	
+b1e2d5dc1353af6d56cd2fe7cfe75254										YES	
+b1fd0b71de9f6eeb5143a97963674cb6										YES	
+b227175699e372b8fe10ce243ad6dda5										YES	
+b2761efb8a11fc59b00a3b9d78022ad6						PADDLES_IAXIS					
+b29359f7de62fed6e6ad4c948f699df8										YES	
+b2d1e63f7f22864096b7b6c154151d55										YES	
+b2d3bcee001cff2bd2d8a21b2cb55109										YES	
+b2f0d7217147160b2f481954cedf814b										YES	
+b3017e397f74efd53caf8fae0a38e3fe										YES	
+b311ab95e85bc0162308390728a7361d										YES	
+b31e9487efc06f18dfc3d7ebadf54416									PAL60		
+b36040a2f9ecafa73d835d804a572dbf										YES	
+b37f0fe822b92ca8f5e330bf62d56ea9						JOYSTICK					
+b3e1987b96318269b5ac9f06d22cd48d									NTSC50		
+b41fdd4a522e1d5a2721840028684ac2										YES	
+b42df8d92e3118dc594cecd575f515d7										YES	
+b4f05e544834d0238a0c263491775edf										YES	
+b5cb9cf6e668ea3f4cc2be00ea70ec3c										YES	
+b5cdbab514ea726a14383cff6db40e26				A						YES	
+b676a9b7094e0345a76ef027091d916b				A						YES	
+b7903268e235310dc346a164af4c7022									PAL60	YES	
+b79fe32320388a197ac3a0b932cc2189										YES	
+b7a7e34e304e4b7bc565ec01ba33ea27										YES	
+b7d7c76e37f372f4e4979b380ed95a58									PAL60		
+b816296311019ab69a21cb9e9e235d12						PADDLES_IAXIS					
+b83579c4450fcbdf2b108903731fa734										YES	
+b8e715223ba65cf716b3620a90ca3ec1										YES	
+b9336ed6d94a5cc81a16483b0a946a73										YES	
+b9429824ab7ce3c1a83438f32af3f4e1						PADDLES_IAXIS					
+b98cc2c6f7a0f05176f74f0f62c45488		CM				COMPUMATE	COMPUMATE		NTSC	YES	80
+b9f6fa399b8cd386c235983ec45e4355							JOYSTICK				
+baf4ce885aa281fd31711da9b9795485										YES	
+bb2b83fff97604f74ada565e0b5bae94									PAL60		
+bb5049e4558daade0f87fed69a244c59										YES	
+bc24440b59092559a1ec26055fd1270e	0										
+bcb31f22856b0028c00d12f0e4c0a952										YES	
+bcb73b534ed7c613ac379ecd726effb5									PAL60		
+bdb4b584ddc90c9d2ec7e21632a236b6										YES	
+be41463cd918daef107d249f8cde3409										YES	
+bf1970b692275b42c4ec0683588eb062										YES	
+bfb73aabb2489316cd5882c3cd11d9f9										YES	
+c00b65d1bae0aef6a1b5652c9c2156a1						PADDLES_IAXDR		YES			
+c0589bb73858924389077fa3c2e9441a										YES	
+c0c7eddefce9015346db88ade3e1e096										YES	
+c11e8473c652619ac6166900150ce215										YES	50
+c15042e54c7408498f051d782aaa8945										YES	
+c1a83f44137ea914b495fc6ac036c493							KEYBOARD				
+c1f9f70ae527093b6af3b6531860e75d										YES	
+c1fdd44efda916414be3527a47752c75							JOYSTICK				
+c221607529cabc93450ef25dbac6e8d2				A							
+c2410d03820e0ff0a449fa6170f51211										YES	
+c28b29764c2338b0cf95537cc9aad8c9										YES	
+c2b5c50ccb59816867036d7cf730bf75										YES	
+c2dea467f4a02fa1f06d66f52bc12e6e										YES	
+c4060a31d61ba857e756430a0a15ed2e										YES	
+c446288fe62c0c2737639fd788ae4a21										YES	
+c471b97446a85304bbac021c57c2cb49										YES	
+c482f8eebd45e0b8d479d9b71dd72bb8										YES	
+c4d888bcf532e7c9c5fdeafbb145266a										YES	
+c504a71c411a601d1fc3173369cfdca4										YES	
+c5301f549d0722049bb0add6b10d1e09						DRIVING	DRIVING				
+c541a5f6fc23b40a211196dd78233780							KEYBOARD				
+c560a3ecb7b751021953819efcfe5b41						GENESIS					
+c569e57dca93d3bee115a49923057fd7										YES	
+c5930d0e8cdae3e037349bfa08e871be										YES	
+c5bab953ac13dbb2cba03cd0684fb125										YES	
+c5f71dfbdca9cc96b28643ff4d06aa6f										YES	
+c63a98ca404aa5ee9fcff1de488c3f43										YES	
+c6688781f4ab844852f4e3352772289b										YES	
+c73ae5ba5a0a3f3ac77f0a9e14770e73										YES	
+c77d3b47f2293e69419b92522c6f6647										YES	
+c7900a7fe95a47eef3b325072ad2c232										YES	
+c7f13ef38f61ee2367ada94fdcc6d206										YES	
+c866c995c0d2ca7d017fef0fc0c2e268										YES	
+c880c659cdc0f84c4a66bc818f89618e										YES	
+c90788d9aa71a78bcc78c015edb22c54									PAL60	YES	
+c92cfa54b5d022637fdcbdc1ef640d82										YES	
+c98e8c918a40b4d3a243dd6c49196330										YES	
+c9f6e521a49a2d15dac56b6ddb3fb4c7								YES			
+ca50cc4b21b0155255e066fcd6396331										YES	
+ca7aaebd861a9ef47967d31c5a6c4555					YES						
+cac9928a84e1001817b223f0cecaa3f2										YES	
+cad982c9b45bc5eff34e4ea982d5f1ca										YES	
+cae8f83c06831ec7bb6a3c07e98e9342										YES	
+cb4a7b507372c24f8b9390d22d54a918										YES	
+cb9626517b440f099c0b6b27ca65142c						KEYBOARD	KEYBOARD				
+cbced209dd0575a27212d3eee6aee3bc										YES	
+cbd981a23c592fb9ab979223bb368cd5							KEYBOARD				
+cc7138202cd8f6776212ebfc3a820ecc							KEYBOARD				
+cc724ebe74a109e39c0b2784ddc980ca										YES	
+ccb5fa954fb76f09caae9a8c66462190										YES	
+ccbd36746ed4525821a8083b0d6d2c2c										YES	
+ccd92a269a4c2bd64d58cf2c0114423c										YES	
+cd68a9f79d4822a2e8f694d551642213									NTSC50		
+cd88ef1736497288c4533bcca339f881										YES	
+cd98be8a48ebf610c9609a688b9c57f2										YES	
+cd9fea12051e414a6dfe17052067da8e										YES	
+cdadb57b34438805ee322ff05bd3d43e									PAL60	YES	
+cdc1a5c61d7488eadc9aba36166b253d										YES	
+cdd4a538c420358ab64767d326921bf6		4IN1									
+cddabfd68363a76cd30bee4e8094c646						KEYBOARD	KEYBOARD				
+ce1cbe159b9ae5992dacf09371de5e13										YES	
+ce64812eb83c95723b04fb56d816910b										YES	
+ce82a675c773ff21e0ffc0a4d1c90a71										YES	
+ce8467ae2a3a5bc88ca72a2ce44ce28c										YES	
+ce89529d6e98a13ddf3d84827bbdfe68										YES	
+cea9f72036dc6f7af5eff52459066290										YES	
+ceba7965a93c689bdecdb46a5b2ac0c1									PAL60	YES	
+cf0c593c563c84fdaf0f741adb367445										YES	
+cf507910d6e74568a68ac949537bccf9										YES	
+cf9069f92a43f719974ee712c50cd932				A						YES	
+cfad2b9ca8b8fec7fb1611d656cc765b										YES	
+cfe2185f84ce8501933beb5c5e1fd053										YES	
+cff1e9170bdbc29859b815203edf18fa										YES	
+cff9950d4e650094f65f40d179a9882d										YES	
+d010e3dfe7366e47561c088079a59439										YES	
+d071d2ec86b9d52b585cc0382480b351										YES	
+d078d25873c5b99f78fa267245a2af02										YES	
+d090836f0a4ea8db9ac7abb7d6adf61e										YES	
+d09935802d6760ae58253685ff649268										YES	
+d0b9f705aa5f61f47a748a66009ae2d2										YES	
+d0e05ba5f10e3df3023c5ee787f760ef										YES	
+d0e9beb2347595c6c7d158e9d83d2da8										YES	
+d1c3520b57c348bc21d543699bc88e7e										YES	
+d1ca47b262f952413c1234117c4e4e21										YES	
+d214c7a734e133a5c18e93229435b57a		UASW									
+d3171407c3a8bb401a3a62eb578f48fb										YES	
+d3456b4cf1bd1a7b8fb907af1a80ee15										YES	
+d34b933660e29c0a0a04004f15d7e160										YES	
+d36308387241e98f813646f346e7f9f7										YES	
+d3bb42228a6cd452c111c1932503cc03										YES	
+d45ebf130ed9070ea8ebd56176e48a38					YES			YES		YES	
+d4942f4b55313ff269488527d84ce35c										YES	
+d54cd41ecfd59e4b72d2c086152b9a75										YES	
+d563ba38151b8204c9f5c9f58e781455										YES	
+d573089534ca596e64efef474be7b6bc							JOYSTICK				
+d5e17022d1ecc20fd9b53dc464c302f1									SECAM		
+d62283aed0f4199adb2333de4c263e9c								YES			
+d632b74fea533d593af82cf16e7c5e4a										YES	
+d787ec6785b0ccfbd844c7866db9667d										YES	
+d86deb100c6abed1588aa84b2f7b3a98										YES	
+d90205e29bb73a4cdf28ea7662ba0c3c										YES	
+d968de2b4ff18bfe4a95066cde310578										YES	
+d9c9cece2e769c7985494b1403a25721										YES	
+d9da2ae7c7894a29b43b3c6b79f3b7a2										YES	
+da732c57697ad7d7af414998fa527e75										YES	
+da79aad11572c80a96e261e4ac6392d0					YES					YES	
+dac762e4d01d445bdef20b7771f6570e						DRIVING	DRIVING				
+daef7d8e5a09981c4aa81573d4dbb380										YES	
+db4eb44bc5d652d9192451383d3249fc										YES	
+db971b6afc9d243f614ebf380af0ac60					YES						
+dba270850ae997969a18ee0001675821										YES	
+dbba14a0f69f0e13fdccb3fde3baedca										YES	
+dbc5ea6b259b1419c26c71ddb051fab2		UASW									
+dca90ea1084a2fdbe300d7178ca1a138										YES	
+dcba0e33aa4aed67630a4b292386f405										YES	
+dd08e18cfee87a0e7fc19a684b36e124										YES	
+dd0de0f61af2a2a4878e377b880a3933										YES	
+dd1842ba0f3f9d94dccb21eaa0f069b7										YES	
+dd7884b4f93cab423ac471aa1935e3df										YES	
+dda23757407c4e217f64962c87ad0c82										YES	
+de3d0e37729d85afcb25a8d052a6e236										YES	
+de7bca4e569ad9d3fd08ff1395e53d2d						BOOSTERGRIP					
+df40af244a8d68b492bfba9e97dea4d6										YES	
+df5cc5cccdc140eb7107f5b8adfacda1										YES	
+df91277a3569344b89e6e8bd5bebc8d1										YES	
+df9384d371588cd0400b29b03350eb62							QUADTARI				
+dfe885fb877a0f8fa604b7d99a6deaad										YES	
+e01e00504e6d4b88fa743c0bbe8a96e5										YES	
+e020f612255e266a8a6a9795a4df0c0f										YES	
+e02156294393818ff872d4314fc2f38e										YES	
+e0cbfc33f4926022ccaf6d0d0e920a0e										YES	
+e1029676edb3d35b76ca943da7434da8										YES	
+e12e32dee68201b6765fcd0ed54d6646								YES			
+e150f0d14f013a104b032305c0ce23ef										YES	
+e1e09e2f280e8e142121a377d0dc1b46						BOOSTERGRIP					
+e2389c0be5b5b84e0d3ca36ec7e67514										YES	
+e27d518993b0a010f16e92b971ecdcdd										YES	
+e2ca84a2bb63d1a210ebb659929747a9										YES	
+e48d3a4056ede9393586421996db1ae8									PAL60	YES	
+e4b12deaafd1dbf5ac31afe4b8e9c233										YES	
+e4bff1d5df70163c0428a1ead309c22d										YES	
+e4c666ca0c36928b95b13d33474dbb44										YES	
+e4d41f2d59a56a9d917038682b8e0b8c										YES	
+e4fa739c81b003c92bea7da5e84c7feb						JOYSTICK	JOYSTICK				
+e51030251e440cffaab1ac63438b44ae										YES	
+e549f1178e038fa88dc6d657dc441146										YES	
+e59d022d524d05acc19515598c831e4d						KEYBOARD	KEYBOARD				
+e5ecd78edd24326a968809decbc7b916										YES	
+e5f17b3e62a21d0df1ca9aee1aa8c7c5										YES	
+e5f360226dc552aba3e7e9b202330f48										YES	
+e600f5e98a20fafa47676198efe6834d										YES	
+e67b0ed32fd9d28d12ab3775d52e8c3a								YES			
+e6d5948f451a24994dfaaca51dfdb4e1										YES	
+e7f005ddb6902c648de098511f6ae2e5		CM				COMPUMATE	COMPUMATE		PAL	YES	80
+e800e4aec7c6c54c9cf3db0d1d030058										YES	
+e80a4026d29777c3c7993fbfaee8920f										YES	
+e823b13751e4388f1f2a375d3560a8d7										YES	
+e8a3473bf786cf796d1336d2d03a0008										YES	
+e9034b41741dcee64ab6605aba9de455										YES	
+e91d2ecf8803ae52b55bbf105af04d4b										YES	
+e9c71f8cdba6037521c9a3c70819d171										YES	
+e9cb18770a41a16de63b124c1e8bd493										YES	
+e9db2f91efe6ff7ea3546e2c2578fb09									PAL60	YES	
+e9f25c7af4f27c9e1b5b8f6fe6141e8c						JOYSTICK				YES	
+eae6a5510055341d3abeb45667bb3e9b	0										
+eb4252faff7a4f2ba5284a98b8f78d1a										YES	
+eb634650c3912132092b7aee540bbce3										YES	
+eb7934360658a29c50aeaff20bfda23b									SECAM		
+eb92193f06b645df0b2a15d077ce435f										YES	
+eb9712e423b57f0b07ccd315bb9abf61										YES	
+ebdc5716b85c4ff44fa357cb697d6cef										YES	
+ec44dcf2ddb4319962fc43b725a902e8										YES	
+ece463abde92e8b89bcd867ec71751b8										YES	
+ed0451010d022b96a464febcba70b9c4										YES	
+ed637054c93e82e436618bcc687e8777		2IN1									
+ede4ab11ca346bd023b2c21d941e0c50									SECAM		
+ee6665683ebdb539e89ba620981cb0f6			A								
+ee8027d554d14c8d0b86f94737d2fdcc										YES	
+eeb92f3f46df841487d1504f2896d61a										YES	
+eee7695ae3eea7818321df0b790b31f3					YES						
+efd387430a35a659ff569a9a0ec22209									NTSC	YES	
+effa3a7ce078c6d83bf43174a7bfdb1f										YES	
+efffafc17b7cb01b9ca35324aa767364						JOYSTICK	JOYSTICK				
+f0510abbfbe24ead552e92e3841f63f3										YES	
+f0541d2f7cda5ec7bab6d62b6128b823						MINDLINK	MINDLINK				
+f0631c6675033428238408885d7e4fde										YES	
+f0a6e99f5875891246c3dbecbf2d2cea										YES	
+f0d393dbf4164a688b2346770c9bbd12										YES	
+f0de4f49e95d529569e8788d5a7b4d30									PAL60	YES	
+f12afbffa080dd3b2801dd14d4837cf6										YES	
+f1489e27a4539a0c6c8529262f9f7e18				A					PAL60	YES	
+f1554569321dc933c87981cf5c239c43										YES	
+f1929bb9b5db22d98dd992aa3fe72920										YES	
+f1a0a23e6464d954e3a9579c4ccd01c8										YES	
+f1ae6305fa33a948e36deb0ef12af852										YES	
+f1eeeccc4bba6999345a2575ae96508e				A						YES	
+f280976d69d6e27a48506bd6bad11dcd						KEYBOARD	KEYBOARD				
+f283cc294ece520c2badf9da20cfc025						KEYBOARD	KEYBOARD				
+f2e4fb2d3600c0f76d05864e658cc57b										YES	
+f33f1d0f7819c74148dacb48cbf1c597										YES	
+f3dfae774f3bd005a026e29894db40d3						JOYSTICK	JOYSTICK				
+f48022230bb774a7f22184b48a3385af										YES	
+f48735115ec302ba8bb2d2f3a442e814										YES	
+f49a34f1fdd7dc147cbf96ce2ce71b76										YES	
+f4b8a47a95b61895e671c3ec86ffd461										YES	
+f5aa6bd10f662199c42e43863a30106c										YES	
+f5d103a9ae36d1d4ee7eef657b75d2b3										YES	
+f610d2bc17283d8064f7389fdf2ce8d4		128IN1				JOYSTICK	JOYSTICK				
+f6a282374441012b01714e19699fc62a										YES	
+f6a9ea814d15b85bffe980c927df606b										YES	
+f70e3f3bb2d19ec2aaec8f78dc43744f										YES	
+f724d3dd2471ed4cf5f191dbb724b69f					YES						
+f7424985bac41067502b4a05b64cb75a						GENESIS					
+f777444fc21a5925e066b68b1d350575										YES	
+f7856e324bc56f45b9c8e6ff062ec033										YES	
+f78c125b5da483c41e51522947d6c4ce					YES						
+f7a651972d78f9ba485b14690452d4be										YES	
+f7ec2f2bdbe8fbea048c0d5fa6503b0b						JOYSTICK	JOYSTICK				
+f802fa61011dd9eb6f80b271bac479d0										YES	
+f825c538481f9a7a46d1e9bc06200aaf									NTSC		
+f91fb8da3223b79f1c9a07b77ebfa0b2								YES			
+f965cc981cbb0822f955641f8d84e774										YES	
+fa1b060fd8e0bca0c2a097dcffce93d3						KEYBOARD	KEYBOARD				
+fa2be8125c3c60ab83e1c0fe56922fcb										YES	
+fa6fe97a10efb9e74c0b5a816e6e1958										YES	
+fa98d48cd609c9babc819e0a1bd8d598							ATARIVOX		PAL60	YES	
+fae0b86934a7c5a362281dffebdb43a0										YES	
+fb531febf8e155328ec0cd39ef77a122										YES	
+fb5c8af97bd8ffe88323656f462645a7										YES	
+fb88baa01afd34e0e4b601e1d29bc806										YES	
+fb91dfc36cddaa54b09924ae8fd96199										YES	
+fc2233fc116faef0d3c31541717ca2db										YES	
+fc69ca9c6cf18ec003bba9ce9751a77b									PAL60		
+fc9c1652fe3a2cade6188f4d3692481f										YES	
+fcbbd0a407d3ff7bf857b8a399280ea1										YES	
+fcbdf405f0fc2027b0ea45bb5af94c1a										YES	
+fcea12625c071ddc49f4e409f4038c60										YES	
+fe3b461d4c8b179fe68bc77760294c25						PADDLES_IAXDR		YES			
+fe6abc0f63e31e2646c9c600926b5b7f		4IN1									
+feba8686fd0376015258d1152923958a						JOYSTICK	JOYSTICK				
+feec54aac911887940b47fe8c9f80b11										YES	
+feedcc20bc3ca34851cd5d9e38aa2ca6						PADDLES_IAXDR		YES			
+ff1523783e0e76a3b0d1f7f0d1cb3050										YES	
+ff3bd0c684f7144aeaa18758d8281a78						PADDLES_IAXIS					
+ff7627207e8aa03730c35c735a82c26c						PADDLES_IAXIS					
+ff7ebadfb109ef64867f860f007b9cea									PAL60		
