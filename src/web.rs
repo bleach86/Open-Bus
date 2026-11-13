@@ -14,6 +14,7 @@ use crate::machines::apple2::rom_set::Sorted;
 use crate::machines::apple2::video::Monitor;
 use crate::machines::apple2::{self, Apple2, Model};
 use crate::machines::atari2600::{self, Atari2600};
+use crate::machines::atari7800::{self, Atari7800};
 use crate::machines::facts;
 use crate::machines::nes::{self, Nes};
 use crate::machines::region::Region;
@@ -23,7 +24,7 @@ use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use wasm_bindgen::prelude::*;
 
-/// What's known of the game `name`, its file's `bytes`, a NES's or a 2600's,
+/// What's known of the game `name`, its file's `bytes`, a NES's, a 2600's or a 7800's,
 /// without running it, as `cpu_emu facts` says it, a line.
 #[wasm_bindgen]
 pub fn game_facts(name: &str, bytes: Vec<u8>) -> String {
@@ -118,6 +119,7 @@ enum Running {
     Apple(Host<Apple2>),
     Nes(Host<Nes>),
     Atari2600(Host<Atari2600>),
+    Atari7800(Host<Atari7800>),
 }
 
 #[wasm_bindgen]
@@ -200,6 +202,25 @@ impl Emulator {
         })
     }
 
+    /// The Atari 7800, with the game `rom`, its `region`, ntsc or pal, if
+    /// it's chosen, else "".
+    pub fn atari7800(rom: &str, region: &str) -> Result<Emulator, String> {
+        let region = match region {
+            "" => None,
+            _ => Some(Region::parse(region).ok_or(format!("{region}: not a region"))?),
+        };
+        let cpu = atari7800::build(rom, region)?;
+        let region = cpu.memory.region;
+        let page = Rc::new(RefCell::new(Shared::default()));
+        let state = save_state::path(Path::new(rom));
+        let host = Host::new(cpu, Box::new(Page(page.clone())), state);
+        Ok(Emulator {
+            running: Running::Atari7800(host),
+            page,
+            size: atari7800::size(region),
+        })
+    }
+
     /// An Apple, `name` apple2, apple2e or apple2ee (the enhanced), its
     /// ROMs `roms` and the `disks` in it.
     pub fn apple(
@@ -231,6 +252,7 @@ impl Emulator {
             Running::Apple(host) => host.frame(),
             Running::Nes(host) => host.frame(),
             Running::Atari2600(host) => host.frame(),
+            Running::Atari7800(host) => host.frame(),
         };
     }
 
@@ -240,6 +262,7 @@ impl Emulator {
             Running::Apple(_) => apple2::CLOCK_HZ as f64 / apple2::CYCLES_PER_FRAME as f64,
             Running::Nes(host) => host.cpu.memory.region.frames_per_second(),
             Running::Atari2600(host) => atari2600::frames_per_second(&host.cpu.memory),
+            Running::Atari7800(host) => atari7800::frames_per_second(&host.cpu.memory),
         }
     }
 
@@ -303,6 +326,7 @@ impl Emulator {
             Running::Apple(host) => host.cpu.memory.aimed_at(),
             Running::Nes(host) => host.cpu.memory.aimed_at(),
             Running::Atari2600(host) => host.cpu.memory.aimed_at(),
+            Running::Atari7800(host) => host.cpu.memory.aimed_at(),
         }
     }
 
@@ -337,6 +361,7 @@ impl Emulator {
             Running::Apple(host) => host.say(text),
             Running::Nes(host) => host.say(text),
             Running::Atari2600(host) => host.say(text),
+            Running::Atari7800(host) => host.say(text),
         }
     }
 

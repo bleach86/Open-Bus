@@ -393,7 +393,7 @@ impl Atari7800 {
     /// The line's DMA: its cycles, the CPU's NMI pulsed if it interrupts.
     fn dma(&mut self) -> u32 {
         let (ram, riot, cartridge) = (&self.ram, &self.riot, &self.cartridge);
-        let mut read = |addr: u16| peek(ram, riot, cartridge, addr);
+        let mut read = |addr: u16| peek(ram, riot, cartridge, addr, true);
         let (cycles, nmi) = self.maria.dma(self.line, self.lines, &mut read);
         if nmi {
             self.nmi = 2;
@@ -439,15 +439,24 @@ impl Atari7800 {
     }
 }
 
-/// What MARIA's DMA reads at `addr`: RAM or the cartridge, as the CPU would,
-/// without what a read does; nothing of the TIA's or MARIA's.
-fn peek(ram: &[u8; 0x1000], riot: &Riot, cartridge: &Cartridge, addr: u16) -> u8 {
+/// What's read at `addr` of RAM or the cartridge, by the CPU, or by
+/// `maria`'s DMA (a bankset's own image), without what a read does; nothing
+/// of the TIA's or MARIA's.
+fn peek(ram: &[u8; 0x1000], riot: &Riot, cartridge: &Cartridge, addr: u16, maria: bool) -> u8 {
+    let cartridge_read = |addr| {
+        if maria {
+            cartridge.maria_read(addr)
+        } else {
+            cartridge.read(addr)
+        }
+    };
     match addr {
         0x0040..=0x00FF | 0x0140..=0x01FF => ram[0x800 + addr as usize],
         0x1800..=0x1FFF => ram[addr as usize - 0x1800],
         0x2000..=0x27FF => ram[0x800 + addr as usize - 0x2000],
         _ if is_riot_ram(addr) => riot.ram[addr as usize & 0x7F],
-        0x4000.. if !cartridge.pokey_at(addr) => cartridge.read(addr),
+        0x3000..=0x3FFF if cartridge.from_3000() => cartridge_read(addr),
+        0x4000.. if !cartridge.pokey_at(addr) => cartridge_read(addr),
         _ => 0,
     }
 }
@@ -490,7 +499,7 @@ impl Bus for Atari7800 {
                 .pokey
                 .as_ref()
                 .map_or(0xFF, |pokey| pokey.read(addr as u8)),
-            _ => peek(&self.ram, &self.riot, &self.cartridge, addr),
+            _ => peek(&self.ram, &self.riot, &self.cartridge, addr, false),
         }
     }
 
@@ -700,6 +709,25 @@ pub fn image_of(path: &Path, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     };
     let (_, image) = crate::host::zip::file(&bytes, is_game)?;
     Ok(image)
+}
+
+/// What's known of the game at `path` without running it, its `image` if it
+/// could be had, as `machines::facts` has it: its ROM's CRC-32, without its
+/// header, its cartridge, and why it won't load, if it won't.
+pub fn facts_of(path: &Path, image: Result<Vec<u8>, String>) -> String {
+    let fact = |image: &[u8]| -> Result<[String; 2], String> {
+        let (cartridge, _) = cartridge(image)?;
+        Ok([
+            format!("{:08X}", crc32(&cartridge.rom)),
+            format!("ATARI 7800 {}", cartridge.name()),
+        ])
+    };
+    let [crc, board, problem] = match image.and_then(|image| fact(&image)) {
+        Ok([crc, board]) => [crc, board, String::new()],
+        Err(problem) => ["".into(), "".into(), problem],
+    };
+    let problem = problem.replace(['\t', '\n'], " ");
+    format!("{crc}\t{board}\t0\t0\t{problem}\t{}", path.display())
 }
 
 /// The cartridge in `image`, as ProSystem's database says (as ProSystem

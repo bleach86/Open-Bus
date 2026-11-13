@@ -1,4 +1,4 @@
-// What's known of NES, Disk System and 2600 games without game lists beside them:
+// What's known of NES, Disk System, 2600 and 7800 games without game lists beside them:
 // their year, genre, developer and players, as libretro's database, RetroArch's
 // own, has them, from its copy on GitHub. Its lists come whole and games are
 // matched against them here, as covers are, so nothing's told of what's in
@@ -16,6 +16,7 @@ const SETS = {
     nes: 'Nintendo - Nintendo Entertainment System',
     fds: 'Nintendo - Family Computer Disk System',
     atari2600: 'Atari - 2600',
+    atari7800: 'Atari - 7800',
 };
 /// Each detail's list, and what it's called in it.
 const FIELDS = {

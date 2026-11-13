@@ -27,3 +27,5 @@ apple2/disks/
 nes/tests/
 # Atari 2600 ROMs, likewise
 *.a26
+# Atari 7800 ROMs, likewise
+*.a78

@@ -29,7 +29,7 @@ function write(key, value) {
     }
 }
 
-/// A game as it's kept, by its files: a console's game, a NES's or a 2600's;
+/// A game as it's kept, by its files: a console's game, a NES's, a 2600's or a 7800's;
 /// an Apple's disks.
 const gameKey = (machine) =>
     machine.kind === 'apple' ? `apple\n${machine.disks.join('\n')}` : `${machine.kind}\n${machine.game}`;

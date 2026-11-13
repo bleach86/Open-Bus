@@ -28,10 +28,16 @@ mod tests {
             (Kind::SuperGameRam, None),
             "a POKEY and RAM at $4000: the RAM"
         );
+        assert_eq!(Kind::headed(0x2000), (Kind::Bankset, None));
+        assert_eq!(Kind::headed(0x6002), (Kind::BanksetSuperGameRam, None));
         assert_eq!(
-            Kind::headed(0x2000),
+            Kind::headed(0xE002),
+            (Kind::BanksetSuperGameRam, Some(0x0800))
+        );
+        assert_eq!(
+            Kind::headed(0x0020),
             (Kind::Plain, None),
-            "a bankset's, unknown"
+            "banked RAM's, unknown"
         );
     }
 
@@ -117,5 +123,54 @@ mod tests {
         assert_eq!(cartridge.read(0x4110), 0x42);
         assert_eq!(cartridge.read(0x4210), 0x00);
         assert_eq!(cartridge.read(0x8000), 0xEA);
+    }
+
+    #[test]
+    fn a_bankset_has_the_cpus_image_and_marias_switched_together() {
+        // 2 images of 8 banks, each byte its bank's number, MARIA's from 8.
+        let mut cartridge = Cartridge::new(&banked(16), Kind::BanksetSuperGame, None).unwrap();
+        let read = |cartridge: &Cartridge, addr| (cartridge.read(addr), cartridge.maria_read(addr));
+        assert_eq!(read(&cartridge, 0xC000), (7, 15), "the last banks");
+        assert_eq!(read(&cartridge, 0x4000), (6, 14), "the ones before");
+        cartridge.write(0x8000, 3);
+        assert_eq!(read(&cartridge, 0x8000), (3, 11), "bank 3 of each");
+        cartridge.write(0x4000, 5);
+        assert_eq!(
+            read(&cartridge, 0x8000),
+            (3, 11),
+            "no RAM, no bank switched"
+        );
+    }
+
+    #[test]
+    fn a_banksets_ram_is_16k_each_the_cpu_writing_marias_at_c000() {
+        let mut cartridge = Cartridge::new(&banked(16), Kind::BanksetSuperGameRam, None).unwrap();
+        cartridge.write(0x4000, 0x11);
+        cartridge.write(0xC000, 0x22);
+        assert_eq!(cartridge.read(0x4000), 0x11, "the CPU's");
+        assert_eq!(cartridge.maria_read(0x4000), 0x22, "MARIA's");
+        assert_eq!(cartridge.read(0xC000), 7, "the ROM, to read");
+    }
+
+    #[test]
+    fn a_flat_bankset_is_at_the_top_and_of_52k_from_3000() {
+        let cartridge = Cartridge::new(&banked(4), Kind::Bankset, None).unwrap();
+        assert_eq!(
+            (cartridge.read(0x8000), cartridge.maria_read(0x8000)),
+            (0, 2)
+        );
+        assert_eq!(cartridge.read(0x7FFF), 0xFF, "nothing below 32K");
+        assert!(!cartridge.from_3000());
+        let rom: Vec<u8> = (0..2 * 0xD000).map(|at| (at / 0xD000) as u8).collect();
+        let cartridge = Cartridge::new(&rom, Kind::Bankset, None).unwrap();
+        assert!(cartridge.from_3000());
+        assert_eq!(
+            (cartridge.read(0x3000), cartridge.maria_read(0x3000)),
+            (0, 1)
+        );
+        assert_eq!(
+            (cartridge.read(0xFFFF), cartridge.maria_read(0xFFFF)),
+            (0, 1)
+        );
     }
 }

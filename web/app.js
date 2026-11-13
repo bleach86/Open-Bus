@@ -56,16 +56,21 @@ const DISK_II_ROMS = ['disk2-p5-341-0027.bin', 'disk2-p6-341-0028.bin'];
 const CHANGE_DISK_KEY = 9;
 const FDS_BIOS = 'disksys.rom';
 const kind = (name) => name.split('.').pop().toLowerCase();
-const isGame = (name) => ['nes', 'fds', 'a26', 'zip'].includes(kind(name));
+const isGame = (name) => ['nes', 'fds', 'a26', 'a78', 'zip'].includes(kind(name));
 const isDisk = (name) => ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'].includes(kind(name));
 /// The consoles whose games are on the shelf of games, each its own tab; and
 /// which a game's is: as the emulator's said of it, else as its file says, a
 /// zip a NES's till it's said.
-const CONSOLES = { nes: 'NES', atari2600: 'Atari 2600' };
+const CONSOLES = { nes: 'NES', atari2600: 'Atari 2600', atari7800: 'Atari 7800' };
 const isConsole = (shelf) => shelf in CONSOLES;
+/// The Ataris, by their boards' names and their files'.
+const ATARIS = { atari2600: ['ATARI 2600', 'a26'], atari7800: ['ATARI 7800', 'a78'] };
 function systemOf(name) {
     const board = factsOf.get(name)?.mapper;
-    return (board ? board.startsWith('ATARI 2600') : kind(name) === 'a26') ? 'atari2600' : 'nes';
+    const atari = Object.entries(ATARIS).find(([, [named, ending]]) =>
+        board ? board.startsWith(named) : kind(name) === ending,
+    );
+    return atari?.[0] ?? 'nes';
 }
 /// Whether there's anything to play; and the shelf to show of it first, a
 /// console's, the NES's if it has any, unless there are only disks.
@@ -291,9 +296,9 @@ async function loadArt() {
     }
 }
 
-/// Which console's games a cover found by title is of, by its `machine`: the
-/// 2600's apart, the NES's and the Disk System's together.
-const coverSystem = (machine) => (machine === 'atari2600' ? 'atari2600' : 'nes');
+/// Which console's games a cover found by title is of, by its `machine`: an
+/// Atari's apart, the NES's and the Disk System's together.
+const coverSystem = (machine) => (machine in ATARIS ? machine : 'nes');
 
 /// Which shelf's showing; and of the consoles', which the shelf of games
 /// has, the last shown.
@@ -391,7 +396,7 @@ async function refresh() {
 /// The games with no cover, as `findCovers` wants them.
 function coverless() {
     const nes = files.filter(isGame).map((file) => ({
-        machine: systemOf(file) === 'atari2600' ? 'atari2600' : kind(file) === 'fds' ? 'fds' : 'nes',
+        machine: systemOf(file) in ATARIS ? systemOf(file) : kind(file) === 'fds' ? 'fds' : 'nes',
         file,
         title: plainTitle(file),
         key: nesArt(file),
@@ -435,7 +440,7 @@ const artFor = (title, ...names) =>
 /// What's said of an empty shelf.
 const noGames = native
     ? 'No games yet. Add a folder of them in Settings.'
-    : 'No games yet. Add .nes, .fds, .a26 or .zip files in Settings, or drop them here.';
+    : 'No games yet. Add .nes, .fds, .a26, .a78 or .zip files in Settings, or drop them here.';
 
 /// Whether what's searched for is in a game's title, file, or what's known
 /// of it.
@@ -540,8 +545,9 @@ function nesArt(name) {
     return covers.has(key) ? key : (coversByTitle.get(titled) ?? key);
 }
 
-/// A game's board, in words: a NES's mapper, a 2600's cartridge.
-const boardOf = (facts) => facts?.mapper.replace(/^MAPPER (\d+) /, 'Mapper $1, ').replace(/^ATARI 2600 /, 'Cartridge ');
+/// A game's board, in words: a NES's mapper, an Atari's cartridge.
+const boardOf = (facts) =>
+    facts?.mapper.replace(/^MAPPER (\d+) /, 'Mapper $1, ').replace(/^ATARI (2600|7800) /, 'Cartridge ');
 
 /// A game's title, by what's known of it, else its file.
 const titleOf = (name) => art.get(nesArt(name))?.title ?? plainTitle(name);
@@ -811,6 +817,10 @@ async function playGame(machine) {
     }
     if (native) {
         playNatively(machine);
+    } else if (machine.kind === 'atari7800') {
+        const chosen = await keeper.gameSettings(machine);
+        rewind(page('rewind').checked);
+        start(() => Emulator.atari7800(machine.game, chosen.region ?? ''), 'atari7800', [machine.game], machine);
     } else if (machine.kind === 'atari2600') {
         const chosen = await keeper.gameSettings(machine);
         rewind(page('rewind').checked);
@@ -2660,6 +2670,7 @@ async function start(make, machine, using, game) {
     page('machine').dataset.machine = machine === 'apple' ? 'apple' : 'console';
     page('disk').hidden = page('disk-help').hidden = !emulator.disk_system();
     page('switch-help').hidden = machine !== 'atari2600';
+    page('switch-help-7800').hidden = machine !== 'atari7800';
     page('keypad-help').hidden = emulator.keypads() !== 1;
     page('keypads-help').hidden = emulator.keypads() !== 2;
     aiming = emulator.aimed_at();

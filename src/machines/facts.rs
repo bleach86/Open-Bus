@@ -1,13 +1,14 @@
 //! What's known of a game's file without running it, whichever machine's it
 //! is, for a library to keep: a line of its CRC-32, its board (a NES's
-//! mapper, "MAPPER 4 MMC3"; a 2600's cartridge, "ATARI 2600 F8 8K"),
+//! mapper, "MAPPER 4 MMC3"; a 2600's cartridge, "ATARI 2600 F8 8K"; a
+//! 7800's, "ATARI 7800 SUPERGAME 128K POKEY"),
 //! whether it's a Famicom's and a Zapper's, why it won't load if it won't,
 //! and its path, a tab between each, as `cpu_emu facts` says it.
 //!
-//! Whose it is, by its file: a 2600's an .a26 or .bin, or a zip of one; the
-//! rest, a NES's.
+//! Whose it is, by its file: a 7800's an .a78, a 2600's an .a26 or .bin, or a
+//! zip of one; the rest, a NES's.
 
-use crate::machines::{atari2600, nes};
+use crate::machines::{atari2600, atari7800, nes};
 use std::path::Path;
 
 /// The machines whose games a library has.
@@ -15,28 +16,33 @@ use std::path::Path;
 pub enum System {
     Nes,
     Atari2600,
+    Atari7800,
 }
 
-/// Whether a file's `name` is a 2600's game.
-fn atari_name(name: &str) -> bool {
+/// Whose game a file's `name` says it is, if it says: a 7800's, or a 2600's.
+fn named(name: &str) -> Option<System> {
     let name = name.to_lowercase();
-    name.ends_with(".a26") || name.ends_with(".bin")
+    if name.ends_with(".a78") {
+        Some(System::Atari7800)
+    } else if name.ends_with(".a26") || name.ends_with(".bin") {
+        Some(System::Atari2600)
+    } else {
+        None
+    }
 }
 
 /// Whose game the file at `path` is, its `bytes`: a zip's by what's in it.
 pub fn system_of(path: &Path, bytes: &[u8]) -> System {
     let name = path.to_string_lossy();
     let zipped = name.to_lowercase().ends_with(".zip");
-    let atari = if zipped {
-        crate::host::zip::names(bytes).is_ok_and(|names| names.iter().any(|name| atari_name(name)))
+    let said = if zipped {
+        crate::host::zip::names(bytes)
+            .ok()
+            .and_then(|names| names.iter().find_map(|name| named(name)))
     } else {
-        atari_name(&name)
+        named(&name)
     };
-    if atari {
-        System::Atari2600
-    } else {
-        System::Nes
-    }
+    said.unwrap_or(System::Nes)
 }
 
 /// The facts of the game at `path`, its file's `bytes`.
@@ -44,6 +50,7 @@ pub fn facts_of(path: &Path, bytes: Vec<u8>) -> String {
     match system_of(path, &bytes) {
         System::Nes => nes::facts_of(path, nes::image_of(path, bytes)),
         System::Atari2600 => atari2600::facts_of(path, atari2600::image_of(path, bytes)),
+        System::Atari7800 => atari7800::facts_of(path, atari7800::image_of(path, bytes)),
     }
 }
 

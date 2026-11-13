@@ -413,7 +413,7 @@ impl Library {
         rows.collect::<Result<_, _>>().map_err(said)
     }
 
-    /// The console games found, a NES's or a 2600's, that nothing's known
+    /// The console games found, a NES's, a 2600's or a 7800's, that nothing's known
     /// of by `emulator`, the one there is now, or not at the size they are
     /// now.
     pub fn unknown(&self, emulator: &str) -> Result<Vec<String>, String> {
@@ -530,14 +530,14 @@ pub const CHOICES: [(&str, &[&str]); 5] = [
     ("resume", &["on", "off"]),
 ];
 
-/// A game as it's kept, of what the page started, or would start: a NES's
-/// or a 2600's game; an Apple's disks, and the model, its ROMs and
+/// A game as it's kept, of what the page started, or would start: a NES's,
+/// a 2600's or a 7800's game; an Apple's disks, and the model, its ROMs and
 /// Mockingboards it was last started with, if it has been. By its files,
 /// that are what it is.
 pub fn game(machine: &Value) -> Option<(String, Value)> {
     let text = |field: &str| machine[field].as_str().map(str::to_string);
     match machine["kind"].as_str()? {
-        kind @ ("nes" | "atari2600") => {
+        kind @ ("nes" | "atari2600" | "atari7800") => {
             let game = text("game")?;
             Some((
                 format!("{kind}\n{game}"),
@@ -566,10 +566,10 @@ pub fn game(machine: &Value) -> Option<(String, Value)> {
 }
 
 /// Whether `path`'s a cartridge's game, as the library has them: an iNES
-/// image, a Disk System's, a 2600's, or a zip of one.
+/// image, a Disk System's, a 2600's, a 7800's, or a zip of one.
 fn is_cartridge(path: &str) -> bool {
     let kind = path.rsplit('.').next().unwrap_or_default().to_lowercase();
-    ["nes", "fds", "a26", "zip"].contains(&kind.as_str())
+    ["nes", "fds", "a26", "a78", "zip"].contains(&kind.as_str())
 }
 
 /// A file as the page has one: its path, and its size.

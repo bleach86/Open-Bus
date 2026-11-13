@@ -5,9 +5,12 @@
 //! and the others after it; Absolute's, F-18 Hornet's, two 16K banks at
 //! $4000; Activision's, Double Dragon's and Rampage's, a bank switched by
 //! a write at $FF80 to $FF8F, and the rest in 8K pieces of their own order;
-//! and plain with RAM at $4000, every other page the same (Rescue on
-//! Fractalus). A POKEY, if it has one, at $4000 (up to $7FFF), $0450 or
-//! $0800.
+//! plain with RAM at $4000, every other page the same (Rescue on
+//! Fractalus); and the bankset boards, a homebrew's, two images, the CPU's
+//! and MARIA's, each read only by its own: plain at the top (52K of them
+//! from $3000) or SuperGame, the bank switched for both; with banked RAM,
+//! 16K each at $4000, the CPU writing MARIA's at $C000. A POKEY, if it has
+//! one, at $4000 (up to $7FFF), $0450 or $0800.
 //!
 //! Which, as ProSystem's database says, or its .a78 header, or its size. A
 //! board that's more or less ROM than it has room for, as a7800 has it: of
@@ -27,6 +30,10 @@ pub enum Kind {
     Absolute,
     Activision,
     MirrorRam,
+    Bankset,
+    BanksetRam,
+    BanksetSuperGame,
+    BanksetSuperGameRam,
 }
 
 impl Kind {
@@ -66,7 +73,16 @@ impl Kind {
             0x8002 => (Kind::SuperGame, Some(0x0800)),
             0x8006 => (Kind::SuperGameRam, Some(0x0800)),
             0x800A => (Kind::SuperGame9, Some(0x0800)),
-            // The banked boards and the rest a7800 doesn't know, as plain.
+            0x2000 => (Kind::Bankset, pokey_4000.then_some(0x4000)),
+            0x6000 => (Kind::BanksetRam, None),
+            0xA000 => (Kind::Bankset, Some(0x0800)),
+            0xE000 => (Kind::BanksetRam, Some(0x0800)),
+            0x2002 => (Kind::BanksetSuperGame, None),
+            0x6002 => (Kind::BanksetSuperGameRam, None),
+            0xA002 => (Kind::BanksetSuperGame, Some(0x0800)),
+            0xE002 => (Kind::BanksetSuperGameRam, Some(0x0800)),
+            // The banked RAM boards and the rest a7800 doesn't know, as
+            // plain.
             _ => (Kind::Plain, None),
         };
         if head & 0x40 != 0 {
@@ -119,6 +135,7 @@ impl Cartridge {
         }
         let ram = match kind {
             Kind::SuperGameRam | Kind::MirrorRam => vec![0; 0x4000],
+            Kind::BanksetRam | Kind::BanksetSuperGameRam => vec![0; 0x8000],
             _ => Vec::new(),
         };
         Ok(Cartridge {
@@ -154,8 +171,24 @@ impl Cartridge {
         self.pokey == Some(0x4000) && addr < 0x8000
     }
 
-    /// What's at `addr`, $4000 to $FFFF: its ROM or its RAM.
+    /// Whether it's a bankset board of 52K images, from $3000.
+    pub fn from_3000(&self) -> bool {
+        self.kind == Kind::Bankset && self.rom.len() >= 0x1A000
+    }
+
+    /// What's at `addr`, $4000 to $FFFF, as the CPU reads it.
     pub fn read(&self, addr: u16) -> u8 {
+        self.read_as(addr, false)
+    }
+
+    /// What's at `addr`, as MARIA's DMA reads it: a bankset's own image.
+    pub fn maria_read(&self, addr: u16) -> u8 {
+        self.read_as(addr, true)
+    }
+
+    /// What's at `addr`, $4000 to $FFFF (or $3000 up, for a 52K bankset),
+    /// to the CPU, or `maria`: its ROM or its RAM.
+    fn read_as(&self, addr: u16, maria: bool) -> u8 {
         let at = addr as usize;
         let rom = |at: usize| self.rom.get(at).copied().unwrap_or(0xFF);
         match self.kind {
@@ -191,6 +224,37 @@ impl Cartridge {
                     _ => rom(offset + 0x1C000),
                 }
             }
+            // A bankset's two images, the CPU's then MARIA's; its RAM the
+            // same, 16K each.
+            Kind::Bankset
+            | Kind::BanksetRam
+            | Kind::BanksetSuperGame
+            | Kind::BanksetSuperGameRam => {
+                let half = self.rom.len() / 2;
+                let image = if maria { half } else { 0 };
+                let ram = |at: usize| self.ram[(maria as usize) * BANK + (at - 0x4000)];
+                let has_ram = matches!(self.kind, Kind::BanksetRam | Kind::BanksetSuperGameRam);
+                match self.kind {
+                    _ if has_ram && (0x4000..0x8000).contains(&at) => ram(at),
+                    Kind::Bankset if self.from_3000() => {
+                        let image = if maria { 0xD000 } else { 0 };
+                        rom(image + at - 0x3000)
+                    }
+                    Kind::Bankset | Kind::BanksetRam => match (at + half).checked_sub(0x10000) {
+                        Some(at) => rom(image + at),
+                        None => 0xFF,
+                    },
+                    _ => {
+                        let last = (half / BANK).saturating_sub(1);
+                        match at {
+                            ..0x8000 if self.pokey.is_some() => 0xFF,
+                            ..0x8000 => rom(image + last.saturating_sub(1) * BANK + (at & 0x3FFF)),
+                            ..0xC000 => rom(image + self.bank * BANK + (at & 0x3FFF)),
+                            _ => rom(image + last * BANK + (at & 0x3FFF)),
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -215,6 +279,19 @@ impl Cartridge {
                 }
             }
             Kind::Activision if (0xFF80..=0xFF8F).contains(&at) => self.bank = at & 7,
+            // A bankset's RAM: the CPU's at $4000, MARIA's written at $C000.
+            Kind::BanksetRam | Kind::BanksetSuperGameRam if at < 0x8000 => {
+                self.ram[at - 0x4000] = value;
+            }
+            Kind::BanksetRam | Kind::BanksetSuperGameRam if at >= 0xC000 => {
+                self.ram[BANK + at - 0xC000] = value;
+            }
+            Kind::BanksetSuperGame | Kind::BanksetSuperGameRam
+                if (0x8000..0xC000).contains(&at) =>
+            {
+                let last = (self.rom.len() / 2 / BANK).saturating_sub(1);
+                self.bank = (value as usize & 0x0F) & last;
+            }
             _ => {}
         }
     }
@@ -226,21 +303,23 @@ impl Cartridge {
         self.pokey = running.pokey;
     }
 
-    /// What it is, in words.
+    /// What it is, in words: its board, its size, and its POKEY, if it has
+    /// one; plain, its size alone.
     pub fn name(&self) -> String {
         let board = match self.kind {
             Kind::Plain => "",
-            Kind::SuperGame => " SUPERGAME",
-            Kind::SuperGameRam => " SUPERGAME RAM",
-            Kind::SuperGame9 => " SUPERGAME 9 BANKS",
-            Kind::Absolute => " ABSOLUTE",
-            Kind::Activision => " ACTIVISION",
-            Kind::MirrorRam => " RAM",
+            Kind::SuperGame => "SUPERGAME ",
+            Kind::SuperGameRam => "SUPERGAME RAM ",
+            Kind::SuperGame9 => "SUPERGAME 9 BANKS ",
+            Kind::Absolute => "ABSOLUTE ",
+            Kind::Activision => "ACTIVISION ",
+            Kind::MirrorRam => "RAM ",
+            Kind::Bankset => "BANKSET ",
+            Kind::BanksetRam => "BANKSET RAM ",
+            Kind::BanksetSuperGame => "BANKSET SUPERGAME ",
+            Kind::BanksetSuperGameRam => "BANKSET SUPERGAME RAM ",
         };
-        let pokey = match self.pokey {
-            Some(addr) => format!(" POKEY {addr:04X}"),
-            None => String::new(),
-        };
-        format!("{}K{board}{pokey}", self.rom.len() / 1024)
+        let pokey = if self.pokey.is_some() { " POKEY" } else { "" };
+        format!("{board}{}K{pokey}", self.rom.len() / 1024)
     }
 }
