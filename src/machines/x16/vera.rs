@@ -20,9 +20,10 @@
 //! its renderer has time for, their collisions into ISR as line 480 begins.
 //! Its FX's ways of writing aren't here yet (its registers, DCSEL 2 to 6,
 //! hold what's written, and that's all); NTSC and RGB are shown as VGA. Its sound, the PSG and PCM, isn't
-//! here either: the FIFO takes nothing and reads empty. Its SPI port has no
-//! card on it.
+//! here either: the FIFO takes nothing and reads empty. Its SPI port has
+//! the SD card on it (`sd_card`), if there is one.
 
+use super::sd_card::SdCard;
 use serde::{Deserialize, Serialize};
 
 pub const WIDTH: usize = 640;
@@ -82,19 +83,23 @@ const DEFAULT_PALETTE: [u16; 256] = [
 ];
 
 /// Its SPI port: its chip select, slow clock and auto-TX; a byte being
-/// sent, its cycles to go; the byte received. No card's on it: it's $FF.
+/// sent, its cycles to go; the byte received, the card's answer, or $FF
+/// with none.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct Spi {
     select: bool,
     slow: bool,
     auto_tx: bool,
     busy: u32,
+    sending: u8,
     received: u8,
+    card: SdCard,
 }
 
 impl Spi {
-    fn send(&mut self) {
+    fn send(&mut self, byte: u8) {
         if self.select && self.busy == 0 {
+            self.sending = byte;
             self.busy = if self.slow { SPI_SLOW } else { SPI_FAST };
         }
     }
@@ -103,7 +108,7 @@ impl Spi {
         if self.busy > 0 {
             self.busy -= 1;
             if self.busy == 0 {
-                self.received = 0xFF;
+                self.received = self.card.exchange(self.sending);
             }
         }
     }
@@ -377,7 +382,7 @@ impl Vera {
             0x1E => {
                 let received = self.spi.received;
                 if self.spi.auto_tx {
-                    self.spi.send();
+                    self.spi.send(0xFF);
                 }
                 received
             }
@@ -443,13 +448,21 @@ impl Vera {
             0x1B => self.audio_ctrl = value & 0x3F,
             0x1C => self.audio_rate = value,
             0x1D => {}
-            0x1E => self.spi.send(),
+            0x1E => self.spi.send(value),
             _ => {
+                if value & 1 != 0 && !self.spi.select {
+                    self.spi.card.select();
+                }
                 self.spi.select = value & 1 != 0;
                 self.spi.slow = value & 2 != 0;
                 self.spi.auto_tx = value & 4 != 0;
             }
         }
+    }
+
+    /// The SD card on its SPI port.
+    pub fn sd_card(&mut self) -> &mut SdCard {
+        &mut self.spi.card
     }
 
     /// Whether it's holding the IRQ line: an interrupt it has that's on.

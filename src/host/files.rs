@@ -3,7 +3,7 @@
 //! disk; a web build has `files_web.rs` in its place, the same functions
 //! on files held in memory.
 
-use std::io::{self, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex};
 
@@ -80,6 +80,16 @@ pub fn all_saved() {
     while saving.saving || !saving.due.is_empty() {
         saving = SAVES.wait(saving).unwrap();
     }
+}
+
+/// Up to `length` bytes of the file at `path`, from `offset`, fewer past
+/// its end: a block of a volume too big to read whole.
+pub fn read_at(path: &Path, offset: u64, length: usize) -> io::Result<Vec<u8>> {
+    let mut file = std::fs::File::open(path)?;
+    file.seek(SeekFrom::Start(offset))?;
+    let mut bytes = Vec::with_capacity(length);
+    file.take(length as u64).read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 /// `bytes` written over the file at `path`, from `offset`: a block of a

@@ -1,0 +1,75 @@
+#!/bin/sh
+# Make the Commander X16's SD card image, or add to it: roms/x16/sdcard.img,
+# or IMAGE as `-o IMAGE` says. Made, it's SIZE megabytes (`--size=SIZE`,
+# 128 if it's not said, 34 at least), partitioned as the X16's cards are:
+# an MBR, and one FAT32 partition from 1M on. Then each SOURCE is copied
+# onto it: a folder, as a folder of its name; a zip, as a folder of the
+# zip's name (or the one folder in it, if that's all it holds); a file, at
+# the top. What's there already is kept, but for files of the same names.
+# mtools (mformat and mcopy) does the FAT32.
+#
+#   tools/make-x16-sd roms/x16/GALAX16.ZIP roms/x16/x16-contra
+#
+# and on the X16, DOS"CD:GALAX16", LOAD"GALAX16.PRG" and RUN; DOS"$" lists
+# the folder it's in, and DOS"CD:.." goes back up.
+set -e
+image=roms/x16/sdcard.img
+size=128
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -o) image=$2; shift 2 ;;
+        --size=*) size=${1#--size=}; shift ;;
+        -h|--help) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) break ;;
+    esac
+done
+for tool in mformat mcopy python3; do
+    command -v "$tool" > /dev/null || { echo "make-x16-sd: $tool is needed" >&2; exit 1; }
+done
+
+if [ ! -e "$image" ]; then
+    [ "$size" -ge 34 ] || { echo "make-x16-sd: 34 megabytes at least, for FAT32" >&2; exit 1; }
+    # The MBR: one partition, FAT32 by LBA (0x0C), from sector 2048 to the end.
+    python3 -I - "$image" "$size" <<'PY'
+import struct, sys
+path, size = sys.argv[1], int(sys.argv[2]) * 1024 * 1024
+mbr = bytearray(512)
+mbr[446:462] = struct.pack('<B3sB3sII', 0, b'\xfe\xff\xff', 0x0C, b'\xfe\xff\xff',
+                           2048, size // 512 - 2048)
+mbr[510:512] = b'\x55\xaa'
+with open(path, 'wb') as image:
+    image.write(mbr)
+    image.truncate(size)
+PY
+    sectors=$((size * 2048 - 2048))
+    # Clusters of a sector each up to 256M, for FAT32's 65,525 at least;
+    # of 4K past it.
+    clusters=1
+    [ "$size" -gt 256 ] && clusters=8
+    mformat -i "$image@@1M" -F -c $clusters -T $sectors -h 64 -s 32 -H 2048 -v X16 ::
+fi
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+# Onto the card's top folder, folders and all, over files of the same
+# names, long or short.
+copy() {
+    mcopy -s -D oO -i "$image@@1M" "$1" ::
+}
+for source in "$@"; do
+    source=${source%/}
+    case "$source" in
+        *.zip|*.ZIP)
+            name=$(basename "$source")
+            folder="$work/zip/${name%.*}"
+            rm -rf "$work/zip" && mkdir -p "$folder"
+            python3 -I -m zipfile -e "$source" "$folder"
+            # A zip of one folder: that folder.
+            set -- "$folder"/*
+            if [ $# -eq 1 ] && [ -d "$1" ]; then
+                folder=$1
+            fi
+            copy "$folder" ;;
+        *) copy "$source" ;;
+    esac
+done

@@ -19,6 +19,7 @@ mod tests {
         files::save(&file, &[1, 2, 3, 4]).unwrap();
         files::write_at(&file, 1, &[9, 8]).unwrap();
         assert_eq!(files::read(&file).unwrap(), [1, 9, 8, 4]);
+        assert_eq!(files::read_at(&file, 2, 5).unwrap(), [8, 4], "to its end");
         assert_eq!(files::size(&file), Some(4));
         assert!(files::exists(&file) && !files::read_only(&file).unwrap());
         assert!(files::is_folder(&folder) && !files::is_folder(&file));
@@ -60,6 +61,8 @@ mod tests {
         );
         web::write_at(file, 1, &[9, 8]).unwrap();
         assert_eq!(web::read(file).unwrap(), [1, 9, 8, 4]);
+        assert_eq!(web::read_at(file, 2, 5).unwrap(), [8, 4], "to its end");
+        assert!(web::read_at(Path::new("no/such"), 0, 1).is_err());
         assert_eq!(
             (web::size(file), web::read_only(file).unwrap()),
             (Some(4), false)

@@ -35,17 +35,21 @@
 //! Its mouse is the host's pointer: how far it's moved over the picture
 //! each frame, a dot a dot, and its buttons, sent as the mouse's packets.
 //! The SMC asked to reset it, it resets; to power off, it's held in reset
-//! till its Reset button.
+//! till its Reset button. Its SD card's an image of one (`sd_card`), if
+//! it's given, or roms/x16/sdcard.img, if that's there; its light's the
+//! SMC's activity light, or the card being read or written.
 
 #[cfg(test)]
 mod tests {
     mod i2c;
     mod machine;
+    mod sd_card;
     mod vera;
 }
 
 pub mod i2c;
 pub mod keyboard;
+pub mod sd_card;
 pub mod vera;
 
 use crate::chips::via6522::Via6522;
@@ -498,8 +502,15 @@ impl Machine for X16 {
         true
     }
 
+    /// Text pasted: its letters as they're written; but with none in lower
+    /// case, all of them unshifted, as letters, not the graphics they'd be
+    /// shifted in the X16's first character set, upper case and graphics.
     fn type_text(&mut self, text: &str) {
-        for c in text.replace("\r\n", "\n").chars() {
+        let mut text = text.replace("\r\n", "\n");
+        if !text.bytes().any(|c| c.is_ascii_lowercase()) {
+            text.make_ascii_lowercase();
+        }
+        for c in text.chars() {
             match c {
                 '\n' | '\r' => self.key(Key::Char(13)),
                 c if c.is_ascii() => self.key(Key::Char(c as u8)),
@@ -525,7 +536,8 @@ impl Machine for X16 {
     }
 
     fn light(&mut self) -> bool {
-        self.i2c.smc.activity_light
+        let card = std::mem::take(&mut self.vera.sd_card().used);
+        self.i2c.smc.activity_light || card
     }
 
     fn has_mouse(&self) -> bool {
@@ -553,6 +565,7 @@ impl Machine for X16 {
     fn keep(&mut self, running: &mut X16) {
         use std::mem::take;
         self.rom = take(&mut running.rom);
+        self.vera.sd_card().image = running.vera.sd_card().image.take();
         self.typing = take(&mut running.typing);
         self.gamepads = running.gamepads;
         self.mouse = running.mouse;
@@ -580,11 +593,22 @@ pub fn rom_file() -> Option<PathBuf> {
     releases.pop()
 }
 
-/// The X16 with the ROM at `rom`, turned on.
-pub fn build(rom: &str) -> Result<CPU<X16>, String> {
+/// Its SD card's image, as it's looked for: roms/x16/sdcard.img, if it's
+/// there.
+pub fn sd_card_file() -> Option<PathBuf> {
+    let image = Path::new(ROM_FOLDER).join("sdcard.img");
+    image.exists().then_some(image)
+}
+
+/// The X16 with the ROM at `rom`, turned on, its SD card the image at
+/// `sd_card`, if there's one.
+pub fn build(rom: &str, sd_card: Option<&str>) -> Result<CPU<X16>, String> {
     let path = Path::new(rom);
     let bytes = crate::host::files::read(path).map_err(|e| format!("{rom}: {e}"))?;
     let mut x16 = X16::new(&bytes).map_err(|e| format!("{rom}: {e}"))?;
+    if let Some(image) = sd_card {
+        x16.vera.sd_card().image = Some(sd_card::Image::open(Path::new(image))?);
+    }
     x16.name = path
         .parent()
         .and_then(Path::file_name)
@@ -601,11 +625,13 @@ pub fn size() -> (u32, u32) {
     ((WIDTH * 3 / 2) as u32, (HEIGHT * 3 / 2) as u32)
 }
 
-/// The X16 as `build` has it, run in a window, `fullscreen` or not.
+/// The X16 as `build` has it, run in a window, `fullscreen` or not; its
+/// state saved beside its SD card's image, or its ROM, with none.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run(rom: &str, fullscreen: bool) {
-    let cpu = build(rom).unwrap_or_else(|e| panic!("{e}"));
+pub fn run(rom: &str, sd_card: Option<&str>, fullscreen: bool) {
+    let cpu = build(rom, sd_card).unwrap_or_else(|e| panic!("{e}"));
     let title = cpu.memory.title();
     let window = Window::new(&title, WIDTH, HEIGHT, size(), fullscreen);
-    Host::new(cpu, Box::new(window), save_state::path(Path::new(rom))).run();
+    let state = save_state::path(Path::new(sd_card.unwrap_or(rom)));
+    Host::new(cpu, Box::new(window), state).run();
 }

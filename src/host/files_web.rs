@@ -74,6 +74,14 @@ pub fn save_later(path: &Path, bytes: Vec<u8>) {
 /// Saved already.
 pub fn all_saved() {}
 
+pub fn read_at(path: &Path, offset: u64, length: usize) -> io::Result<Vec<u8>> {
+    FILES.with_borrow(|files| {
+        let file = files.get(path).ok_or_else(|| not_found(path))?;
+        let start = (offset as usize).min(file.len());
+        Ok(file[start..(start + length).min(file.len())].to_vec())
+    })
+}
+
 pub fn write_at(path: &Path, offset: u64, bytes: &[u8]) -> io::Result<()> {
     FILES.with_borrow_mut(|files| {
         let file = files.get_mut(path).ok_or_else(|| not_found(path))?;

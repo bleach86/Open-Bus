@@ -2,7 +2,9 @@
 //! 0, its slow accesses, VIA 1's wiring to the SNES controllers and the IEC
 //! bus, the SMC's reset and power off, its keyboard's keys; and with its
 //! ROM (roms/x16/, a release's rom.bin; without one those tests say so and
-//! pass), booted to BASIC, typed to, and its mouse pointer shown.
+//! pass), booted to BASIC, typed to, its mouse pointer shown, and a
+//! program saved to its SD card and loaded back (with mtools, to make the
+//! card).
 
 #[cfg(test)]
 mod tests {
@@ -38,7 +40,7 @@ mod tests {
             eprintln!("x16 test: no ROM; put a release's rom.bin in roms/x16/");
             return None;
         };
-        Some(x16::build(&rom.to_string_lossy()).unwrap())
+        Some(x16::build(&rom.to_string_lossy(), None).unwrap())
     }
 
     fn frames(cpu: &mut CPU<X16>, frames: usize) {
@@ -180,6 +182,35 @@ mod tests {
     }
 
     #[test]
+    fn pasted_capitals_are_letters_but_in_mixed_case_shifted() {
+        // Its codes, in the SMC and waiting for room there.
+        let typed = |text: &str| {
+            let mut x16 = x16();
+            x16.type_text(text);
+            let codes: Vec<u8> = x16
+                .i2c
+                .smc
+                .keys
+                .iter()
+                .chain(&x16.typing)
+                .copied()
+                .collect();
+            codes
+        };
+        let codes = |text: &str| -> Vec<u8> {
+            text.bytes()
+                .flat_map(|c| keyboard::codes(Key::Char(c)))
+                .collect()
+        };
+        assert_eq!(
+            typed("LOAD\"A\""),
+            codes("load\"a\""),
+            "no lower case: unshifted, letters"
+        );
+        assert_eq!(typed("Hi"), codes("Hi"), "as written");
+    }
+
+    #[test]
     fn it_boots_to_basic_and_basic_is_typed_to() {
         let Some(mut cpu) = booting() else { return };
         frames(&mut cpu, 300);
@@ -238,5 +269,33 @@ mod tests {
             text.ends_with(" 1\n\nREADY."),
             "MB, its left button:\n{text}"
         );
+    }
+
+    #[test]
+    fn a_program_is_saved_to_its_sd_card_and_loaded_back() {
+        let Some(rom) = booting().map(|_| x16::rom_file().unwrap()) else {
+            return;
+        };
+        // A new card, as tools/make-x16-sd makes one, if mtools is here.
+        let image = std::env::temp_dir().join(format!("cpu_emu_{}_x16_sd.img", std::process::id()));
+        let _ = std::fs::remove_file(&image);
+        let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("tools/make-x16-sd");
+        let made = std::process::Command::new(tool)
+            .args(["--size=34", "-o"])
+            .arg(&image)
+            .output();
+        if !made.is_ok_and(|made| made.status.success()) {
+            eprintln!("x16 test: no SD card made; tools/make-x16-sd needs mtools");
+            return;
+        }
+        let mut cpu = x16::build(&rom.to_string_lossy(), image.to_str()).unwrap();
+        frames(&mut cpu, 300);
+        cpu.memory.type_text("10 print 6*7\nsave\"answer\"\n");
+        frames(&mut cpu, 200);
+        cpu.memory.type_text("new\nload\"answer\"\nrun\n");
+        frames(&mut cpu, 200);
+        let text = cpu.memory.screen_text().unwrap_or_default();
+        assert!(text.ends_with("RUN\n 42\n\nREADY."), "the screen:\n{text}");
+        std::fs::remove_file(&image).unwrap();
     }
 }
