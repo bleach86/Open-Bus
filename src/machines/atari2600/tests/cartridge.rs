@@ -184,7 +184,7 @@ mod tests {
         let mut console = vec![0; 128];
         console[0] = 7;
         ar.read_on(0x1850, &mut console);
-        let mut access = |ar: &mut Cartridge, addr: u16| {
+        let access = |ar: &mut Cartridge, addr: u16| {
             ar.seen(addr);
             ar.read(addr)
         };

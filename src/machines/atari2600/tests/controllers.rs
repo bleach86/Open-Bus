@@ -172,7 +172,7 @@ mod tests {
         let cartridge = Cartridge::new(&[0xEA; 0x1000], None, 1_193_182).unwrap();
         let mut atari = Atari2600::new(cartridge, Region::Ntsc, Region::Ntsc);
         atari.controllers = [Controller::Keypad, Controller::Joystick];
-        let mut lines = |atari: &mut Atari2600, n: usize| {
+        let lines = |atari: &mut Atari2600, n: usize| {
             for _ in 0..n * 76 {
                 atari.tick();
             }
