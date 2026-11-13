@@ -63,6 +63,12 @@ pub trait Display {
     /// them the display's own (a double click its fullscreen).
     fn aiming(&mut self, _on: bool) {}
 
+    /// Whether the machine has a mouse: the host's captured for it once
+    /// it's clicked on the picture, its cursor gone and its moves and
+    /// clicks the machine's, till it's let go; not captured, it's none of
+    /// the machine's.
+    fn mouse(&mut self, _on: bool) {}
+
     /// Whether a key is held down, any but the modifiers and the function
     /// keys.
     fn key_down(&self) -> bool {
@@ -167,7 +173,9 @@ impl Joystick {
 /// A pointer as the host has it, a mouse's or a finger's: where it is on
 /// the picture, in the picture's own pixels as it was last shown, if it's
 /// over it; and its two buttons, held, the first and the second (a mouse's
-/// left and right).
+/// left and right). A mouse captured for a machine that has one isn't
+/// stopped by the picture's edges: it's where its moves have taken it from
+/// where it was captured, however far.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Pointer {
     pub at: Option<(f32, f32)>,

@@ -7,11 +7,14 @@
 //! B; Right Shift or Tab, Select; Return, Start), and the host's second,
 //! each keeping its place if the other's taken out; F1 to F10, for the
 //! machine's own uses, and F12, its Reset key; and the machine's sound, in
-//! stereo, through an audio queue. F11 or a double click switches it to
-//! fullscreen and back, the picture its shape still, bars at its sides if
-//! the screen is wider. The mouse on the picture, for a machine that's
-//! aimed at, its pointer cross hairs then, and its clicks the machine's.
-//! Ctrl+Shift+V or Shift+Insert, the clipboard pasted, and Ctrl+Shift+C or
+//! stereo, through an audio queue. F11 or a double click (but for a machine
+//! that's aimed at or has a mouse) switches it to fullscreen and back, the
+//! picture its shape still, bars at its sides if the screen is wider. The
+//! mouse on the picture, for a machine that's aimed at, its pointer cross
+//! hairs then, and its clicks the machine's. For a machine with a mouse, a
+//! click on the picture captures it, its cursor gone, its moves the
+//! machine's however far they go; Ctrl+M, or another window, lets it go,
+//! as the title says. Ctrl+Shift+V or Shift+Insert, the clipboard pasted, and Ctrl+Shift+C or
 //! Ctrl+Insert, the screen copied to it, for a machine with a keyboard.
 //! Closed, it tells the machine, to turn itself off.
 
@@ -93,6 +96,11 @@ pub struct Window {
     pointer: Pointer,
     aiming: bool,
     cross_hairs: Option<Cursor>,
+    /// Whether the machine has a mouse, and whether it's captured; the
+    /// title, as the machine has it.
+    has_mouse: bool,
+    captured: bool,
+    title: String,
 }
 
 /// How long Select and Start are held together to go back to the library.
@@ -198,6 +206,9 @@ impl Window {
             pointer: Pointer::default(),
             aiming: false,
             cross_hairs: None,
+            has_mouse: false,
+            captured: false,
+            title: title.to_string(),
         };
         if fullscreen {
             window.toggle_fullscreen();
@@ -282,11 +293,35 @@ impl Window {
         let _ = self.canvas.window_mut().set_fullscreen(state);
     }
 
+    /// The mouse captured for the machine, at `at` on the picture, or let
+    /// go: its cursor gone, its moves told however far they go, and the
+    /// title saying how it's let go.
+    fn capture(&mut self, at: Option<(f32, f32)>) {
+        self.captured = at.is_some();
+        self.mouse.set_relative_mouse_mode(self.captured);
+        self.pointer = Pointer {
+            at,
+            ..Pointer::default()
+        };
+        self.show_title();
+    }
+
+    /// The machine's title, and, the mouse captured, how it's let go.
+    fn show_title(&mut self) {
+        let title = if self.captured {
+            format!("{} (the mouse captured: Ctrl+M lets it go)", self.title)
+        } else {
+            self.title.clone()
+        };
+        let _ = self.canvas.window_mut().set_title(&title);
+    }
+
     /// The window's events since the last frame: its keys queued, the
     /// joystick's state kept; closed, kept for the machine to see.
     fn take_events(&mut self) {
         let mut toggle = false; // fullscreen, once the events are taken
-        for event in self.events.poll_iter() {
+        let events: Vec<Event> = self.events.poll_iter().collect();
+        for event in events {
             match event {
                 Event::Quit { .. } => self.closed = true,
                 Event::TextInput { text, .. } => {
@@ -307,6 +342,13 @@ impl Window {
                     ..
                 } => {
                     self.keypad_text = None;
+                    if self.captured
+                        && keycode == Keycode::M
+                        && keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD)
+                    {
+                        self.capture(None);
+                        continue;
+                    }
                     let name = format!("key:{}", keycode.name());
                     if !repeat && self.capturing && !is_fixed(keycode) {
                         self.pressed.push_back(name.clone());
@@ -400,7 +442,36 @@ impl Window {
                     mouse_btn: MouseButton::Left,
                     clicks: 2,
                     ..
-                } if !self.aiming => toggle = !toggle,
+                } if !self.aiming && !self.has_mouse => toggle = !toggle,
+                // Clicked on the picture, the mouse is captured, that click
+                // not the machine's.
+                Event::MouseButtonDown {
+                    mouse_btn: MouseButton::Left,
+                    x,
+                    y,
+                    ..
+                } if self.has_mouse && !self.captured => {
+                    if let Some(at) = on_picture(self.picture, self.logical, x, y) {
+                        self.capture(Some(at));
+                    }
+                }
+                Event::MouseMotion { xrel, yrel, .. } if self.captured => {
+                    let (x, y) = self.pointer.at.unwrap_or_default();
+                    let (across, down) = scale(self.picture, self.logical);
+                    self.pointer.at = Some((x + xrel as f32 * across, y + yrel as f32 * down));
+                }
+                Event::MouseButtonDown { mouse_btn, .. } if self.captured => {
+                    let at = self.pointer.at;
+                    click(&mut self.pointer, mouse_btn, true, at)
+                }
+                Event::MouseButtonUp { mouse_btn, .. } if self.captured => {
+                    let at = self.pointer.at;
+                    click(&mut self.pointer, mouse_btn, false, at)
+                }
+                Event::Window {
+                    win_event: WindowEvent::FocusLost,
+                    ..
+                } if self.captured => self.capture(None),
                 Event::MouseMotion { x, y, .. } => {
                     self.pointer_moved = Instant::now();
                     self.pointer.at = on_picture(self.picture, self.logical, x, y);
@@ -424,7 +495,7 @@ impl Window {
                 Event::Window {
                     win_event: WindowEvent::Leave,
                     ..
-                } => self.pointer.at = None,
+                } if !self.captured => self.pointer.at = None,
                 event => {
                     if let Some(source) = self.pads.take(&event).filter(|_| self.capturing) {
                         self.pressed.push_back(source);
@@ -439,8 +510,10 @@ impl Window {
         // The pointer: gone in fullscreen, and in the window once it's
         // still; but always there to aim with.
         let windowed = self.canvas.window().fullscreen_state() == FullscreenType::Off;
-        self.mouse
-            .show_cursor(self.aiming || windowed && self.pointer_moved.elapsed() < POINTER_SHOWN);
+        self.mouse.show_cursor(
+            !self.captured
+                && (self.aiming || windowed && self.pointer_moved.elapsed() < POINTER_SHOWN),
+        );
     }
 }
 
@@ -448,10 +521,19 @@ impl Window {
 /// `picture`, in the picture's pixels, if it's on it, not on the bars
 /// beside it.
 fn on_picture(picture: (usize, usize), logical: (u32, u32), x: i32, y: i32) -> Option<(f32, f32)> {
-    let x = x as f32 * picture.0 as f32 / logical.0 as f32;
-    let y = y as f32 * picture.1 as f32 / logical.1 as f32;
+    let (across, down) = scale(picture, logical);
+    let (x, y) = (x as f32 * across, y as f32 * down);
     let on = (0.0..picture.0 as f32).contains(&x) && (0.0..picture.1 as f32).contains(&y);
     on.then_some((x, y))
+}
+
+/// The picture's pixels to a window's in its `logical` size, across and
+/// down.
+fn scale(picture: (usize, usize), logical: (u32, u32)) -> (f32, f32) {
+    (
+        picture.0 as f32 / logical.0 as f32,
+        picture.1 as f32 / logical.1 as f32,
+    )
 }
 
 /// A mouse `button` `pressed` or let go, the mouse `at` that on the
@@ -533,7 +615,18 @@ impl Display for Window {
     }
 
     fn pointer(&self) -> Pointer {
+        // A machine with a mouse has it only as it's captured.
+        if self.has_mouse && !self.captured {
+            return Pointer::default();
+        }
         self.pointer
+    }
+
+    fn mouse(&mut self, on: bool) {
+        self.has_mouse = on;
+        if !on && self.captured {
+            self.capture(None);
+        }
     }
 
     fn aiming(&mut self, on: bool) {
@@ -665,7 +758,8 @@ impl Display for Window {
     }
 
     fn title(&mut self, title: &str) {
-        let _ = self.canvas.window_mut().set_title(title);
+        self.title = title.to_string();
+        self.show_title();
     }
 
     fn clipboard(&self) -> bool {

@@ -198,6 +198,7 @@ impl<M: Machine> Host<M> {
             cpu.memory.sound_on();
         }
         display.aiming(cpu.memory.aimed_at());
+        display.mouse(cpu.memory.has_mouse());
         let moments = (REWIND.load(Ordering::Relaxed) && cpu.memory.rewinds()).then(VecDeque::new);
         Host {
             cpu,

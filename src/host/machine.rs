@@ -89,6 +89,12 @@ pub trait Machine: Bus + Serialize + DeserializeOwned {
         false
     }
 
+    /// Whether it has a mouse: the host's captured for it, the pointer's
+    /// moves its, past the picture's edges too.
+    fn has_mouse(&self) -> bool {
+        false
+    }
+
     /// A function key for the machine's own uses (F2 and F4 are the
     /// host's): a notice of what it did, if it did anything.
     fn function_key(&mut self, _key: u8) -> Option<String> {

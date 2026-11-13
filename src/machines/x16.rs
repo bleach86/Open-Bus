@@ -528,6 +528,10 @@ impl Machine for X16 {
         self.i2c.smc.activity_light
     }
 
+    fn has_mouse(&self) -> bool {
+        true
+    }
+
     fn leave_out_picture(&mut self, leave_out: bool) -> bool {
         self.vera.leave_out = leave_out;
         leave_out
