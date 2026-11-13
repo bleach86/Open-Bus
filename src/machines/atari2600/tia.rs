@@ -39,7 +39,7 @@ use super::objects::{
     BALL, Ball, MISSILE_0, MISSILE_1, Missile, PLAYER_0, PLAYER_1, PLAYFIELD, Player, Playfield,
     resx_counter,
 };
-use super::sound::Sound;
+use crate::chips::tia_sound::Sound;
 use crate::machines::region::Region;
 use serde::{Deserialize, Serialize};
 

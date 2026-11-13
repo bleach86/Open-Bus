@@ -1,9 +1,9 @@
 # The ROMs, the hard disk and clock cards' firmware, and the interrupt,
-# bus, WAI and STP, Apple II, Mockingboard and hard disk tests' programs,
-# built with cc65 (from ~/cc65 if it is there).
+# bus, WAI and STP, Apple II, Mockingboard, hard disk and Atari 7800 tests'
+# programs, built with cc65 (from ~/cc65 if it is there).
 CC65 ?= $(if $(wildcard $(HOME)/cc65/bin/cl65),$(HOME)/cc65/bin/)
 
-all: monitor.bin interrupt_test.bin bus_test.bin wai_stp_test.bin apple2_test.bin mockingboard_test.bin hard_disk.bin hard_disk_test.bin clock.bin
+all: monitor.bin interrupt_test.bin bus_test.bin wai_stp_test.bin apple2_test.bin mockingboard_test.bin hard_disk.bin hard_disk_test.bin clock.bin atari7800_test.bin
 
 monitor.bin: monitor.c crt0.s monitor.cfg
 	$(CC65)cl65 -t none -O -C monitor.cfg -m monitor.map -o $@ crt0.s monitor.c
@@ -47,5 +47,10 @@ clock.bin: clock.s clock.cfg
 	$(CC65)ca65 -g -o clock.o clock.s
 	$(CC65)ld65 -C clock.cfg -Ln clock.lbl -o $@ clock.o
 
+# The Atari 7800 test's cartridge: 16K at $C000.
+atari7800_test.bin: atari7800_test.s atari7800_test.cfg
+	$(CC65)ca65 -g -o atari7800_test.o atari7800_test.s
+	$(CC65)ld65 -C atari7800_test.cfg -Ln atari7800_test.lbl -o $@ atari7800_test.o
+
 clean:
-	rm -f monitor.bin monitor.map interrupt_test.bin interrupt_test.lbl bus_test.bin bus_test.lbl wai_stp_test.bin wai_stp_test.lbl apple2_test.bin apple2_test.lbl mockingboard_test.bin mockingboard_test.lbl hard_disk.lbl hard_disk_test.bin hard_disk_test.lbl clock.lbl *.o
+	rm -f monitor.bin monitor.map interrupt_test.bin interrupt_test.lbl bus_test.bin bus_test.lbl wai_stp_test.bin wai_stp_test.lbl apple2_test.bin apple2_test.lbl mockingboard_test.bin mockingboard_test.lbl hard_disk.lbl hard_disk_test.bin hard_disk_test.lbl clock.lbl atari7800_test.bin atari7800_test.lbl *.o

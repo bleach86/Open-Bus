@@ -1099,6 +1099,7 @@ impl<B: Bus> CPU<B> {
     pub fn advance_clock(&mut self) {
         self.clock = self.clock.wrapping_add(1);
         self.memory.tick();
+        self.clock = self.clock.wrapping_add(self.memory.stolen());
         let nmi_line = self.memory.nmi();
         self.nmi |= nmi_line && !self.nmi_line;
         self.nmi_line = nmi_line;

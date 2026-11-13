@@ -39,6 +39,15 @@ pub trait Bus {
         false
     }
 
+    /// The cycles of the CPU's clock the machine has had besides those
+    /// ticked, since it was last asked: a DMA that stops the CPU on any
+    /// cycle, a write's too, or an access that stretches its cycle, as the
+    /// 7800's MARIA does. Its clock counts them, for the host to keep it to
+    /// time.
+    fn stolen(&mut self) -> u32 {
+        0
+    }
+
     /// Whether a frame has ended since it was last asked: the CPU's run
     /// loop handed back then, between instructions, to the host.
     fn hand_back(&mut self) -> bool {

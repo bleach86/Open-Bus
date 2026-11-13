@@ -42,8 +42,6 @@ pub mod database;
 pub mod frame;
 pub mod objects;
 pub mod palette;
-pub mod riot;
-pub mod sound;
 pub mod supercharger;
 pub mod tia;
 
@@ -52,10 +50,10 @@ mod tests {
     mod cartridge;
     mod controllers;
     mod machine;
-    mod riot;
     mod tia;
 }
 
+use crate::chips::riot6532::Riot;
 use crate::cpu::bus::Bus;
 use crate::cpu::{CPU, Variant};
 use crate::host::display::{Gamepad, Key, SAMPLE_RATE};
@@ -72,7 +70,6 @@ use crate::host::zip::crc32;
 use crate::machines::region::Region;
 use cartridge::{Cartridge, Kind};
 use controllers::{Column, Controller, KEYPAD_PULL_UP, Paddle, Wheel};
-use riot::Riot;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tia::Tia;

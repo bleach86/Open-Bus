@@ -1,5 +1,6 @@
-//! The RIOT, a 6532: the 2600's 128 bytes of RAM ($80 to $FF, and again at
-//! $180 up, the stack's), its timer, and its two ports: A the joysticks
+//! The RIOT, a 6532, the 2600's and the 7800's: its 128 bytes of RAM (the
+//! 2600's at $80 to $FF, and again at $180 up, the stack's), its timer, and
+//! its two ports: A the joysticks
 //! (SWCHA, the left's in bits 7 to 4, right, left, down, up; the right's in
 //! 3 to 0; 0 while pressed), B the console's switches (SWCHB: bit 0 Reset,
 //! 1 Select, 0 while pressed; 3 colour, not black and white; 6 and 7 the
@@ -93,6 +94,12 @@ impl Riot {
 
     fn port_a(&self) -> u8 {
         self.driven_a() & self.pins_a
+    }
+
+    /// Port B as last written, and which of its bits are outputs: the 7800
+    /// drives a joystick's pin 6 by them, for its two buttons.
+    pub fn outputs_b(&self) -> (u8, u8) {
+        (self.out_b, self.ddr_b)
     }
 
     /// What it puts on port A's pins: its outputs as written, its inputs

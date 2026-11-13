@@ -4,7 +4,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::machines::atari2600::riot::Riot;
+    use crate::chips::riot6532::Riot;
 
     const INTIM: u16 = 0x284;
     const TIMINT: u16 = 0x285;

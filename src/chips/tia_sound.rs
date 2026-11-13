@@ -1,4 +1,4 @@
-//! The TIA's sound, as Stella has it: two channels, each a volume (AUDV), a
+//! The TIA's sound, the 2600's and the 7800's, as Stella has it: two channels, each a volume (AUDV), a
 //! frequency divider (AUDF, 5 bits) and a control (AUDC, 4 bits) choosing
 //! its wave, made by a 4-bit pulse counter and a 5-bit noise counter shifted
 //! with feedback as AUDC says. The divider's clocked twice a line, at color

@@ -7,11 +7,14 @@ pub mod cpu;
 /// The chips the machines are made of, besides the CPU.
 pub mod chips {
     pub mod ay38910;
+    pub mod riot6532;
+    pub mod tia_sound;
     pub mod via6522;
 
     #[cfg(test)]
     mod tests {
         mod ay38910;
+        mod riot6532;
         mod via6522;
     }
 }
@@ -60,6 +63,7 @@ pub mod host {
 pub mod machines {
     pub mod apple2;
     pub mod atari2600;
+    pub mod atari7800;
     pub mod basic;
     pub mod facts;
     pub mod nes;

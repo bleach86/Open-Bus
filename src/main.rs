@@ -23,7 +23,11 @@
 /// System's .fds image, or a zip of one, disksys.rom, its BIOS, beside it
 /// or in roms/nes/, and F9 changing the disk. `--fast` for performance mode,
 /// for what's too slow otherwise: a line at a time, and less exact for it.
-/// With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
+/// `cpu_emu atari2600 ROM [--fullscreen]` for the Atari 2600, ROM a .a26 or
+/// a zip of one, F5 and F7 its difficulty switches and F8 its colour
+/// switch; `cpu_emu atari7800 ROM [--fullscreen]` for the Atari 7800, ROM
+/// an .a78, or a dump without its header, or a zip of one, F5 and F7 its
+/// difficulty switches and F8 its Pause button. With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
 /// to be resized: as the desktop app has it, in place of its library.
 /// `--ram=zeros` or `--ram=random` for its RAM at power-on all 0s, or as
 /// random as a real console's, not all 1s ($FF). `--region=ntsc` or `pal`,
@@ -70,7 +74,7 @@ fn main() {
     if args.iter().any(|arg| arg == "--launched") {
         cpu_emu::host::window::LAUNCHED.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal] [--console=nes|famicom] [--port2=controller|zapper] | atari2600 ROM [--fullscreen] [--region=ntsc|pal]";
+    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal] [--console=nes|famicom] [--port2=controller|zapper] | atari2600 ROM [--fullscreen] [--region=ntsc|pal] | atari7800 ROM [--fullscreen] [--region=ntsc|pal]";
     match args.get(1).map(String::as_str) {
         Some("controls") => machines::nes::controls(),
         Some("pads") => cpu_emu::host::pads::report(),
@@ -134,6 +138,17 @@ fn main() {
                 .find_map(|arg| arg.strip_prefix("--region="))
                 .map(|name| cpu_emu::machines::region::Region::parse(name).expect(usage));
             machines::atari2600::run(rom, args.iter().any(|arg| arg == "--fullscreen"), region);
+        }
+        Some("atari7800") => {
+            let rom = args[2..]
+                .iter()
+                .find(|arg| !arg.starts_with("--"))
+                .expect(usage);
+            let region = args
+                .iter()
+                .find_map(|arg| arg.strip_prefix("--region="))
+                .map(|name| cpu_emu::machines::region::Region::parse(name).expect(usage));
+            machines::atari7800::run(rom, args.iter().any(|arg| arg == "--fullscreen"), region);
         }
         Some(machine @ ("apple2" | "apple2e")) => {
             let files: Vec<&String> = args[2..]
