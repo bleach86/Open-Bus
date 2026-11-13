@@ -38,6 +38,13 @@ pub fn rewind(on: bool) {
     run::REWIND.store(on, Ordering::Relaxed);
 }
 
+/// Whether a disk drive's light shows while it's busy, as Settings has it:
+/// the page's `--no-drive-light`.
+#[wasm_bindgen]
+pub fn drive_light(on: bool) {
+    run::DRIVE_LIGHT.store(on, Ordering::Relaxed);
+}
+
 #[wasm_bindgen]
 pub fn put_file(name: &str, bytes: Vec<u8>) {
     files::put(Path::new(name), bytes);

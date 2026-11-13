@@ -94,6 +94,9 @@ pub struct HardDisk {
     #[serde(with = "save_state::bytes")]
     buffer: [u8; BLOCK],
     at: usize,
+    /// A block read or written, since it was last asked.
+    #[serde(skip)]
+    pub used: bool,
 }
 
 impl HardDisk {
@@ -106,6 +109,7 @@ impl HardDisk {
             error: 0,
             buffer: [0; BLOCK],
             at: 0,
+            used: false,
         }
     }
 
@@ -164,6 +168,7 @@ impl HardDisk {
             return;
         };
         let at = block * BLOCK;
+        self.used |= command == 1 || command == 2;
         self.error = match command {
             0 => 0,
             _ if at >= volume.blocks.len() => IO_ERROR,

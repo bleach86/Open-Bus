@@ -136,6 +136,11 @@ const FAST_NOTICE: &str = "Fast forward";
 /// REWIND_SECONDS of them. Held, a moment's gone back to each frame, and a
 /// frame run from it to see it: back twice as fast as it went, and quiet.
 pub static REWIND: AtomicBool = AtomicBool::new(true);
+/// A drive's light at the corner of the picture while it's busy, unless
+/// it's turned off, as `--no-drive-light` does; lit LIGHT_FRAMES at least,
+/// a block read in a moment seen.
+pub static DRIVE_LIGHT: AtomicBool = AtomicBool::new(true);
+const LIGHT_FRAMES: u32 = 6;
 const REWIND_EVERY: u32 = 2;
 const REWIND_SECONDS: u32 = 30;
 const REWIND_NOTICE: &str = "Rewind";
@@ -154,6 +159,8 @@ pub struct Host<M: Machine> {
     /// picture with it on.
     pub notice: Option<(String, u32)>,
     noticed: Vec<u32>,
+    /// The frames more a drive's light is lit.
+    light: u32,
     /// The window's title, as last set; the cycles run, as its clock's kept
     /// to them, each fast-forwarded a FAST'th of one.
     title: String,
@@ -198,6 +205,7 @@ impl<M: Machine> Host<M> {
             state,
             notice: None,
             noticed: Vec::new(),
+            light: 0,
             title: String::new(),
             cycles: 0,
             debug: false,
@@ -558,6 +566,7 @@ impl<M: Machine> Host<M> {
             unseen || self.late && !self.left_out && self.notice.is_none() && !self.debug;
         self.left_out = self.cpu.memory.leave_out_picture(leave_out);
         self.cpu.run_frame();
+        self.watch_light();
         let cycles = self.cpu.clock.wrapping_sub(before) as u64;
         self.cycles += if fast { cycles / FAST } else { cycles };
         if !rewinding {
@@ -754,7 +763,7 @@ impl<M: Machine> Host<M> {
             .or_else(|| self.menu_lines())
             .or_else(|| self.debug.then(|| self.debug_lines()));
         let picture = self.cpu.memory.picture();
-        if self.notice.is_none() && lines.is_none() {
+        if self.notice.is_none() && lines.is_none() && self.light == 0 {
             self.display
                 .show(picture.pixels, picture.width, picture.height);
             return;
@@ -768,6 +777,9 @@ impl<M: Machine> Host<M> {
         if let Some((text, _)) = &self.notice {
             notice::draw(&mut self.noticed, width, height, text);
         }
+        if self.light > 0 {
+            notice::light(&mut self.noticed, width, height);
+        }
         self.display.show(&self.noticed, width, height);
         if let Some((_, frames)) = &mut self.notice {
             *frames -= 1;
@@ -775,6 +787,20 @@ impl<M: Machine> Host<M> {
                 self.notice = None;
             }
         }
+    }
+
+    /// The drive's light, as the frame just run left it: lit again if
+    /// it's busy, or going out once it's been lit its frames.
+    fn watch_light(&mut self) {
+        let busy = self.cpu.memory.light();
+        if !DRIVE_LIGHT.load(Ordering::Relaxed) {
+            return;
+        }
+        self.light = if busy {
+            LIGHT_FRAMES
+        } else {
+            self.light.saturating_sub(1)
+        };
     }
 
     /// A notice over the picture.

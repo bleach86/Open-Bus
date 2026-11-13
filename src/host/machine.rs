@@ -95,6 +95,13 @@ pub trait Machine: Bus + Serialize + DeserializeOwned {
         None
     }
 
+    /// Whether a disk drive's busy this frame, for its light: its motor
+    /// running, or a block just read or written. Asked once a frame, it can
+    /// forget an access it's told of.
+    fn light(&mut self) -> bool {
+        false
+    }
+
     /// What it has of its own for the menu over it: each a name, and the
     /// function key it's as.
     fn menu(&self) -> Vec<(&'static str, u8)> {

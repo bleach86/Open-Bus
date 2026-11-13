@@ -1,9 +1,9 @@
 //! A notice, on a picture of any size: its band and its text, at the widest
-//! fit, cut to what fits.
+//! fit, cut to what fits. A drive's light, at its corner.
 
 #[cfg(test)]
 mod tests {
-    use crate::host::notice::draw;
+    use crate::host::notice::{draw, light};
 
     /// The notice over a grey picture: the picture.
     fn drawn(width: usize, height: usize, text: &str) -> Vec<u32> {
@@ -35,6 +35,38 @@ mod tests {
                 "{width}: not its band"
             );
             assert!(band.iter().any(|&dot| dot == 0xFFFFFF), "{width}: no text");
+        }
+    }
+
+    #[test]
+    fn a_drives_light_is_at_the_bottom_right_corner_and_nowhere_else() {
+        for (width, height) in [(560, 192), (240, 224)] {
+            let mut picture = vec![0x808080; width * height];
+            light(&mut picture, width, height);
+            let changed: Vec<(usize, usize)> = (0..picture.len())
+                .filter(|&at| picture[at] != 0x808080)
+                .map(|at| (at % width, at / width))
+                .collect();
+            let left = changed.iter().map(|&(x, _)| x).min().unwrap();
+            let top = changed.iter().map(|&(_, y)| y).min().unwrap();
+            let (right, bottom) = (width - 1, height - 1);
+            assert!(
+                changed.iter().all(|&(x, y)| x >= left && y >= top),
+                "{width}: past its corner"
+            );
+            assert_eq!(top, height - 7, "{width}: its lines");
+            assert_eq!(
+                right - left + 1,
+                7 * (width / 280).max(1),
+                "{width}: its width"
+            );
+            assert_eq!(
+                (picture[top * width + left], picture[bottom * width + right]),
+                (0x202020, 0x202020),
+                "{width}: the picture under it dimmed"
+            );
+            let lit = |colour: u32| picture.iter().any(|&dot| dot == colour);
+            assert!(lit(0xFF3020), "{width}: no lamp");
         }
     }
 

@@ -25,6 +25,7 @@ const {
     take_changed_parts,
     game_facts,
     rewind,
+    drive_light,
 } = native ? {} : await import('./pkg/cpu_emu.js');
 
 /// What's kept of the games, favourites, plays, their own settings and what's
@@ -805,6 +806,9 @@ function gameTile(name, alone = false) {
 /// A game started: in the desktop app, on the native emulator; here, a NES
 /// or 2600 game with what's chosen of it, an Apple's disks as they were.
 async function playGame(machine) {
+    if (!native) {
+        drive_light(page('drive-light').checked);
+    }
     if (native) {
         playNatively(machine);
     } else if (machine.kind === 'atari2600') {
@@ -2300,7 +2304,10 @@ function playNatively(machine) {
     const ram = page('power-on-ram').value;
     const resume = machine.kind !== 'controls' && page('quick-resume').checked;
     const rewind = page('rewind').checked;
-    native.play({ ...machine, fullscreen, fast, ram, resume, rewind }).catch((problem) => say(String(problem), true));
+    const driveLight = page('drive-light').checked;
+    native
+        .play({ ...machine, fullscreen, fast, ram, resume, rewind, driveLight })
+        .catch((problem) => say(String(problem), true));
 }
 native?.whenPads((pressed, maker) => {
     padsSaid = pressed;
@@ -2548,6 +2555,8 @@ if (native) {
 page('change-controls').onclick = native ? () => playNatively({ kind: 'controls' }) : openControls;
 page('rewind').checked = localStorage.getItem('rewind') !== 'no';
 page('rewind').onchange = ({ target }) => localStorage.setItem('rewind', target.checked ? 'yes' : 'no');
+page('drive-light').checked = localStorage.getItem('driveLight') !== 'no';
+page('drive-light').onchange = ({ target }) => localStorage.setItem('driveLight', target.checked ? 'yes' : 'no');
 page('power-on-ram').value = localStorage.getItem('ram') ?? 'ones';
 page('power-on-ram').onchange = ({ target }) => localStorage.setItem('ram', target.value);
 page('background').value = localStorage.getItem('background') ?? 'sunset';

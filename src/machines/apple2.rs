@@ -758,6 +758,16 @@ impl Machine for Apple2 {
         Some(screen)
     }
 
+    /// A Disk II drive's motor on or running on, as its IN USE light is;
+    /// or the hard disk's block read or written.
+    fn light(&mut self) -> bool {
+        let used = self
+            .hard_disk
+            .as_mut()
+            .is_some_and(|card| std::mem::take(&mut card.used));
+        used || self.disk2.as_ref().is_some_and(|card| card.spinning())
+    }
+
     fn debug(&self) -> Vec<String> {
         let model = if self.iie.is_some() { "IIE" } else { "II+" };
         let switches = self.switches();

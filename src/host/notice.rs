@@ -20,6 +20,13 @@ const COLUMNS: usize = 40;
 const LINE: usize = 8;
 const DIM: u32 = 2;
 const DIMMED: u32 = 0x3F3F3F;
+/// A drive's light: a lamp, 5 dots by 5 lines, lit, its edge, and where it
+/// shines; and the dot dimmed around it.
+const LAMP: [&str; 5] = [".ooo.", "o+##o", "o###o", "o###o", ".ooo."];
+const LAMP_MARGIN: usize = 1;
+const LAMP_LIT: u32 = 0xFF3020;
+const LAMP_EDGE: u32 = 0xAA1010;
+const LAMP_SHINE: u32 = 0xFFAA96;
 
 /// `text` over `picture`, `width` by `height`.
 pub fn draw(picture: &mut [u32], width: usize, height: usize, text: &str) {
@@ -49,6 +56,35 @@ pub fn panel(picture: &mut [u32], width: usize, height: usize, lines: &[String])
     }
     for (place, line) in lines.iter().enumerate() {
         write(picture, width, scale, 1 + place * LINE, scale, line);
+    }
+}
+
+/// A drive's light, lit, at the bottom right of `picture`, `width` by
+/// `height`: a small red lamp, its dots as wide as a notice's, on the
+/// picture dimmed.
+pub fn light(picture: &mut [u32], width: usize, height: usize) {
+    let (scale, _) = fit(width);
+    let across = LAMP.len() + 2 * LAMP_MARGIN;
+    let left = width.saturating_sub(across * scale);
+    let top = height.saturating_sub(across);
+    for row in picture.chunks_mut(width).skip(top) {
+        for dot in &mut row[left..] {
+            *dot = (*dot >> DIM) & DIMMED;
+        }
+    }
+    let lamp_left = left + LAMP_MARGIN * scale;
+    for (row, dots) in LAMP.iter().enumerate() {
+        let line = (top + LAMP_MARGIN + row) * width;
+        for (dot, kind) in dots.bytes().enumerate() {
+            let colour = match kind {
+                b'#' => LAMP_LIT,
+                b'o' => LAMP_EDGE,
+                b'+' => LAMP_SHINE,
+                _ => continue,
+            };
+            let x = lamp_left + dot * scale;
+            picture[line + x..line + x + scale].fill(colour);
+        }
     }
 }
 

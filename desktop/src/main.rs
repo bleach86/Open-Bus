@@ -811,6 +811,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
         )
         .args(resumed(&app, &machine).then_some("--resume"))
         .args((machine["rewind"] == false).then_some("--no-rewind"))
+        .args((machine["driveLight"] == false).then_some("--no-drive-light"))
         .arg(window_place(&window)?)
         .current_dir(&library)
         .stderr(Stdio::piped());

@@ -103,12 +103,18 @@ mod tests {
             "STATUS: 300 blocks, $012C"
         );
 
+        assert!(
+            !std::mem::take(&mut card.used),
+            "STATUS: no block, no light"
+        );
+
         // READ block 7: its bytes, 7.
         reg(&mut card, 0, 1);
         reg(&mut card, 2, 7);
         reg(&mut card, 3, 0);
         reg(&mut card, 4, 0);
         assert_eq!(get(&mut card, 4), 0, "READ's error");
+        assert!(std::mem::take(&mut card.used), "a block read, no light");
         let block: Vec<u8> = (0..512).map(|_| get(&mut card, 8)).collect();
         assert!(block.iter().all(|&byte| byte == 7), "block 7 not read");
 

@@ -293,6 +293,24 @@ mod tests {
     }
 
     #[test]
+    fn a_drives_light_is_lit_as_its_motor_runs_and_runs_on() {
+        let mut apple = machine();
+        apple.disk2 = Some(Disk2::new(vec![0; 256], &[0; 256]).unwrap());
+        assert!(!apple.light(), "the motor off");
+        apple.read(0xC0E9); // the motor on
+        assert!(apple.light());
+        apple.read(0xC0EB); // drive 2
+        assert!(apple.light(), "drive 2's not");
+        apple.read(0xC0E8); // the motor off: running on a second
+        assert!(apple.light(), "not running on");
+        let card = apple.disk2.as_mut().unwrap();
+        for _ in 0..CLOCK_HZ {
+            card.tick();
+        }
+        assert!(!apple.light(), "still lit, run on");
+    }
+
+    #[test]
     fn the_reset_key_holds_the_cpu_and_cards_then_starts_over() {
         let roms = Path::new(env!("CARGO_MANIFEST_DIR")).join("roms");
         let Ok(rom) = std::fs::read(roms.join("apple2_test.bin")) else {
