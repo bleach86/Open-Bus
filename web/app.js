@@ -2660,6 +2660,8 @@ async function start(make, machine, using, game) {
     page('machine').dataset.machine = machine === 'apple' ? 'apple' : 'console';
     page('disk').hidden = page('disk-help').hidden = !emulator.disk_system();
     page('switch-help').hidden = machine !== 'atari2600';
+    page('keypad-help').hidden = emulator.keypads() !== 1;
+    page('keypads-help').hidden = emulator.keypads() !== 2;
     aiming = emulator.aimed_at();
     page('frame').classList.toggle('aiming', aiming);
     const canvas = page('screen');

@@ -30,7 +30,9 @@
 //! 1.8 kΩ to 1 MΩ, INPT0 to INPT3 set as one's charged past the comparator's
 //! trip point: so how long it takes, a game counting lines, says how far
 //! the paddle's turned. As Stella has it, a capacitor of 68 nF from 5 V,
-//! the trip point where a pot all the way round takes 379 lines.
+//! the trip point where a pot all the way round takes 379 lines. A keypad's
+//! column on one charges it through the keypad's own resistor, or straight
+//! from 5 V, or grounds it, through the input's own 1.8 kΩ.
 
 use super::frame::Frame;
 use super::objects::{
@@ -129,13 +131,16 @@ impl Queue {
 
 /// A paddle's input: its capacitor's charge, in µV; whether VBLANK's
 /// grounding it; the color clock it was last worked out at; and the pot
-/// it charges through, if there's a paddle.
+/// it charges through, if there's a paddle; or whether a keypad's key is
+/// grounding it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Pot {
     charge: u32,
     grounded: bool,
     at: u64,
     resistance: Option<u32>,
+    #[serde(skip)]
+    shorted: bool,
 }
 
 const SUPPLY: f64 = 5.0;
@@ -151,6 +156,8 @@ impl Pot {
         let charge = self.charge as f64 / 1e6;
         let charge = if self.grounded {
             charge * (-seconds / GROUNDING / CAPACITOR).exp()
+        } else if self.shorted {
+            charge * (-seconds / SERIES / CAPACITOR).exp()
         } else if let Some(resistance) = self.resistance {
             let decay = (-seconds / (resistance as f64 + SERIES) / CAPACITOR).exp();
             SUPPLY * (1.0 - (1.0 - charge / SUPPLY) * decay)
@@ -609,10 +616,20 @@ impl Tia {
     /// Paddle `n`'s pot, INPT0 to INPT3's, `resistance` ohms, or none
     /// there.
     pub fn paddle(&mut self, n: usize, resistance: Option<u32>) {
+        self.wire(n, resistance, false);
+    }
+
+    /// Input `n`, INPT0 to INPT3, grounded by a keypad's key, `shorted`,
+    /// or else charged through `resistance` ohms from 5 V.
+    pub fn keypad_column(&mut self, n: usize, shorted: bool, resistance: u32) {
+        self.wire(n, Some(resistance), shorted);
+    }
+
+    fn wire(&mut self, n: usize, resistance: Option<u32>, shorted: bool) {
         let pot = &mut self.pots[n];
-        if pot.resistance != resistance {
+        if (pot.resistance, pot.shorted) != (resistance, shorted) {
             pot.update(self.clocks, self.per_second as f64);
-            pot.resistance = resistance;
+            (pot.resistance, pot.shorted) = (resistance, shorted);
         }
     }
 

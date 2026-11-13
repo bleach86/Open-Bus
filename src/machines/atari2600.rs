@@ -13,10 +13,11 @@
 //! access. WSYNC, written, holds RDY: the CPU, at its next read, waits out
 //! the line, as many cycles as it has left, its read on the next's first.
 //!
-//! The controls: in each port a joystick, paddles or a driving controller
-//! (controllers.rs), as Stella's properties for the game say, or as its code
-//! says; the first player the window's first gamepad and its keys, and the
-//! pointer, the second its second gamepad. A gamepad's Start is the
+//! The controls: in each port a joystick, paddles, a driving controller or
+//! a keypad (controllers.rs), as Stella's properties for the game say, or
+//! as its code says; the first player the window's first gamepad and its
+//! keys, and the pointer, the second its second gamepad; a keypad, the
+//! keyboard, a key typed held KEYPAD_FRAMES, and on as it repeats. A gamepad's Start is the
 //! console's Reset switch, its Select the Select switch; and the Reset
 //! button the Reset switch too. The difficulty switches (as the properties
 //! set them, else B) and the colour switch, F5, F7 and F8, and in the menu.
@@ -57,7 +58,7 @@ mod tests {
 
 use crate::cpu::bus::Bus;
 use crate::cpu::{CPU, Variant};
-use crate::host::display::{Gamepad, SAMPLE_RATE};
+use crate::host::display::{Gamepad, Key, SAMPLE_RATE};
 use crate::host::files;
 use crate::host::machine::{Input, Machine, Picture};
 #[cfg(not(target_arch = "wasm32"))]
@@ -70,7 +71,7 @@ use crate::host::window::Window;
 use crate::host::zip::crc32;
 use crate::machines::region::Region;
 use cartridge::{Cartridge, Kind};
-use controllers::{Controller, Paddle, Wheel};
+use controllers::{Column, Controller, KEYPAD_PULL_UP, Paddle, Wheel};
 use riot::Riot;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -83,6 +84,11 @@ pub const PAL_CLOCK_HZ: u32 = 1_182_298;
 
 /// How loud it is, of the host's full volume.
 const VOLUME: f32 = 0.7;
+/// The frames a keypad's key typed is held, for a game reading its keypad
+/// now and then to see it: a tenth of a second; held on, it's typed again
+/// as it repeats. Not as long as any key's held, which would keep it held
+/// while the stick's keys are, as a joystick's moved beside it.
+const KEYPAD_FRAMES: u8 = 6;
 /// The output's filters' corners: a low-pass, a cycle at a time, for what
 /// the sampling would fold back; the high-pass, a sample at a time.
 const LOW_PASS: f32 = 15_000.0;
@@ -169,6 +175,12 @@ pub struct Atari2600 {
     paddle_fire: [bool; 4],
     #[serde(skip)]
     wheels: [Wheel; 2],
+    /// Each keypad's keys held, as `controllers::columns` has them; and the
+    /// frames more they're held.
+    #[serde(skip)]
+    keypad_keys: [u16; 2],
+    #[serde(skip)]
+    keypad_frames: u8,
     /// Its phosphor's blend, if it's shown with one; and the frame it was
     /// last blended for.
     #[serde(skip)]
@@ -212,6 +224,8 @@ impl Atari2600 {
             paddle_players: [None; 4],
             paddle_fire: [false; 4],
             wheels: [Wheel::default(); 2],
+            keypad_keys: [0; 2],
+            keypad_frames: 0,
             phosphor: None,
             blended: None,
             name: String::new(),
@@ -255,12 +269,18 @@ impl Atari2600 {
                     !((a as u8) << 3 | (b as u8) << 2) & 0x0F
                 }
                 Controller::Driving => 0x0C | self.wheels[port].pins(),
+                // Its rows, driven by the game.
+                Controller::Keypad => 0x0F,
             };
             pins |= pin_bits << (4 * (1 - port));
-            let paddles = matches!(self.controllers[port], Controller::Paddles { .. });
-            self.tia.fire[port] = !paddles && (pad.a || pad.b);
+            let joystick = matches!(
+                self.controllers[port],
+                Controller::Joystick | Controller::Driving
+            );
+            self.tia.fire[port] = joystick && (pad.a || pad.b);
         }
         self.riot.pins_a = pins;
+        self.keypads_to_inputs();
         let first = self.gamepads[0];
         let reset = self.reset_held || first.start;
         let switches = self.switches;
@@ -270,6 +290,38 @@ impl Atari2600 {
             | (switches.colour as u8) << 3
             | (switches.difficulty_a[0] as u8) << 6
             | (switches.difficulty_a[1] as u8) << 7;
+    }
+
+    /// How many keypads are plugged in, for their keys to be told of.
+    pub fn keypads(&self) -> usize {
+        self.controllers
+            .iter()
+            .filter(|&&controller| controller == Controller::Keypad)
+            .count()
+    }
+
+    /// Each keypad's columns, as its keys held and the rows the game drives
+    /// have them, on the TIA's inputs: the first two the paddles', the
+    /// third the fire button's.
+    fn keypads_to_inputs(&mut self) {
+        let driven = self.riot.driven_a();
+        for port in 0..2 {
+            if self.controllers[port] != Controller::Keypad {
+                continue;
+            }
+            let rows = (driven >> (4 * (1 - port))) & 0x0F;
+            let columns = controllers::columns(self.keypad_keys[port], rows);
+            for (n, column) in columns[..2].iter().enumerate() {
+                let resistance = if *column == Column::Open {
+                    KEYPAD_PULL_UP
+                } else {
+                    0
+                };
+                self.tia
+                    .keypad_column(2 * port + n, *column == Column::Ground, resistance);
+            }
+            self.tia.fire[port] = columns[2] == Column::Ground;
+        }
     }
 
     fn sound_cycle(&mut self) {
@@ -312,6 +364,10 @@ impl Bus for Atari2600 {
             }
         } else {
             self.riot.write(addr, value);
+            // SWCHA or SWACNT: a keypad's rows driven.
+            if addr & 0x0206 == 0x0200 {
+                self.keypads_to_inputs();
+            }
         }
         self.cartridge.access(addr, value, true);
     }
@@ -448,11 +504,34 @@ impl Machine for Atari2600 {
         for (n, paddle) in self.paddles.iter().enumerate() {
             let resistance = match self.controllers[n / 2] {
                 Controller::Paddles { reversed, .. } => Some(paddle.resistance(reversed)),
+                Controller::Keypad => continue,
                 _ => None,
             };
             self.tia.paddle(n, resistance);
         }
+        // The keypads' keys let go, once they've been held long enough to
+        // be seen.
+        if self.keypad_frames > 0 {
+            self.keypad_frames -= 1;
+        } else {
+            self.keypad_keys = [0; 2];
+        }
         self.controls_to_pins();
+    }
+
+    /// A key typed, a keypad's if it's one: held from now.
+    fn key(&mut self, key: Key) {
+        let Key::Char(typed) = key else { return };
+        let ports: Vec<usize> = (0..2)
+            .filter(|&port| self.controllers[port] == Controller::Keypad)
+            .collect();
+        let Some((port, key)) = controllers::keypad_key(typed as char, ports.len() == 2) else {
+            return;
+        };
+        let Some(&port) = ports.get(port) else { return };
+        self.keypad_keys[port] |= key;
+        self.keypad_frames = KEYPAD_FRAMES;
+        self.keypads_to_inputs();
     }
 
     fn rewinds(&self) -> bool {

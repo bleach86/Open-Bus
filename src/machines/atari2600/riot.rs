@@ -92,7 +92,13 @@ impl Riot {
     }
 
     fn port_a(&self) -> u8 {
-        (self.out_a | !self.ddr_a) & self.pins_a
+        self.driven_a() & self.pins_a
+    }
+
+    /// What it puts on port A's pins: its outputs as written, its inputs
+    /// high.
+    pub fn driven_a(&self) -> u8 {
+        self.out_a | !self.ddr_a
     }
 
     /// A read of `addr`: RAM if A9's clear, else its registers.

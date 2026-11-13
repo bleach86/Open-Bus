@@ -289,6 +289,14 @@ impl Emulator {
         matches!(&self.running, Running::Nes(host) if host.cpu.memory.cartridge.disk_crc().is_some())
     }
 
+    /// How many keypads a 2600's game has, for their keys to be told of.
+    pub fn keypads(&self) -> usize {
+        match &self.running {
+            Running::Atari2600(host) => host.cpu.memory.keypads(),
+            _ => 0,
+        }
+    }
+
     /// Whether it's aimed at, as a light gun is, the pointer its.
     pub fn aimed_at(&self) -> bool {
         match &self.running {
