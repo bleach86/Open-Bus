@@ -27,7 +27,9 @@
 /// a zip of one, F5 and F7 its difficulty switches and F8 its colour
 /// switch; `cpu_emu atari7800 ROM [--fullscreen]` for the Atari 7800, ROM
 /// an .a78, or a dump without its header, or a zip of one, F5 and F7 its
-/// difficulty switches and F8 its Pause button. With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
+/// difficulty switches and F8 its Pause button, the High Score Cartridge
+/// in it if highscre.bin's beside the game or in roms/atari7800/; or a
+/// 2600's, played as a 2600, as the 7800 plays one. With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
 /// to be resized: as the desktop app has it, in place of its library.
 /// `--ram=zeros` or `--ram=random` for its RAM at power-on all 0s, or as
 /// random as a real console's, not all 1s ($FF). `--region=ntsc` or `pal`,
@@ -148,7 +150,16 @@ fn main() {
                 .iter()
                 .find_map(|arg| arg.strip_prefix("--region="))
                 .map(|name| cpu_emu::machines::region::Region::parse(name).expect(usage));
-            machines::atari7800::run(rom, args.iter().any(|arg| arg == "--fullscreen"), region);
+            let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
+            // A 2600's cartridge played as the 7800 plays one, as a 2600.
+            let path = std::path::Path::new(rom);
+            let bytes = cpu_emu::host::files::read(path).unwrap_or_default();
+            match machines::facts::system_of(path, &bytes) {
+                machines::facts::System::Atari2600 => {
+                    machines::atari2600::run(rom, fullscreen, region)
+                }
+                _ => machines::atari7800::run(rom, fullscreen, region),
+            }
         }
         Some(machine @ ("apple2" | "apple2e")) => {
             let files: Vec<&String> = args[2..]

@@ -42,8 +42,10 @@ export function games(names) {
     const groups = new Map();
     const alone = [];
     for (const name of names) {
-        const folder = name.includes('/') ? name.split('/')[0] : null;
-        const game = folder ? { key: `/${folder}`, title: title(folder) } : namedGame(name);
+        // Its folder, the last in its name: before it, if there's more, where
+        // that's from, for two games of a name.
+        const folder = name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : null;
+        const game = folder ? { key: `/${folder}`, title: title(base(folder)) } : namedGame(name);
         if (!game || isVolume(name)) {
             alone.push(name);
         } else if (groups.has(game.key)) {

@@ -256,6 +256,43 @@ mod tests {
     }
 
     #[test]
+    fn the_high_score_cartridge_has_its_ram_at_1000_and_its_rom_at_3000() {
+        use crate::machines::atari7800::high_score::HighScore;
+        let mut cpu = console_of(&[0xEA; 0x4000]);
+        let atari = &mut cpu.memory;
+        atari.write(0x1000, 0x42);
+        assert_eq!(
+            (atari.read(0x1000), atari.read(0x3000)),
+            (0, 0),
+            "none plugged in: nothing there"
+        );
+        let rom: Vec<u8> = (0..0x1000).map(|at| (at >> 4) as u8).collect();
+        atari.high_score = Some(HighScore::new(rom));
+        assert_eq!(atari.read(0x17FF), 0xFF, "its RAM all $FF at first");
+        atari.write(0x1000, 0x42);
+        atari.write(0x17FF, 0x24);
+        atari.write(0x3010, 0x99);
+        assert_eq!((atari.read(0x1000), atari.read(0x17FF)), (0x42, 0x24));
+        assert_eq!(
+            (atari.read(0x3010), atari.read(0x3FFF)),
+            (0x01, 0xFF),
+            "its ROM, not written"
+        );
+        assert_eq!(atari.read(0x1800), 0, "the console's RAM after it");
+    }
+
+    #[test]
+    fn the_high_score_cartridge_stays_as_it_is_whatever_states_loaded() {
+        use crate::machines::atari7800::high_score::HighScore;
+        let mut running = console_of(&[0xEA; 0x4000]);
+        running.memory.high_score = Some(HighScore::new(vec![0; 0x1000]));
+        running.memory.write(0x1234, 0x56);
+        let mut loaded = console_of(&[0xEA; 0x4000]);
+        loaded.memory.keep(&mut running.memory);
+        assert_eq!(loaded.memory.read(0x1234), 0x56);
+    }
+
+    #[test]
     fn a_bin_is_a_7800s_if_it_ends_as_the_bios_wants_and_is_16k_or_more() {
         use crate::machines::facts::{System, system_of};
         // $FFF8 and $FFF9 as a 7800's cartridge has them, the vectors after.

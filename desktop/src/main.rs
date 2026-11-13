@@ -120,12 +120,19 @@ fn file_bytes(app: AppHandle, path: String) -> Result<Response, String> {
     Ok(Response::new(bytes))
 }
 
-/// A file put in `library`: where it is.
+/// A file put in `library`: where it is. It's put with what's been found,
+/// and what's known of it learned, as a file a watcher sees come is: the
+/// library's own folder isn't watched.
 #[tauri::command]
 fn keep_file(app: AppHandle, request: Request<'_>) -> Result<String, String> {
     let path = place(&app, &header(&request, "name")?)?;
-    write(&path, body(&request)?)?;
-    Ok(path.to_string_lossy().into_owned())
+    let bytes = body(&request)?;
+    let size = bytes.len() as u64;
+    write(&path, bytes)?;
+    let path = path.to_string_lossy().into_owned();
+    library(&app).kept(&path, size)?;
+    learn_facts(&app);
+    Ok(path)
 }
 
 /// Files dropped on the window, that the page may read.

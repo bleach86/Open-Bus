@@ -34,7 +34,9 @@ export async function forget(name) {
 
 /// What the library has, from what was found: the library's, then the games
 /// in the folders added, named as if they'd been dropped on the page, a
-/// game's disks together. Of two of a name, the first.
+/// game's disks together. Of two or more of a name, as another machine's
+/// game of a name is, each by as much of the path to it as tells them
+/// apart: "atari7800/Joust (USA).zip", "atari2600/Joust (USA).zip".
 let found = null;
 
 function take({ root, library, folders }) {
@@ -43,12 +45,31 @@ function take({ root, library, folders }) {
     for (const { path } of library) {
         where.set(slashes(path).slice(slashes(root).length + 1), path);
     }
-    const games = folders.map(({ path }) => path).filter((path) => GAMES.includes(extension(path)));
+    const games = [...new Set(folders.map(({ path }) => path).filter((path) => GAMES.includes(extension(path))))];
     const stored = storedNames(games.map(slashes), (path) => DISKS.includes(extension(path)));
+    const named = new Map();
     for (const path of games) {
         const name = stored.get(slashes(path));
-        if (name && !where.has(name)) {
-            where.set(name, path);
+        if (name) {
+            named.set(name, [...(named.get(name) ?? []), path]);
+        }
+    }
+    for (const [name, paths] of named) {
+        const names = paths.length > 1 || where.has(name) ? apart(name, paths) : [name];
+        paths.forEach((path, at) => where.set(names[at], path));
+    }
+}
+
+/// `paths`, all of whose games are named `name`, each named by the end of
+/// its path: as few of its folders as tells them apart, and from the
+/// library's.
+function apart(name, paths) {
+    const parts = paths.map((path) => slashes(path).split('/'));
+    for (let length = name.split('/').length + 1; ; length++) {
+        const names = parts.map((part) => part.slice(-length).join('/'));
+        const all = length >= Math.max(...parts.map((part) => part.length));
+        if (all || (new Set(names).size === names.length && !names.some((name) => where.has(name)))) {
+            return names;
         }
     }
 }

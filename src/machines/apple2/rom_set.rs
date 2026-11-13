@@ -10,6 +10,7 @@
 use super::iie;
 use crate::host::files;
 use crate::host::zip::{self, crc32};
+use crate::machines::atari7800::high_score::ROM as HIGH_SCORE_ROM;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -45,10 +46,11 @@ pub const fn rom(crc: u32, size: usize, is: Is) -> Rom {
     Rom { crc, size, is }
 }
 
-const KNOWN: [Rom; 16] = [
-    // Not an Apple's, but it's a machine's ROM, found as they are: the NES's
-    // Disk System's BIOS.
+const KNOWN: [Rom; 17] = [
+    // Not the Apple's, but machines' ROMs, found as they are: the NES's
+    // Disk System's BIOS, and the 7800's High Score Cartridge's.
     rom(0x5E60_7DCF, 0x2000, Is::Named("disksys.rom")),
+    rom(0x9BE4_08D3, 0x1000, Is::Named(HIGH_SCORE_ROM)),
     rom(0x443A_A7C4, 0x2000, Is::Named(iie::ENHANCED_ROMS[0])),
     rom(0x95E1_0034, 0x2000, Is::Named(iie::ENHANCED_ROMS[1])),
     rom(0x2651_014D, 0x1000, Is::Named(iie::ENHANCED_ROMS[2])),

@@ -26,9 +26,15 @@
 //! Select button; and the Reset button the Reset switch too. The difficulty
 //! switches (A, as a7800 sets them) F5 and F7, and the Pause button F8, and
 //! in the menu.
+//!
+//! The High Score Cartridge (high_score.rs) between it and the game, if its
+//! ROM's found, as if it's always plugged in; unless the game's a bankset's
+//! of 52K, its own ROM where the High Score Cartridge's would be, or one of
+//! the two that write over it.
 
 pub mod cartridge;
 pub mod database;
+pub mod high_score;
 pub mod maria;
 pub mod palette;
 
@@ -56,6 +62,7 @@ use crate::host::window::Window;
 use crate::host::zip::crc32;
 use crate::machines::region::Region;
 use cartridge::{Cartridge, Kind};
+use high_score::HighScore;
 use maria::{CELLS, DMA_LIMIT, Maria};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -197,6 +204,10 @@ pub struct Atari7800 {
     sound: Option<Sound>,
     #[serde(skip)]
     samples: Vec<f32>,
+    /// The High Score Cartridge, if it's plugged in: not a state's, its
+    /// RAM every game's.
+    #[serde(skip)]
+    pub high_score: Option<HighScore>,
 }
 
 impl Atari7800 {
@@ -238,6 +249,7 @@ impl Atari7800 {
             difficulty_a: [true; 2],
             sound: None,
             samples: Vec::new(),
+            high_score: None,
         };
         atari.controls_to_pins();
         atari
@@ -393,7 +405,8 @@ impl Atari7800 {
     /// The line's DMA: its cycles, the CPU's NMI pulsed if it interrupts.
     fn dma(&mut self) -> u32 {
         let (ram, riot, cartridge) = (&self.ram, &self.riot, &self.cartridge);
-        let mut read = |addr: u16| peek(ram, riot, cartridge, addr, true);
+        let high_score = self.high_score.as_ref();
+        let mut read = |addr: u16| peek(ram, riot, cartridge, high_score, addr, true);
         let (cycles, nmi) = self.maria.dma(self.line, self.lines, &mut read);
         if nmi {
             self.nmi = 2;
@@ -439,10 +452,18 @@ impl Atari7800 {
     }
 }
 
-/// What's read at `addr` of RAM or the cartridge, by the CPU, or by
-/// `maria`'s DMA (a bankset's own image), without what a read does; nothing
-/// of the TIA's or MARIA's.
-fn peek(ram: &[u8; 0x1000], riot: &Riot, cartridge: &Cartridge, addr: u16, maria: bool) -> u8 {
+/// What's read at `addr` of RAM or the cartridge (or the High Score
+/// Cartridge, `high_score`, if it's in), by the CPU, or by `maria`'s DMA (a
+/// bankset's own image), without what a read does; nothing of the TIA's or
+/// MARIA's.
+fn peek(
+    ram: &[u8; 0x1000],
+    riot: &Riot,
+    cartridge: &Cartridge,
+    high_score: Option<&HighScore>,
+    addr: u16,
+    maria: bool,
+) -> u8 {
     let cartridge_read = |addr| {
         if maria {
             cartridge.maria_read(addr)
@@ -455,6 +476,9 @@ fn peek(ram: &[u8; 0x1000], riot: &Riot, cartridge: &Cartridge, addr: u16, maria
         0x1800..=0x1FFF => ram[addr as usize - 0x1800],
         0x2000..=0x27FF => ram[0x800 + addr as usize - 0x2000],
         _ if is_riot_ram(addr) => riot.ram[addr as usize & 0x7F],
+        _ if HighScore::has(addr) && high_score.is_some() => {
+            high_score.map_or(0, |high_score| high_score.read(addr))
+        }
         0x3000..=0x3FFF if cartridge.from_3000() => cartridge_read(addr),
         0x4000.. if !cartridge.pokey_at(addr) => cartridge_read(addr),
         _ => 0,
@@ -499,7 +523,14 @@ impl Bus for Atari7800 {
                 .pokey
                 .as_ref()
                 .map_or(0xFF, |pokey| pokey.read(addr as u8)),
-            _ => peek(&self.ram, &self.riot, &self.cartridge, addr, false),
+            _ => peek(
+                &self.ram,
+                &self.riot,
+                &self.cartridge,
+                self.high_score.as_ref(),
+                addr,
+                false,
+            ),
         }
     }
 
@@ -531,6 +562,11 @@ impl Bus for Atari7800 {
             0x1800..=0x1FFF => self.ram[addr as usize - 0x1800] = value,
             0x2000..=0x27FF => self.ram[0x800 + addr as usize - 0x2000] = value,
             0x4000.. => self.cartridge.write(addr, value),
+            _ if HighScore::has(addr) => {
+                if let Some(high_score) = &mut self.high_score {
+                    high_score.write(addr, value);
+                }
+            }
             _ => {}
         }
     }
@@ -598,6 +634,14 @@ impl Machine for Atari7800 {
             format!("ATARI 7800 {region} FRAME {}", self.frames),
             format!("CARTRIDGE {}", self.cartridge.name()),
             format!("INPTCTRL {:02X}", self.control),
+            format!(
+                "HIGH SCORE CARTRIDGE {}",
+                if self.high_score.is_some() {
+                    "IN"
+                } else {
+                    "OUT"
+                }
+            ),
         ]
     }
 
@@ -658,6 +702,16 @@ impl Machine for Atari7800 {
         self.controls_to_pins();
     }
 
+    /// The High Score Cartridge's RAM kept, a second after it's written, and
+    /// as it's put away.
+    fn keep_saved(&mut self, closing: bool) {
+        if let Some(high_score) = &mut self.high_score
+            && (closing || self.frames % 60 == 0)
+        {
+            high_score.keep_saved();
+        }
+    }
+
     fn identity(&self) -> String {
         let region = if self.region == Region::Pal {
             ", PAL"
@@ -680,6 +734,7 @@ impl Machine for Atari7800 {
         self.difficulty_a = running.difficulty_a;
         self.sound = running.sound.take();
         self.samples = take(&mut running.samples);
+        self.high_score = running.high_score.take();
         self.controls_to_pins();
     }
 }
@@ -790,6 +845,10 @@ pub fn build(rom: &str, region: Option<Region>) -> Result<CPU<Atari7800>, String
     let said = pal.map(|pal| if pal { Region::Pal } else { Region::Ntsc });
     let region = region.or(said).or(named).unwrap_or_default();
     let mut atari = Atari7800::new(cartridge, region);
+    let md5 = crate::host::md5::md5(&atari.cartridge.rom);
+    if !atari.cartridge.from_3000() && !high_score::left_out_for(&md5) {
+        atari.high_score = HighScore::found(path);
+    }
     atari.name = path
         .file_stem()
         .map_or(String::new(), |name| name.to_string_lossy().into_owned());

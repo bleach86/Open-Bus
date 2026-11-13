@@ -237,6 +237,20 @@ impl Library {
         tx.commit().map_err(said)
     }
 
+    /// A file put in the library by the page, at `path`, `size` now: with
+    /// what's been found, as it is, one put in place of another of its name
+    /// learned of again.
+    pub fn kept(&self, path: &str, size: u64) -> Result<(), String> {
+        self.lock()?
+            .execute(
+                "INSERT INTO files (path, size, own) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (path, own) DO UPDATE SET size = excluded.size",
+                params![path, size as i64, Section::Library.own()],
+            )
+            .map_err(said)?;
+        Ok(())
+    }
+
     /// `entries` found in `section`, put with what's been found: those
     /// hidden, or there already, left out. What's put there.
     pub fn add(&self, section: Section, entries: Vec<Found>) -> Result<Vec<Found>, String> {
@@ -674,6 +688,22 @@ mod tests {
         );
         drop(library);
         fs::remove_dir_all(&data).unwrap();
+    }
+
+    #[test]
+    fn a_file_the_page_keeps_is_learned_of_and_again_if_its_replaced() {
+        let library = Library::in_memory().unwrap();
+        library.kept("/l/Galaga (USA).zip", 100).unwrap();
+        assert_eq!(library.unknown("e").unwrap(), ["/l/Galaga (USA).zip"]);
+        let line = "1A0A3EB3\tATARI 7800 32K\t0\t0\t\t/l/Galaga (USA).zip".to_string();
+        library.learned(&[line], "e").unwrap();
+        assert!(library.unknown("e").unwrap().is_empty());
+        library.kept("/l/Galaga (USA).zip", 200).unwrap();
+        assert_eq!(
+            library.unknown("e").unwrap(),
+            ["/l/Galaga (USA).zip"],
+            "another in its place"
+        );
     }
 
     #[test]

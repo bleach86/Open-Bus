@@ -55,6 +55,8 @@ const DISK_II_ROMS = ['disk2-p5-341-0027.bin', 'disk2-p6-341-0028.bin'];
 /// The function key that changes a Disk System's disk; its BIOS's name.
 const CHANGE_DISK_KEY = 9;
 const FDS_BIOS = 'disksys.rom';
+/// The 7800's High Score Cartridge's ROM, and its RAM as it's kept.
+const HIGH_SCORE_ROM = 'highscre.bin';
 const kind = (name) => name.split('.').pop().toLowerCase();
 /// A game's file: a .bin a 2600's or a 7800's, unless it's an Apple's ROM.
 const isGame = (name) => ['nes', 'fds', 'a26', 'a78', 'bin', 'zip'].includes(kind(name)) && !isRom(name);
@@ -73,6 +75,12 @@ function systemOf(name) {
     );
     return atari?.[0] ?? 'nes';
 }
+/// Whose a game is, by what the emulator says of its file, `name`, its
+/// bytes as `read` has them: a Disk System's a NES's.
+async function machineSaid(name, read) {
+    const [, board = ''] = game_facts(name, await read()).split('\t');
+    return Object.keys(ATARIS).find((atari) => board.startsWith(ATARIS[atari][0])) ?? 'nes';
+}
 /// Whether there's anything to play; and the shelf to show of it first, a
 /// console's, the NES's if it has any, unless there are only disks.
 const hasGames = () => files.some(isGame) || files.some(isDisk);
@@ -85,7 +93,10 @@ function gamesShelf() {
 }
 const isOurs = (name) => ['srm', 'state', 'resume'].includes(kind(name));
 const isRom = (name) =>
-    kind(name) === 'rom' || DISK_II_ROMS.includes(name) || Object.values(IIE_ROMS).flat().includes(name);
+    kind(name) === 'rom' ||
+    name === HIGH_SCORE_ROM ||
+    DISK_II_ROMS.includes(name) ||
+    Object.values(IIE_ROMS).flat().includes(name);
 const isUsable = (name) => isGame(name) || isDisk(name) || isOurs(name) || isRom(name);
 /// The most a file can be and hold a ROM, a zip's and any other's; and what
 /// isn't worth looking in.
@@ -2132,10 +2143,50 @@ async function add(given, dropped = [], sorted = null) {
     };
     say('Looking through them…');
     const [loose, others] = [await notRoms([...list]), await notRoms(inFolders)];
-    const usable = loose.filter((file) => isUsable(file.name));
     const unused = loose.filter((file) => !isUsable(file.name));
-    const here = new Set([...files, ...usable.map((file) => file.name)]);
     const fromFolders = others.filter((file) => isUsable(file.name));
+    // Where each's kept: by its name; or a game whose name another machine's
+    // game has, in its machine's folder, "atari7800/Joust (USA).zip", both
+    // kept. Whose each name is, a game's machine asked only when another's
+    // comes with its name.
+    const owners = new Map(
+        files.map((name) => [name, isGame(name) ? () => machineSaid(name, () => bytes(name)) : null]),
+    );
+    const ownerOf = async (name) => {
+        const owner = owners.get(name);
+        if (typeof owner === 'function') {
+            owners.set(name, await owner());
+        }
+        return owners.get(name);
+    };
+    const fileBytes = async (file) => new Uint8Array(await file.arrayBuffer());
+    /// Where `file`, named `name`, is to be kept, and whether there's one of
+    /// its machine's there already.
+    async function placeOf(file, name) {
+        const own = isGame(name) ? () => machineSaid(name, () => fileBytes(file)) : null;
+        if (!owners.has(name)) {
+            owners.set(name, own);
+            return { name, there: false };
+        }
+        if (!own) {
+            return { name, there: true };
+        }
+        const machine = await own();
+        if ((await ownerOf(name)) === machine) {
+            return { name, there: true };
+        }
+        const apart = `${machine}/${name}`;
+        const there = owners.has(apart);
+        owners.set(apart, machine);
+        return { name: apart, there };
+    }
+    // Those chosen one by one, in place of one of their machine's of the
+    // name.
+    const keptAs = new Map();
+    for (const file of loose.filter((file) => isUsable(file.name))) {
+        keptAs.set(file, (await placeOf(file, file.name)).name);
+    }
+    const usable = [...keptAs.keys()];
     // What each's stored as: in its game's folder, if it's in one; and
     // copies in a folder under a game's left out.
     const stored = storedNames(
@@ -2145,9 +2196,16 @@ async function add(given, dropped = [], sorted = null) {
     const nameOf = (file) => (file.path === undefined ? file.name : stored.get(file.path));
     const added = [];
     const repeated = [];
-    for (const file of fromFolders.filter((file) => nameOf(file) !== null && !here.has(nameOf(file)))) {
-        const repeat = added.some((other) => nameOf(other) === nameOf(file));
-        (repeat ? repeated : added).push(file);
+    const addedNames = new Set();
+    for (const file of fromFolders.filter((file) => nameOf(file) !== null)) {
+        const { name, there } = await placeOf(file, nameOf(file));
+        if (!there) {
+            added.push(file);
+            addedNames.add(name);
+            keptAs.set(file, name);
+        } else if (addedNames.has(name)) {
+            repeated.push(file);
+        }
     }
     const copies = fromFolders.filter((file) => nameOf(file) === null);
     usable.push(...added);
@@ -2155,9 +2213,9 @@ async function add(given, dropped = [], sorted = null) {
     try {
         for (const [at, file] of usable.entries()) {
             say(`Adding ${at + 1} of ${usable.length}…`);
-            await keep(nameOf(file), new Uint8Array(await file.arrayBuffer()));
+            await keep(keptAs.get(file), new Uint8Array(await file.arrayBuffer()));
             if (!native) {
-                keeper.forgetFacts([nameOf(file)]);
+                keeper.forgetFacts([keptAs.get(file)]);
             }
         }
         const notes = [];
@@ -2444,6 +2502,12 @@ async function fillSettings() {
     page('system-files').replaceChildren(
         row('Disk System BIOS', has(FDS_BIOS) ? 'Found' : 'Missing: Disk System games need disksys.rom'),
         row('Apple II ROMs', `${appleFound} of ${DISK_II_ROMS.length + IIE_ROMS.apple2ee.length} found`),
+        row(
+            'Atari 7800 High Score Cartridge',
+            has(HIGH_SCORE_ROM)
+                ? 'Found: plugged in for every game'
+                : 'Not added: it keeps high scores, for the games that know of it',
+        ),
     );
     if (native) {
         fillFolders();
