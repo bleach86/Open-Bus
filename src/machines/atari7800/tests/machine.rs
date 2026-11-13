@@ -236,4 +236,22 @@ mod tests {
         }
         assert_eq!(cpu.memory.read(0x2410), 160, "DLIs in 10 frames");
     }
+
+    #[test]
+    fn a_cartridges_pokey_is_at_4000_0450_or_0800_as_its_put() {
+        for (place, random) in [(0x4000, 0x400A), (0x0450, 0x045A), (0x0800, 0x0F0A)] {
+            let cartridge = Cartridge::new(&[0xEA; 0x4000], Kind::Plain, Some(place)).unwrap();
+            let mut cpu = CPU::with_bus(Atari7800::new(cartridge, Region::Ntsc));
+            let atari = &mut cpu.memory;
+            atari.write(random | 0x0F, 0x03); // SKCTL: out of reset
+            let first = atari.read(random);
+            for _ in 0..100 {
+                atari.tick();
+            }
+            assert_ne!(atari.read(random), first, "${place:04X}: RANDOM still");
+        }
+        // No POKEY: 48K of ROM there.
+        let mut cpu = console_of(&[0xEA; 0xC000]);
+        assert_eq!(cpu.memory.read(0x400A), 0xEA, "no POKEY: the ROM");
+    }
 }

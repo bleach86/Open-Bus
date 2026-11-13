@@ -7,6 +7,7 @@ pub mod cpu;
 /// The chips the machines are made of, besides the CPU.
 pub mod chips {
     pub mod ay38910;
+    pub mod pokey;
     pub mod riot6532;
     pub mod tia_sound;
     pub mod via6522;
@@ -14,6 +15,7 @@ pub mod chips {
     #[cfg(test)]
     mod tests {
         mod ay38910;
+        mod pokey;
         mod riot6532;
         mod via6522;
     }

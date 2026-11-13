@@ -1,6 +1,6 @@
 //! The Atari 7800: its CPU, a 6502 ("Sally") at 1.79 MHz; MARIA, its
 //! graphics (maria.rs); the TIA, for its sound and its controllers' buttons;
-//! the RIOT, its timer, joysticks and switches; 4K of RAM; and the
+//! a POKEY, if the cartridge has one, its sound with the TIA's; the RIOT, its timer, joysticks and switches; 4K of RAM; and the
 //! cartridge. As a7800 has it, the BIOS left out, as it only checks the
 //! cartridge's signature: the cartridge starts it, INPTCTRL unlocked.
 //!
@@ -39,6 +39,7 @@ mod tests {
     mod maria;
 }
 
+use crate::chips::pokey::Pokey;
 use crate::chips::riot6532::Riot;
 use crate::chips::tia_sound;
 use crate::cpu::bus::Bus;
@@ -138,6 +139,8 @@ pub struct Atari7800 {
     pub riot: Riot,
     pub tia: tia_sound::Sound,
     pub cartridge: Cartridge,
+    /// The cartridge's POKEY, if it has one, clocked with the CPU.
+    pub pokey: Option<Pokey>,
     /// $1800 to $1FFF, then $2000 to $27FF.
     #[serde(with = "save_state::bytes")]
     ram: [u8; 0x1000],
@@ -200,7 +203,9 @@ impl Atari7800 {
     /// A console of `region` with `cartridge` in it, its RAM all 0s.
     pub fn new(cartridge: Cartridge, region: Region) -> Atari7800 {
         let picture = WIDTH * height(region);
+        let pokey = cartridge.pokey.map(|_| Pokey::new());
         let mut atari = Atari7800 {
+            pokey,
             maria: Maria::new(),
             riot: Riot::new(vec![0; 128], 0),
             tia: tia_sound::Sound::default(),
@@ -299,6 +304,17 @@ impl Atari7800 {
         }
     }
 
+    /// Whether `addr` is the cartridge's POKEY's: $4000 to $7FFF, $0450 to
+    /// $045F, or $0800 to $0FFF, as it's put.
+    fn pokey_at(&self, addr: u16) -> bool {
+        match self.cartridge.pokey {
+            Some(0x4000) => (0x4000..0x8000).contains(&addr),
+            Some(0x0450) => (0x0450..0x0460).contains(&addr),
+            Some(0x0800) => (0x0800..0x1000).contains(&addr),
+            _ => false,
+        }
+    }
+
     /// The RIOT's port B written: each port's one button mode, as its pin 6
     /// is driven.
     fn port_b_written(&mut self) {
@@ -359,10 +375,14 @@ impl Atari7800 {
             self.sound_clocks -= CYCLE;
             self.tia.tick();
             self.tia.tick();
+            if let Some(pokey) = &mut self.pokey {
+                pokey.clock();
+            }
             let Some(sound) = &mut self.sound else {
                 continue;
             };
-            let output = sound.low_pass.filter(self.tia.output());
+            let pokey = self.pokey.as_ref().map_or(0.0, Pokey::output);
+            let output = sound.low_pass.filter((self.tia.output() + pokey).min(1.0));
             if let Some([sample]) = sound.sampler.cycle([output]) {
                 let sample = sound.high_pass.filter(sample);
                 self.samples.extend([sample * VOLUME; 2]);
@@ -466,7 +486,10 @@ impl Bus for Atari7800 {
                 self.stolen += SLOW_CYCLE - CYCLE;
                 self.riot.read(addr)
             }
-            0x4000.. if self.cartridge.pokey_at(addr) => 0,
+            _ if self.pokey_at(addr) => self
+                .pokey
+                .as_ref()
+                .map_or(0xFF, |pokey| pokey.read(addr as u8)),
             _ => peek(&self.ram, &self.riot, &self.cartridge, addr),
         }
     }
@@ -488,6 +511,11 @@ impl Bus for Atari7800 {
                 self.riot.write(addr, value);
                 if is_riot(addr) && addr & 0x06 == 0x02 {
                     self.port_b_written();
+                }
+            }
+            _ if self.pokey_at(addr) => {
+                if let Some(pokey) = &mut self.pokey {
+                    pokey.write(addr as u8, value);
                 }
             }
             0x0040..=0x00FF | 0x0140..=0x01FF => self.ram[0x800 + addr as usize] = value,
