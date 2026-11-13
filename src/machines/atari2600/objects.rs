@@ -40,6 +40,7 @@ const PIXELS: u8 = 160;
 /// Which copy a player or missile starts drawing at its counter `counter`,
 /// with NUSIZ's low three bits `nusiz`, if it starts one: 1, the main, at
 /// 156; 2 and 3, the others, 16, 32 or 64 clocks after the line's start.
+#[inline(always)]
 fn decode(nusiz: u8, counter: u8) -> u8 {
     match (nusiz, counter) {
         (_, 156) => 1,
@@ -258,6 +259,7 @@ impl Player {
 
     /// A clock of the blank: what it draws latched, its counter not
     /// counting.
+    #[inline(always)]
     pub fn tick_in_blank(&mut self) {
         self.latch();
     }
@@ -266,6 +268,7 @@ impl Player {
         self.latch();
     }
 
+    #[inline(always)]
     fn latch(&mut self) {
         self.collision = if !self.rendering || self.render_counter < self.trip_point {
             self.silent
@@ -278,6 +281,7 @@ impl Player {
 
     /// A clock of the picture: what it draws, then its counter counted, a
     /// copy started where it decodes one.
+    #[inline(always)]
     pub fn tick(&mut self) {
         self.latch();
         let decoded = decode(self.nusiz, self.counter);
@@ -314,6 +318,7 @@ impl Player {
         }
     }
 
+    #[inline(always)]
     pub fn is_on(&self) -> bool {
         self.collision & VISIBLE != 0
     }
@@ -461,6 +466,7 @@ impl Missile {
         }
     }
 
+    #[inline(always)]
     pub fn tick_in_blank(&mut self) {
         self.visible = self.rendering && self.render_counter >= 0;
         self.latch();
@@ -471,6 +477,7 @@ impl Missile {
         self.latch();
     }
 
+    #[inline(always)]
     fn latch(&mut self) {
         self.collision = if self.visible && self.enabled {
             DRAWING
@@ -480,6 +487,7 @@ impl Missile {
     }
 
     /// A clock of the picture, `player` its own, which RESMP locks it to.
+    #[inline(always)]
     pub fn tick_with(&mut self, hctr: u8, player: &Player) {
         self.tick(hctr, true);
         if self.resmp && player.at_main_copys_fifth_bit() {
@@ -488,6 +496,7 @@ impl Missile {
     }
 
     /// A clock: a `regular` one, or HMOVE's in the blank.
+    #[inline(always)]
     fn tick(&mut self, hctr: u8, regular: bool) {
         let starfield = self.moving && regular;
         let phase = (hctr as u16 + 1) % 4;
@@ -532,6 +541,7 @@ impl Missile {
         }
     }
 
+    #[inline(always)]
     pub fn is_on(&self) -> bool {
         self.collision & VISIBLE != 0
     }
@@ -626,6 +636,7 @@ impl Ball {
         }
     }
 
+    #[inline(always)]
     pub fn tick_in_blank(&mut self) {
         self.signal = self.rendering && self.render_counter >= 0;
         self.latch();
@@ -636,6 +647,7 @@ impl Ball {
         self.latch();
     }
 
+    #[inline(always)]
     fn latch(&mut self) {
         self.collision = if self.signal && self.enabled {
             DRAWING
@@ -645,6 +657,7 @@ impl Ball {
     }
 
     /// A clock: a `regular` one, or HMOVE's in the blank.
+    #[inline(always)]
     pub fn tick(&mut self, regular: bool) {
         self.signal = self.rendering && self.render_counter >= 0;
         self.latch();
@@ -678,6 +691,7 @@ impl Ball {
         }
     }
 
+    #[inline(always)]
     pub fn is_on(&self) -> bool {
         self.collision & VISIBLE != 0
     }
@@ -767,6 +781,7 @@ impl Playfield {
     }
 
     /// Picture clock `x`: a bit of it every 4 clocks.
+    #[inline(always)]
     pub fn tick(&mut self, x: u32) {
         self.x = x as u8;
         if x == PIXELS as u32 / 2 - 1 || x == 0 {
@@ -788,6 +803,7 @@ impl Playfield {
         self.collision = if bit { DRAWING } else { self.silent };
     }
 
+    #[inline(always)]
     pub fn is_on(&self) -> bool {
         self.collision & VISIBLE != 0
     }

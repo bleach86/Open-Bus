@@ -121,11 +121,13 @@ impl Queue {
         self.slots[(self.index + delay) % 8].push((register, value));
     }
 
-    /// This clock's writes, the queue moved on a clock.
-    fn take(&mut self) -> Vec<(u8, u8)> {
-        let due = std::mem::take(&mut self.slots[self.index]);
+    /// This clock's writes, if there are any, the queue moved on a clock:
+    /// most clocks have none, and are quickly done.
+    #[inline(always)]
+    fn take(&mut self) -> Option<Vec<(u8, u8)>> {
+        let slot = &mut self.slots[self.index];
         self.index = (self.index + 1) % 8;
-        due
+        (!slot.is_empty()).then(|| std::mem::take(slot))
     }
 }
 
@@ -433,8 +435,10 @@ impl Tia {
     /// collisions, and the sound.
     pub fn clock(&mut self) {
         self.clocks += 1;
-        for (register, value) in self.queue.take() {
-            self.delayed_write(register, value);
+        if let Some(due) = self.queue.take() {
+            for (register, value) in due {
+                self.delayed_write(register, value);
+            }
         }
         self.tick_movement();
         if self.blank {
@@ -523,8 +527,12 @@ impl Tia {
         let [p0, p1] = &self.players;
         let [m0, m1] = &self.missiles;
         let (pf, bl) = (&self.playfield, &self.ball);
+        let drawn =
+            p0.is_on() || p1.is_on() || m0.is_on() || m1.is_on() || pf.is_on() || bl.is_on();
         let color = if self.frame.vblank {
             0
+        } else if !drawn {
+            self.background
         } else {
             match self.priority {
                 Priority::Playfield => [

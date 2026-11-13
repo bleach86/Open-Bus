@@ -108,6 +108,21 @@ pub struct Sound {
 /// The mixing resistor's, of the volume steps': how far the louder the
 /// sum is, the less each step adds.
 const MIXING: f32 = 30.0;
+/// The loudest sum, both channels at 15.
+const MOST: f32 = 30.0;
+
+/// The two mixed, each sum of their volumes' 0 to 30: worked out once, not
+/// each cycle.
+const MIXED: [f32; 31] = {
+    let mut mixed = [0.0; 31];
+    let mut n = 0;
+    while n < 31 {
+        let sum = n as f32;
+        mixed[n] = sum / MOST * (MIXING + MOST) / (MIXING + sum);
+        n += 1;
+    }
+    mixed
+};
 
 impl Sound {
     /// A color clock: the channels clocked at their phases.
@@ -123,8 +138,6 @@ impl Sound {
 
     /// The two mixed, 0 to 1.
     pub fn output(&self) -> f32 {
-        let sum = (self.channels[0].volume() + self.channels[1].volume()) as f32;
-        let most = 30.0;
-        sum / most * (MIXING + most) / (MIXING + sum)
+        MIXED[(self.channels[0].volume() + self.channels[1].volume()) as usize]
     }
 }
