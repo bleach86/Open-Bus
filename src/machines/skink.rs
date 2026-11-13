@@ -9,14 +9,20 @@
 //! | `$8000-$87CF` | the screen's characters, a row of 80 at a time |
 //! | `$8800-$8FCF` | their colours: foreground low, background high |
 //! | `$9000-$90FF` | I/O                                        |
-//! | `$9100-$FFFF` | RAM: the boot image at its top, loaded as it's turned on |
+//! | `$9100-$91FF` | RAM                                        |
+//! | `$9200-$93FF` | the disk's sector, as it's chosen          |
+//! | `$9400-$FFFF` | RAM: the boot image at its top, loaded as it's turned on |
 //!
 //! Its I/O: `$9000`, the interrupts: bit 7, a frame's begun (60 a second),
 //! a write clearing it; `$9001`, which are on: bit 7, the frame's.
 //! `$9010-$901F`, the VIA; `$9020`, a key: the next typed, as ASCII (and
 //! GeckOS's codes for the arrows, $80 to $83), 0 if there's none, a read
-//! taking it; `$9021`, bit 7 a key waiting; `$9030-$9033`, the ACIA. What
-//! else there is reads $FF. Its keyboard has a key to switch consoles,
+//! taking it; `$9021`, bit 7 a key waiting; `$9030-$9033`, the ACIA;
+//! `$9040`, the disk's drive (0 its one), and `$9041-$9043`, its sector,
+//! low byte first: that sector, its 512 bytes, at `$9200`, read and written
+//! there (as GeckOS's RAM disk driver has its disk). Without a disk, or
+//! past its end, it reads $FF and takes nothing. What else there is reads
+//! $FF. Its keyboard has a key to switch consoles,
 //! $F1, as GeckOS has two: F7, and in the menu.
 //!
 //! A character's bit 7 shows it inverse; its colour's 16, as GeckOS
@@ -24,7 +30,9 @@
 //! ours, 8 by 8, the host's.
 //!
 //! Its boot image: a ROM image, in RAM to the top of memory, its RESET
-//! vector where it starts.
+//! vector where it starts. Its disk: an image of one, a FAT floppy's, say,
+//! not a save state's: written back to its file a second after it's
+//! written, and as it's put away.
 
 #[cfg(test)]
 mod tests {
@@ -46,7 +54,7 @@ use crate::host::window::Window;
 use crate::host::zip::crc32;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const CLOCK_HZ: u32 = 2_000_000;
 /// A frame's cycles, 60 frames a second.
@@ -70,6 +78,12 @@ const VIA: u16 = 0x9010;
 const KEY: u16 = 0x9020;
 const KEY_WAITING: u16 = 0x9021;
 const ACIA: u16 = 0x9030;
+const DISK: u16 = 0x9040;
+/// The disk's window, and its sectors' size.
+const WINDOW: u16 = 0x9200;
+const SECTOR: usize = 512;
+/// The lowest a boot image starts, above the disk's window.
+const IMAGE_LOWEST: usize = 0x9400;
 /// The interrupts' bit for a frame.
 const FRAME: u8 = 0x80;
 /// The keys held to be read, at most.
@@ -100,6 +114,11 @@ pub struct Skink {
     cycles: u32,
     pub frames: u64,
     frame_ended: bool,
+    /// The disk's drive and sector, as they're written.
+    disk_registers: [u8; 4],
+    /// Its disk, if it has one: not a state's.
+    #[serde(skip)]
+    pub disk: Option<Disk>,
     #[serde(skip)]
     keys: VecDeque<u8>,
     #[serde(skip)]
@@ -119,11 +138,11 @@ impl Skink {
     /// RAM 0s, the colours light grey on black.
     pub fn new(image: &[u8]) -> Result<Skink, String> {
         let top = 0x10000 - image.len();
-        if image.is_empty() || top < 0x9100 {
+        if image.is_empty() || top < IMAGE_LOWEST {
             return Err(format!(
-                "a boot image of {} bytes: it's to be $9100 to $FFFF, at most {}",
+                "a boot image of {} bytes: it's to be $9400 to $FFFF, at most {}",
                 image.len(),
-                0x10000 - 0x9100
+                0x10000 - IMAGE_LOWEST
             ));
         }
         let mut ram = vec![0; 0x10000];
@@ -138,6 +157,8 @@ impl Skink {
             cycles: 0,
             frames: 0,
             frame_ended: false,
+            disk_registers: [0; 4],
+            disk: None,
             keys: VecDeque::new(),
             reset_held: false,
             picture: Vec::new(),
@@ -145,6 +166,16 @@ impl Skink {
             image_crc: crc32(image),
             samples: Vec::new(),
         })
+    }
+
+    /// Where in the disk's image `addr`, in its window, is: if it has one,
+    /// the drive's its one, and the sector's in it.
+    fn in_disk(&self, addr: u16) -> Option<usize> {
+        let [drive, sector @ ..] = self.disk_registers;
+        let sector = u32::from_le_bytes([sector[0], sector[1], sector[2], 0]) as usize;
+        let at = sector * SECTOR + (addr - WINDOW) as usize;
+        let disk = self.disk.as_ref()?;
+        (drive == 0 && at < disk.image.len()).then_some(at)
     }
 
     /// A key typed: as ASCII, or GeckOS's code for an arrow; dropped if
@@ -190,7 +221,16 @@ impl Bus for Skink {
                 }
             }
             ACIA..=0x9033 => self.acia.read(addr as u8 & 3),
+            DISK..=0x9043 => self.disk_registers[(addr - DISK) as usize],
             _ if is_io(addr) => 0xFF,
+            WINDOW..=0x93FF => match self.in_disk(addr) {
+                Some(at) => {
+                    let disk = self.disk.as_mut().unwrap();
+                    disk.used = true;
+                    disk.image[at]
+                }
+                None => 0xFF,
+            },
             _ => self.ram[addr as usize],
         }
     }
@@ -201,7 +241,15 @@ impl Bus for Skink {
             INTERRUPTS_ON => self.interrupts_on = value,
             VIA..=0x901F => self.via.write(addr as u8 & 0x0F, value),
             ACIA..=0x9033 => self.acia.write(addr as u8 & 3, value),
+            DISK..=0x9043 => self.disk_registers[(addr - DISK) as usize] = value,
             _ if is_io(addr) => {}
+            WINDOW..=0x93FF => {
+                if let Some(at) = self.in_disk(addr) {
+                    let disk = self.disk.as_mut().unwrap();
+                    disk.image[at] = value;
+                    (disk.used, disk.written) = (true, true);
+                }
+            }
             _ => self.ram[addr as usize] = value,
         }
     }
@@ -337,6 +385,24 @@ impl Machine for Skink {
         self.reset_held = held;
     }
 
+    /// The disk's been read or written since it was last asked.
+    fn light(&mut self) -> bool {
+        self.disk
+            .as_mut()
+            .is_some_and(|disk| std::mem::take(&mut disk.used))
+    }
+
+    /// The disk written back to its file, a second after it's written, and
+    /// as it's put away.
+    fn keep_saved(&mut self, closing: bool) {
+        if !closing && self.frames % 60 != 0 {
+            return;
+        }
+        if let Some(disk) = &mut self.disk {
+            disk.save();
+        }
+    }
+
     fn identity(&self) -> String {
         format!("Skink, image {:08X}", self.image_crc)
     }
@@ -350,14 +416,51 @@ impl Machine for Skink {
         self.acia.incoming = take(&mut running.acia.incoming);
         self.acia.outgoing = take(&mut running.acia.outgoing);
         self.acia.connected = running.acia.connected;
+        self.disk = running.disk.take();
     }
 }
 
-/// Skink with the boot image at `image`, turned on.
-pub fn build(image: &str) -> Result<CPU<Skink>, String> {
+/// A disk: its image, the file it's written back to, if any; whether
+/// it's been written since it was, and read or written since it was asked.
+pub struct Disk {
+    pub image: Vec<u8>,
+    file: Option<PathBuf>,
+    written: bool,
+    used: bool,
+}
+
+impl Disk {
+    /// One of `image`, written back to `file`, if there's one.
+    pub fn new(image: Vec<u8>, file: Option<PathBuf>) -> Disk {
+        Disk {
+            image,
+            file,
+            written: false,
+            used: false,
+        }
+    }
+
+    /// Written back to its file, if it's been written since it was.
+    fn save(&mut self) {
+        if let Some(file) = &self.file
+            && std::mem::take(&mut self.written)
+        {
+            crate::host::files::save_later(file, self.image.clone());
+        }
+    }
+}
+
+/// Skink with the boot image at `image`, and the disk at `disk` if
+/// there's one, turned on.
+pub fn build(image: &str, disk: Option<&str>) -> Result<CPU<Skink>, String> {
     let path = Path::new(image);
     let bytes = crate::host::files::read(path).map_err(|e| format!("{image}: {e}"))?;
     let mut skink = Skink::new(&bytes).map_err(|e| format!("{image}: {e}"))?;
+    if let Some(disk) = disk {
+        let file = Path::new(disk);
+        let bytes = crate::host::files::read(file).map_err(|e| format!("{disk}: {e}"))?;
+        skink.disk = Some(Disk::new(bytes, Some(file.to_path_buf())));
+    }
     skink.name = path
         .file_stem()
         .map_or(String::new(), |name| name.to_string_lossy().into_owned());
@@ -376,8 +479,8 @@ pub fn size() -> (u32, u32) {
 
 /// Skink as `build` has it, run in a window, `fullscreen` or not.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run(image: &str, fullscreen: bool) {
-    let cpu = build(image).unwrap_or_else(|e| panic!("{e}"));
+pub fn run(image: &str, disk: Option<&str>, fullscreen: bool) {
+    let cpu = build(image, disk).unwrap_or_else(|e| panic!("{e}"));
     let title = cpu.memory.title();
     let window = Window::new(&title, WIDTH, HEIGHT, size(), fullscreen);
     Host::new(cpu, Box::new(window), save_state::path(Path::new(image))).run();

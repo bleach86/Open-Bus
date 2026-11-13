@@ -9,7 +9,7 @@ mod tests {
     use crate::cpu::bus::Bus;
     use crate::host::display::Key;
     use crate::host::machine::Machine;
-    use crate::machines::skink::{self, CLOCK_HZ, COLOURS, PALETTE, SCREEN, Skink, WIDTH};
+    use crate::machines::skink::{self, CLOCK_HZ, COLOURS, Disk, PALETTE, SCREEN, Skink, WIDTH};
     use std::path::Path;
 
     /// Skink running the test's boot image, if it's been built.
@@ -19,7 +19,7 @@ mod tests {
             eprintln!("skink test: no boot image; run make -C roms");
             return None;
         }
-        Some(skink::build(&image.to_string_lossy()).unwrap())
+        Some(skink::build(&image.to_string_lossy(), None).unwrap())
     }
 
     /// A 16-bit count at `addr`.
@@ -46,8 +46,8 @@ mod tests {
             "the colours light grey on black"
         );
         assert!(
-            Skink::new(&vec![0; 0x10000 - 0x9100 + 1]).is_err(),
-            "into the I/O page"
+            Skink::new(&vec![0; 0x10000 - 0x9400 + 1]).is_err(),
+            "into the disk's window"
         );
         assert!(Skink::new(&[]).is_err());
     }
@@ -110,5 +110,42 @@ mod tests {
         cpu.memory.acia.incoming.extend(b"hi");
         cpu.execute(CLOCK_HZ / 100);
         assert_eq!(cpu.memory.acia.outgoing, b"hi");
+    }
+
+    #[test]
+    fn its_disks_sector_is_at_9200_as_its_number_says() {
+        let mut skink = Skink::new(&[0; 6]).unwrap();
+        assert_eq!(skink.read(0x9200), 0xFF, "no disk");
+        // 3 sectors, each byte its sector's number.
+        let image = (0..3 * 512).map(|at| (at / 512) as u8).collect();
+        skink.disk = Some(Disk::new(image, None));
+        skink.write(0x9041, 2);
+        assert_eq!((skink.read(0x9200), skink.read(0x93FF)), (2, 2));
+        skink.write(0x9201, 0x55);
+        skink.write(0x9041, 0);
+        assert_eq!(skink.read(0x9201), 0);
+        skink.write(0x9041, 2);
+        assert_eq!(skink.read(0x9201), 0x55, "written to the disk");
+        assert_eq!(skink.disk.as_ref().unwrap().image[2 * 512 + 1], 0x55);
+        assert!(skink.light(), "used");
+        assert!(!skink.light(), "and asked");
+        skink.write(0x9041, 3);
+        assert_eq!(skink.read(0x9200), 0xFF, "past its end");
+        skink.write(0x9041, 0);
+        skink.write(0x9040, 1);
+        assert_eq!(skink.read(0x9200), 0xFF, "a drive it hasn't");
+        assert_eq!(skink.read(0x9040), 1, "its drive, as written");
+    }
+
+    #[test]
+    fn its_sector_number_is_3_bytes_low_first() {
+        let mut skink = Skink::new(&[0; 6]).unwrap();
+        let mut image = vec![0; 0x10101 * 512 + 512];
+        image[0x10101 * 512] = 0xAB;
+        skink.disk = Some(Disk::new(image, None));
+        for (addr, byte) in [(0x9041, 0x01), (0x9042, 0x01), (0x9043, 0x01)] {
+            skink.write(addr, byte);
+        }
+        assert_eq!(skink.read(0x9200), 0xAB);
     }
 }
