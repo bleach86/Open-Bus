@@ -6,6 +6,7 @@ pub mod cpu;
 
 /// The chips the machines are made of, besides the CPU.
 pub mod chips {
+    pub mod acia6551;
     pub mod ay38910;
     pub mod pokey;
     pub mod riot6532;
@@ -14,6 +15,7 @@ pub mod chips {
 
     #[cfg(test)]
     mod tests {
+        mod acia6551;
         mod ay38910;
         mod pokey;
         mod riot6532;
@@ -71,6 +73,7 @@ pub mod machines {
     pub mod light_gun;
     pub mod nes;
     pub mod region;
+    pub mod skink;
 }
 
 /// What a web page calls.
