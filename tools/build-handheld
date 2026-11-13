@@ -1,0 +1,34 @@
+#!/bin/sh
+# Build the emulator for a 64-bit ARM Linux handheld, the RG351MP's
+# Cortex-A35, here, not on it: in a Debian 13 container (Docker's) with
+# its cross compiler and arm64 SDL2 (tools/handheld/Dockerfile), with
+# this computer's Rust and its aarch64-unknown-linux-gnu target
+# (`rustup target add aarch64-unknown-linux-gnu`). Into
+# target/aarch64-unknown-linux-gnu/release/cpu_emu.
+#
+# With --install, it's then copied to the handheld at $HANDHELD (as
+# user@address, with sudo there) and installed as /usr/local/bin/cpu_emu.
+set -e
+cd "$(dirname "$0")/.."
+image=open-bus-handheld
+docker build -q -t "$image" tools/handheld > /dev/null
+docker run --rm \
+    -u "$(id -u):$(id -g)" \
+    -e HOME="$HOME" \
+    -e PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+    -e CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+    -e RUSTFLAGS="-C target-cpu=cortex-a35" \
+    -v "$HOME/.cargo:$HOME/.cargo" \
+    -v "$HOME/.rustup:$HOME/.rustup" \
+    -v "$PWD:$PWD" \
+    -w "$PWD" \
+    "$image" \
+    cargo build --release --target aarch64-unknown-linux-gnu --bin cpu_emu
+built=target/aarch64-unknown-linux-gnu/release/cpu_emu
+echo "built $built"
+if [ "$1" = "--install" ]; then
+    : "${HANDHELD:?set HANDHELD to the handheld, as user@address}"
+    scp -q "$built" "$HANDHELD:/tmp/cpu_emu"
+    ssh "$HANDHELD" 'sudo install -m 755 /tmp/cpu_emu /usr/local/bin/cpu_emu && rm /tmp/cpu_emu'
+    echo "installed on $HANDHELD"
+fi
