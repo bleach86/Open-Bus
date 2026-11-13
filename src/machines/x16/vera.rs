@@ -16,9 +16,10 @@
 //!
 //! A line's drawn as the one before it's scanned out, from its layers'
 //! registers as they were then: here, as it ends, but for its vertical
-//! scroll, as it is. Its sprites aren't drawn yet, nor are its FX's ways of
-//! writing (its registers, DCSEL 2 to 6, hold what's written, and that's
-//! all); NTSC and RGB are shown as VGA. Its sound, the PSG and PCM, isn't
+//! scroll, as it is; its sprites as their attributes are then, as many as
+//! its renderer has time for, their collisions into ISR as line 480 begins.
+//! Its FX's ways of writing aren't here yet (its registers, DCSEL 2 to 6,
+//! hold what's written, and that's all); NTSC and RGB are shown as VGA. Its sound, the PSG and PCM, isn't
 //! here either: the FIFO takes nothing and reads empty. Its SPI port has no
 //! card on it.
 
@@ -35,10 +36,15 @@ const VRAM_SIZE: usize = 0x20000;
 const PALETTE: usize = 0x1FA00;
 const SPRITES: usize = 0x1FC00;
 
-/// ISR's (and IEN's) bits.
+/// ISR's (and IEN's) bits; ISR's top 4, the sprites' collisions.
 const VSYNC: u8 = 0x01;
 const LINE: u8 = 0x02;
+const SPRCOL: u8 = 0x04;
 const AFLOW: u8 = 0x08;
+
+/// The sprite renderer's clocks a line, as x16emu counts them: one a
+/// sprite looked at, one a 32 bits fetched, one a dot drawn.
+const SPRITE_BUDGET: u32 = 800;
 
 /// DC_VER0 to 3, read where a register's only written: "V", 47.0.2.
 const VERSION: [u8; 4] = [b'V', 47, 0, 2];
@@ -139,6 +145,52 @@ impl Layer {
     }
 }
 
+/// A sprite's attributes, its 8 bytes at `$1FC00` on.
+struct Sprite {
+    address: usize,
+    /// 8 bits a dot, not 4.
+    bytes: bool,
+    /// Its place, -its size up to 1023 less it.
+    x: i32,
+    y: i32,
+    hflip: bool,
+    vflip: bool,
+    /// Its Z-depth, 0 (off) to 3, and its collision mask, bits 7 to 4.
+    z: u8,
+    mask: u8,
+    /// Its width and height as powers of 2.
+    width: u32,
+    height: u32,
+    offset: u8,
+}
+
+impl Sprite {
+    fn of(a: &[u8]) -> Sprite {
+        let (width, height) = (3 + (a[7] >> 4 & 3) as u32, 3 + (a[7] >> 6) as u32);
+        let place = |low: u8, high: u8, size: u32| {
+            let at = low as i32 | ((high & 3) as i32) << 8;
+            if at >= 0x400 - (1 << size) {
+                at - 0x400
+            } else {
+                at
+            }
+        };
+        Sprite {
+            address: (a[0] as usize) << 5 | ((a[1] & 0x0F) as usize) << 13,
+            bytes: a[1] & 0x80 != 0,
+            x: place(a[2], a[3], width),
+            y: place(a[4], a[5], height),
+            hflip: a[6] & 1 != 0,
+            vflip: a[6] & 2 != 0,
+            z: a[6] >> 2 & 3,
+            mask: a[6] & 0xF0,
+            width,
+            height,
+            offset: (a[7] & 0x0F) << 4,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct Vera {
     vram: Vec<u8>,
@@ -172,6 +224,8 @@ pub struct Vera {
     vscale_before: u8,
     /// The line of the picture shown, 16.16, as VSCALE steps it.
     picture_line: u32,
+    /// The sprites' collisions this frame, bits 7 to 4.
+    collisions: u8,
     frame_ended: bool,
     #[serde(skip)]
     pub picture: Vec<u32>,
@@ -208,6 +262,7 @@ impl Vera {
             layers_before: [[0; 7]; 2],
             vscale_before: 0,
             picture_line: 0,
+            collisions: 0,
             frame_ended: false,
             picture: vec![0; WIDTH * HEIGHT],
             leave_out: false,
@@ -242,6 +297,7 @@ impl Vera {
             self.palette[n * 2..n * 2 + 2].copy_from_slice(&colour.to_le_bytes());
         }
         (self.line, self.cycles, self.picture_line) = (0, 0, 0);
+        self.collisions = 0;
     }
 
     /// The byte at `address` in video RAM.
@@ -368,7 +424,9 @@ impl Vera {
                 self.irq_line = self.irq_line & 0xFF | ((value >> 7) as u16) << 8;
                 self.ien = value & 0x0F;
             }
-            0x07 => self.isr &= !value,
+            // Its collisions are read only, as the docs have them (x16emu
+            // clears them too).
+            0x07 => self.isr &= !(value & 0x0F),
             0x08 => self.irq_line = self.irq_line & 0x100 | value as u16,
             reg @ 0x09..=0x0C => {
                 let n = (reg - 9) as usize;
@@ -422,7 +480,11 @@ impl Vera {
             self.frame_ended = true;
         }
         if self.line == HEIGHT as u16 {
-            self.isr |= VSYNC;
+            let collisions = std::mem::take(&mut self.collisions);
+            self.isr = self.isr & 0x0F | collisions | VSYNC;
+            if collisions != 0 {
+                self.isr |= SPRCOL;
+            }
         }
         if self.line == self.irq_line {
             self.isr |= LINE;
@@ -445,19 +507,38 @@ impl Vera {
         if self.picture.len() != WIDTH * HEIGHT {
             self.picture = vec![0; WIDTH * HEIGHT];
         }
-        if !self.leave_out {
-            self.draw(y as usize, vstart as usize, vstop as usize);
-        }
-    }
-
-    /// The picture's line `y` drawn: the layers composed, scaled, inside
-    /// the border.
-    fn draw(&mut self, y: usize, vstart: usize, vstop: usize) {
-        let [video, hscale, _, border, hstart, hstop, ..] = self.composer;
         let mut picture_y = self.picture_line >> 16;
         if picture_y >= HEIGHT as u32 {
             picture_y = HEIGHT as u32 - (y as u32 & 1);
         }
+        // Its sprites, drawn as it's left out too, for their collisions.
+        let mut sprites = ([0u8; WIDTH], [0u8; WIDTH]);
+        if self.composer[0] & 0x40 != 0 {
+            self.sprite_line(picture_y, &mut sprites);
+        }
+        if !self.leave_out {
+            self.draw(
+                y as usize,
+                picture_y,
+                &sprites,
+                vstart as usize,
+                vstop as usize,
+            );
+        }
+    }
+
+    /// The picture's line `y`, `picture_y` of what's shown, drawn: its
+    /// sprites (their colours and Z-depths) and layers composed, scaled,
+    /// inside the border.
+    fn draw(
+        &mut self,
+        y: usize,
+        picture_y: u32,
+        (sprites, depths): &([u8; WIDTH], [u8; WIDTH]),
+        vstart: usize,
+        vstop: usize,
+    ) {
+        let [video, hscale, _, border, hstart, hstop, ..] = self.composer;
         let mut layers = [[0u8; WIDTH]; 2];
         for (n, line) in layers.iter_mut().enumerate() {
             if video & (0x10 << n) != 0 {
@@ -474,10 +555,16 @@ impl Vera {
             for index in indexes.iter_mut().take(hstop).skip(hstart) {
                 let x = (x_fp >> 16) as usize;
                 *index = if x < WIDTH {
-                    match layers[1][x] {
-                        0 => layers[0][x],
-                        colour => colour,
-                    }
+                    let (sprite, l0, l1) = (sprites[x], layers[0][x], layers[1][x]);
+                    // Bottom to top: the sprite at Z 1, layer 0, the
+                    // sprite at Z 2, layer 1, the sprite at Z 3.
+                    let order = match depths[x] {
+                        3 => [sprite, l1, l0],
+                        2 => [l1, sprite, l0],
+                        1 => [l1, l0, sprite],
+                        _ => [l1, l0, 0],
+                    };
+                    order.into_iter().find(|&c| c != 0).unwrap_or(0)
                 } else {
                     0
                 };
@@ -488,6 +575,71 @@ impl Vera {
         let line = &mut self.picture[y * WIDTH..(y + 1) * WIDTH];
         for (pixel, &index) in line.iter_mut().zip(indexes.iter()) {
             *pixel = colours[index as usize];
+        }
+    }
+
+    /// The sprites' line `y` of the picture: each dot's colour, 0 where
+    /// it's clear, and Z-depth. Lower sprites first, a dot drawn over only
+    /// by one deeper; the collisions found, those whose masks share a bit
+    /// at a dot. Its renderer stops as its clocks run out.
+    fn sprite_line(&mut self, y: u32, (colours, depths): &mut ([u8; WIDTH], [u8; WIDTH])) {
+        let mut masks = [0u8; WIDTH];
+        let mut budget = SPRITE_BUDGET;
+        let y = y as i32;
+        'sprites: for n in 0..128 {
+            budget -= 1;
+            if budget == 0 {
+                break;
+            }
+            let at = SPRITES + n * 8;
+            let sprite = Sprite::of(&self.vram[at..at + 8]);
+            let (width, height) = (1i32 << sprite.width, 1i32 << sprite.height);
+            if sprite.z == 0 || y < sprite.y || y >= sprite.y + height {
+                continue;
+            }
+            let mut row = (y - sprite.y) as usize;
+            if sprite.vflip {
+                row = height as usize - 1 - row;
+            }
+            let row_shift = sprite.width - !sprite.bytes as u32;
+            let base = sprite.address + (row << row_shift);
+            // A fetch is 32 bits: 8 dots of 4 bits, 4 of 8.
+            let fetch = if sprite.bytes { 3 } else { 7 };
+            for dx in 0..width {
+                let x = sprite.x + dx;
+                if !(0..WIDTH as i32).contains(&x) {
+                    continue;
+                }
+                if dx & fetch == 0 {
+                    budget -= 1;
+                    if budget == 0 {
+                        break 'sprites;
+                    }
+                }
+                budget -= 1;
+                if budget == 0 {
+                    break 'sprites;
+                }
+                let sx = if sprite.hflip { width - 1 - dx } else { dx } as usize;
+                let mut colour = if sprite.bytes {
+                    self.peek(base + sx)
+                } else {
+                    self.peek(base + sx / 2) >> (4 - (sx & 1) * 4) & 0x0F
+                };
+                if colour == 0 {
+                    continue;
+                }
+                let x = x as usize;
+                self.collisions |= masks[x] & sprite.mask;
+                masks[x] |= sprite.mask;
+                if sprite.z > depths[x] {
+                    if colour < 16 {
+                        colour += sprite.offset;
+                    }
+                    colours[x] = colour;
+                    depths[x] = sprite.z;
+                }
+            }
         }
     }
 

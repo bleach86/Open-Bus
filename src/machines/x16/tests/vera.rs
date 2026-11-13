@@ -1,6 +1,7 @@
 //! VERA: its ports' addresses, stepping and fetching; its palette, and
 //! RESET; its lines' time, SCANLINE, and its interrupts; a text layer and
-//! a tile layer drawn, scaled; its SPI port, no card on it.
+//! a tile layer drawn, scaled; sprites, over and under the layers, their
+//! collisions and their renderer's time; its SPI port, no card on it.
 
 #[cfg(test)]
 mod tests {
@@ -188,6 +189,125 @@ mod tests {
             (vera.picture[7], vera.picture[6], vera.picture[0]),
             (0x111111, 0x222222, 0x000000)
         );
+    }
+
+    /// Sprite `n`'s attributes: its image at `image`, 4 bits a dot or
+    /// `bytes`, at `(x, y)`; byte 6 (mask, Z, flips) and 7 (size, offset).
+    fn sprite(
+        vera: &mut Vera,
+        n: u32,
+        image: u32,
+        bytes: bool,
+        (x, y): (i32, i32),
+        six: u8,
+        seven: u8,
+    ) {
+        let (x, y) = ((x & 0x3FF) as u16, (y & 0x3FF) as u16);
+        let attributes = [
+            (image >> 5) as u8,
+            (image >> 13) as u8 | (bytes as u8) << 7,
+            x as u8,
+            (x >> 8) as u8,
+            y as u8,
+            (y >> 8) as u8,
+            six,
+            seven,
+        ];
+        poke(vera, 0x1FC00 + n * 8, &attributes);
+    }
+
+    const RED: u32 = 0x880000; // colour 2
+    const BLUE: u32 = 0x0000AA; // 6
+
+    #[test]
+    fn a_sprite_is_drawn_over_or_under_the_layers_as_its_z_depth_says() {
+        let mut vera = Vera::new();
+        // Layer 1's character cell at 0 to 7 across; a sprite of 8 by 8 in
+        // colour 2 at 4, half over the cell and half over nothing.
+        text(&mut vera);
+        poke(&mut vera, 0x2000, &[0x22; 32]);
+        vera.write(DC_VIDEO, 0x61);
+        let shown = |vera: &mut Vera, z: u8| {
+            sprite(vera, 0, 0x2000, false, (4, 0), z << 2, 0x00);
+            lines(vera, LINES as u32 * 2);
+            (
+                vera.picture[3],
+                vera.picture[4],
+                vera.picture[8],
+                vera.picture[12],
+            )
+        };
+        assert_eq!(shown(&mut vera, 3), (BLUE, RED, RED, 0), "over layer 1");
+        assert_eq!(shown(&mut vera, 2), (BLUE, BLUE, RED, 0), "under it");
+        assert_eq!(shown(&mut vera, 1), (BLUE, BLUE, RED, 0), "under it");
+        assert_eq!(shown(&mut vera, 0), (BLUE, BLUE, 0, 0), "off");
+        vera.write(DC_VIDEO, 0x21);
+        assert_eq!(shown(&mut vera, 3), (BLUE, BLUE, 0, 0), "all off");
+    }
+
+    #[test]
+    fn a_sprites_dots_are_flipped_offset_and_shown_off_its_edge() {
+        let mut vera = Vera::new();
+        vera.write(DC_VIDEO, 0x41);
+        // 4 bits a dot: its first row's first two dots, 1 and 2; palette
+        // offset 1, the default's greys, 17 and 18.
+        poke(&mut vera, 0x2000, &[0x12]);
+        let line = |vera: &mut Vera, y: usize, xs: [usize; 2]| {
+            lines(vera, LINES as u32 * 2);
+            xs.map(|x| vera.picture[y * WIDTH + x])
+        };
+        sprite(&mut vera, 0, 0x2000, false, (4, 0), 0x0C, 0x01);
+        assert_eq!(line(&mut vera, 0, [4, 5]), [0x111111, 0x222222]);
+        sprite(&mut vera, 0, 0x2000, false, (4, 0), 0x0D, 0x01);
+        assert_eq!(line(&mut vera, 0, [11, 10]), [0x111111, 0x222222], "H-flip");
+        sprite(&mut vera, 0, 0x2000, false, (4, 0), 0x0E, 0x01);
+        assert_eq!(line(&mut vera, 7, [4, 5]), [0x111111, 0x222222], "V-flip");
+        // 8 bits a dot, at -4: its dots 4 and 5 at 0 and 1. The offset's
+        // added to 1 to 15 only.
+        poke(&mut vera, 0x2000, &[0, 0, 0, 0, 0x01, 0x30, 0, 0]);
+        sprite(&mut vera, 0, 0x2000, true, (-4, 0), 0x0C, 0x01);
+        assert_eq!(line(&mut vera, 0, [0, 1]), [0x111111, 0x661111]);
+    }
+
+    #[test]
+    fn sprites_masks_that_meet_at_a_dot_are_a_collision_in_isr_at_vsync() {
+        let mut vera = Vera::new();
+        vera.write(DC_VIDEO, 0x41);
+        vera.write(IEN, 0x04);
+        poke(&mut vera, 0x2000, &[0x11; 32]);
+        // Masks $10 and $30 at the same place, $40 apart.
+        sprite(&mut vera, 0, 0x2000, false, (0, 0), 0x1C, 0x00);
+        sprite(&mut vera, 1, 0x2000, false, (4, 4), 0x3C, 0x00);
+        sprite(&mut vera, 2, 0x2000, false, (100, 0), 0x4C, 0x00);
+        lines(&mut vera, HEIGHT as u32 - 1);
+        assert_eq!(vera.read(ISR) & 0xF4, 0, "not till line 480");
+        lines(&mut vera, 1);
+        assert_eq!(vera.read(ISR) & 0xF4, 0x14, "the bit they share, SPRCOL");
+        assert!(vera.irq());
+        vera.write(ISR, 0xF4);
+        assert_eq!(vera.read(ISR) & 0xF4, 0x10, "only SPRCOL's cleared");
+        assert!(!vera.irq());
+        sprite(&mut vera, 1, 0x2000, false, (8, 8), 0x3C, 0x00);
+        lines(&mut vera, LINES as u32);
+        assert_eq!(vera.read(ISR) & 0xF4, 0, "apart by the next frame");
+    }
+
+    #[test]
+    fn the_sprite_renderer_draws_what_it_has_time_for_and_no_more() {
+        let mut vera = Vera::new();
+        vera.write(DC_VIDEO, 0x41);
+        // Ten sprites of 64 by 8, 8 bits a dot, side by side across the
+        // line, colours 1 to 10. Each one's 81 clocks: looked at, 16
+        // fetches, 64 dots. The tenth has 70 left: 14 fetches and 55 dots.
+        for n in 0..10 {
+            let image = 0x4000 + n * 0x200;
+            poke(&mut vera, image, &[n as u8 + 1; 64]);
+            sprite(&mut vera, n, image, true, (n as i32 * 64, 0), 0x0C, 0x30);
+        }
+        lines(&mut vera, LINES as u32 * 2);
+        assert_eq!(vera.picture[575], 0x664400, "the ninth's last, colour 9");
+        assert_eq!(vera.picture[576 + 54], 0xFF7777, "the tenth's 55th dot");
+        assert_eq!(vera.picture[576 + 55], 0, "and no more");
     }
 
     #[test]

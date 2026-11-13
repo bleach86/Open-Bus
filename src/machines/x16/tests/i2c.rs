@@ -1,7 +1,7 @@
 //! The I2C bus, bit-banged as the KERNAL does it: an address no device is
 //! at, NACKed; the RTC's time and RAM, written and read, its address
 //! stepping on, its time counted once it's running; the SMC's version, its
-//! keys, and what it's asked to do.
+//! keys, its mouse's packets, and what it's asked to do.
 
 #[cfg(test)]
 mod tests {
@@ -134,5 +134,27 @@ mod tests {
         let bytes = [receive(&mut i2c, true), receive(&mut i2c, false)];
         stop(&mut i2c);
         assert_eq!(bytes, [0x1F, 0x00], "the key, then no mouse packet");
+    }
+
+    #[test]
+    fn the_smc_gives_the_mouses_packets_whole_as_its_id_has_them() {
+        let mut i2c = I2c::new();
+        assert_eq!(read(&mut i2c, SMC, 0x22, 1), [3], "a wheel");
+        assert_eq!(read(&mut i2c, SMC, 0x21, 1), [0x00], "no packet");
+        // Left held, 5 right, 2 down: Y's sign set.
+        assert!(i2c.smc.mouse(0x01, 5, -2));
+        let packet = (0..4).map(|_| read(&mut i2c, SMC, 0x21, 1)[0]);
+        assert_eq!(packet.collect::<Vec<_>>(), [0x29, 0x05, 0xFE, 0x00]);
+        // Without a wheel, 3 bytes; 5 packets take its 15, and a 6th has
+        // no room.
+        write(&mut i2c, SMC, &[0x20, 0x00]);
+        for _ in 0..5 {
+            assert!(i2c.smc.mouse(0x02, -256, 255));
+        }
+        assert!(!i2c.smc.mouse(0x02, 1, 1));
+        let packet = (0..3).map(|_| read(&mut i2c, SMC, 0x42, 1)[0]);
+        assert_eq!(packet.collect::<Vec<_>>(), [0x1A, 0x00, 0xFF]);
+        write(&mut i2c, SMC, &[0x20, 0x03]);
+        assert!(i2c.smc.mouse.is_empty(), "its ID set: let go");
     }
 }

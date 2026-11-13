@@ -1,14 +1,14 @@
 //! The X16 as a whole: its memory map and banks, its vectors from ROM bank
 //! 0, its slow accesses, VIA 1's wiring to the SNES controllers and the IEC
-//! bus, the SMC's reset and power off, its keyboard's keys; and with its ROM (roms/x16/, a
-//! release's rom.bin; without one those tests say so and pass), booted to
-//! BASIC, and typed to.
+//! bus, the SMC's reset and power off, its keyboard's keys; and with its
+//! ROM (roms/x16/, a release's rom.bin; without one those tests say so and
+//! pass), booted to BASIC, typed to, and its mouse pointer shown.
 
 #[cfg(test)]
 mod tests {
     use crate::cpu::CPU;
     use crate::cpu::bus::Bus;
-    use crate::host::display::{Gamepad, Key};
+    use crate::host::display::{Gamepad, Key, Pointer};
     use crate::host::machine::{Input, Machine};
     use crate::machines::x16::i2c::Asked;
     use crate::machines::x16::{self, X16, keyboard};
@@ -42,8 +42,16 @@ mod tests {
     }
 
     fn frames(cpu: &mut CPU<X16>, frames: usize) {
+        pointed(cpu, frames, Pointer::default());
+    }
+
+    /// `frames` frames, the host's pointer as `pointer`.
+    fn pointed(cpu: &mut CPU<X16>, frames: usize, pointer: Pointer) {
         for _ in 0..frames {
-            cpu.memory.input(Input::default());
+            cpu.memory.input(Input {
+                pointer,
+                ..Input::default()
+            });
             cpu.run_frame();
         }
     }
@@ -184,6 +192,51 @@ mod tests {
         assert!(
             text.ends_with("PRINT 6*7\n 42\n\nREADY."),
             "the screen:\n{text}"
+        );
+    }
+
+    #[test]
+    fn mouse_1_shows_the_kernals_pointer_a_sprite() {
+        let Some(mut cpu) = booting() else { return };
+        frames(&mut cpu, 300);
+        cpu.memory.type_text("mouse 1\n");
+        frames(&mut cpu, 120);
+        // Sprite 0, at the middle: its tip white, black inside, on blue.
+        let picture = cpu.memory.picture().pixels;
+        let at = |x: usize, y: usize| picture[y * 640 + x];
+        assert_eq!(
+            [at(318, 239), at(319, 239), at(320, 240), at(321, 242)],
+            [0x0000AA, 0xFFFFFF, 0x000000, 0x000000]
+        );
+    }
+
+    #[test]
+    fn the_hosts_pointer_moves_the_mouse_and_clicks_its_buttons() {
+        let Some(mut cpu) = booting() else { return };
+        frames(&mut cpu, 300);
+        cpu.memory.type_text("mouse 1\n");
+        frames(&mut cpu, 120);
+        let sprite_0 = |cpu: &CPU<X16>| {
+            let byte = |n: usize| cpu.memory.vera.peek(0x1FC00 + n) as u16;
+            (byte(2) | byte(3) << 8, byte(4) | byte(5) << 8)
+        };
+        assert_eq!(sprite_0(&cpu), (319, 239), "the middle");
+        let at = |x, y, left| Pointer {
+            at: Some((x, y)),
+            buttons: [left, false],
+        };
+        pointed(&mut cpu, 2, at(100.0, 100.0, false));
+        assert_eq!(sprite_0(&cpu), (319, 239), "onto the picture: not moved");
+        pointed(&mut cpu, 2, at(110.4, 70.0, false));
+        assert_eq!(sprite_0(&cpu), (329, 209), "right 10, up 30");
+        pointed(&mut cpu, 2, at(700.0, 70.0, false));
+        assert_eq!(sprite_0(&cpu).0, 639, "past the edge: at it");
+        cpu.memory.type_text("print mb\n");
+        pointed(&mut cpu, 60, at(700.0, 70.0, true));
+        let text = cpu.memory.screen_text().unwrap_or_default();
+        assert!(
+            text.ends_with(" 1\n\nREADY."),
+            "MB, its left button:\n{text}"
         );
     }
 }

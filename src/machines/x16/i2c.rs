@@ -16,7 +16,9 @@
 //! default read); a command written, then read, what it says, and after it
 //! the default, the next key and the mouse's packet. Its keyboard's codes
 //! are the IBM key numbers, a key down, or let go with bit 7 set; it holds
-//! 16. No mouse is on it.
+//! 16. Its mouse's are PS/2 packets, its buttons and how far it's moved
+//! (3 bytes, or 4 with a wheel's, as the mouse's ID is 3); it holds 15
+//! bytes, and gives a packet whole, or a 0 if there isn't one.
 //!
 //! The RTC as its data sheet has it, but its alarms, its square wave and
 //! its trimming: its time, BCD, from its seconds' register at 0; 0x07 to
@@ -33,6 +35,9 @@ pub const RTC: u8 = 0x6F;
 
 /// The keyboard's codes the SMC holds, at most.
 pub const KEYS_HELD: usize = 16;
+/// The mouse's bytes it holds, and more: a packet's let in only if there's
+/// room for it and one more byte, as x16emu has it.
+const MOUSE_HELD: usize = 16;
 /// Its version, as it says.
 const SMC_VERSION: [u8; 3] = [47, 0, 0];
 /// Its read as it's set at reset: the next key, then the mouse's.
@@ -228,6 +233,10 @@ pub struct Smc {
     default_read: u8,
     /// Whether the key's been given, of the default read's key and mouse.
     key_given: bool,
+    /// The mouse's packets' bytes waiting; how many of the one being read
+    /// have been given; its ID, 3 with a wheel, or 0.
+    pub mouse: VecDeque<u8>,
+    mouse_given: usize,
     mouse_id: u8,
     pub activity_light: bool,
     /// What it's been asked, not yet done.
@@ -241,6 +250,8 @@ impl Smc {
             command: KEY_AND_MOUSE,
             default_read: KEY_AND_MOUSE,
             key_given: false,
+            mouse: VecDeque::new(),
+            mouse_given: 0,
             mouse_id: 3,
             activity_light: false,
             asked: None,
@@ -256,6 +267,26 @@ impl Smc {
         room
     }
 
+    /// A packet's bytes, as the mouse's ID has them.
+    fn packet_size(&self) -> usize {
+        if self.mouse_id == 3 { 4 } else { 3 }
+    }
+
+    /// A packet from the mouse, unless it's full: its buttons (left,
+    /// right, middle, bits 0 to 2) and how far it's moved, -256 to 255 each
+    /// way, up for y.
+    pub fn mouse(&mut self, buttons: u8, x: i16, y: i16) -> bool {
+        let size = self.packet_size();
+        let room = self.mouse.len() + size < MOUSE_HELD;
+        if room {
+            let signs = ((y >> 8 & 1) as u8) << 5 | ((x >> 8 & 1) as u8) << 4;
+            self.mouse
+                .extend([signs | 0x08 | buttons & 7, x as u8, y as u8, 0]);
+            self.mouse.truncate(self.mouse.len() - (4 - size));
+        }
+        room
+    }
+
     /// `byte` written to it: its command, or the command's byte.
     fn written(&mut self, byte: u8, command: bool) {
         if command {
@@ -267,7 +298,10 @@ impl Smc {
             (0x01, 0x01) | (0x02, 0x00) => self.asked = Some(Asked::Reset),
             (0x03, 0x00) => self.asked = Some(Asked::Nmi),
             (0x05, _) => self.activity_light = byte >= 0x80,
-            (0x20, _) => self.mouse_id = if matches!(byte, 3 | 4) { 3 } else { 0 },
+            (0x20, _) => {
+                self.mouse_id = if matches!(byte, 3 | 4) { 3 } else { 0 };
+                self.mouse.clear();
+            }
             (0x40, _) => {
                 self.default_read = byte;
                 self.key_given = false;
@@ -284,10 +318,19 @@ impl Smc {
                 self.key_given = true;
                 self.keys.pop_front().unwrap_or(0)
             }
-            // The mouse's packet: none, there being no mouse.
+            // The mouse's packet, a byte at a time, once it's all there;
+            // or a 0.
             0x21 | 0x42 | KEY_AND_MOUSE => {
-                self.key_given = false;
-                0
+                if self.mouse_given == 0 && self.mouse.len() < self.packet_size() {
+                    self.key_given = false;
+                    0
+                } else {
+                    self.mouse_given += 1;
+                    if self.mouse_given == self.packet_size() {
+                        (self.mouse_given, self.key_given) = (0, false);
+                    }
+                    self.mouse.pop_front().unwrap_or(0)
+                }
             }
             0x41 => {
                 self.key_given = false;

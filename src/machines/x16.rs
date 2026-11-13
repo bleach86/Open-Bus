@@ -32,6 +32,8 @@
 //!
 //! Its keyboard's characters are typed as its keys (`keyboard`); its SNES
 //! controllers 1 and 2 are the host's gamepads, their A and B the SNES's.
+//! Its mouse is the host's pointer: how far it's moved over the picture
+//! each frame, a dot a dot, and its buttons, sent as the mouse's packets.
 //! The SMC asked to reset it, it resets; to power off, it's held in reset
 //! till its Reset button.
 
@@ -49,7 +51,7 @@ pub mod vera;
 use crate::chips::via6522::Via6522;
 use crate::cpu::bus::Bus;
 use crate::cpu::{CPU, Variant};
-use crate::host::display::{Gamepad, Key};
+use crate::host::display::{Gamepad, Key, Pointer};
 use crate::host::machine::{Input, Machine, Picture};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::run::Host;
@@ -156,6 +158,8 @@ pub struct X16 {
     #[serde(skip)]
     gamepads: [Gamepad; 2],
     #[serde(skip)]
+    mouse: Mouse,
+    #[serde(skip)]
     reset_held: bool,
     #[serde(skip)]
     pub name: String,
@@ -163,6 +167,14 @@ pub struct X16 {
     rom_crc: u32,
     #[serde(skip)]
     samples: Vec<f32>,
+}
+
+/// The host's pointer as the mouse has it: where it was, as far as its
+/// moves have been sent, over the picture; its buttons as last sent.
+#[derive(Clone, Copy, Debug, Default)]
+struct Mouse {
+    at: Option<(f32, f32)>,
+    buttons: u8,
 }
 
 impl X16 {
@@ -196,6 +208,7 @@ impl X16 {
             rom: flash,
             typing: VecDeque::new(),
             gamepads: [Gamepad::default(); 2],
+            mouse: Mouse::default(),
             reset_held: false,
             name: String::new(),
             rom_crc: crc32(rom),
@@ -283,6 +296,36 @@ impl X16 {
             }
             self.typing.pop_front();
         }
+    }
+
+    /// The pointer's moves since the last frame, and its buttons, sent as
+    /// the mouse's packets, as many as the SMC has room for; what isn't
+    /// sent is sent with the next.
+    fn move_mouse(&mut self, pointer: Pointer) {
+        let buttons = pointer.buttons[0] as u8 | (pointer.buttons[1] as u8) << 1;
+        let (Some(from), Some(to)) = (self.mouse.at, pointer.at) else {
+            // Onto the picture, or off it: from there on.
+            self.mouse.at = pointer.at;
+            if buttons != self.mouse.buttons && self.i2c.smc.mouse(buttons, 0, 0) {
+                self.mouse.buttons = buttons;
+            }
+            return;
+        };
+        // Up, for the mouse.
+        let (mut x, mut y) = (
+            (to.0 - from.0).round() as i32,
+            (from.1 - to.1).round() as i32,
+        );
+        let mut sent = (0, 0);
+        while x != 0 || y != 0 || buttons != self.mouse.buttons {
+            let (dx, dy) = (x.clamp(-256, 255), y.clamp(-256, 255));
+            if !self.i2c.smc.mouse(buttons, dx as i16, dy as i16) {
+                break;
+            }
+            self.mouse.buttons = buttons;
+            (x, y, sent) = (x - dx, y - dy, (sent.0 + dx, sent.1 + dy));
+        }
+        self.mouse.at = Some((from.0 + sent.0 as f32, from.1 - sent.1 as f32));
     }
 
     /// Row `row` of a text map at `base`, `width` cells to a row, its first
@@ -478,6 +521,7 @@ impl Machine for X16 {
     fn input(&mut self, input: Input) {
         self.gamepads = [input.gamepad, input.gamepad_2];
         self.type_on();
+        self.move_mouse(input.pointer);
     }
 
     fn light(&mut self) -> bool {
@@ -507,6 +551,7 @@ impl Machine for X16 {
         self.rom = take(&mut running.rom);
         self.typing = take(&mut running.typing);
         self.gamepads = running.gamepads;
+        self.mouse = running.mouse;
         self.vera.picture = take(&mut running.vera.picture);
         self.name = take(&mut running.name);
         self.rom_crc = running.rom_crc;
