@@ -16,7 +16,8 @@
 //! `$9010-$901F`, the VIA; `$9020`, a key: the next typed, as ASCII (and
 //! GeckOS's codes for the arrows, $80 to $83), 0 if there's none, a read
 //! taking it; `$9021`, bit 7 a key waiting; `$9030-$9033`, the ACIA. What
-//! else there is reads $FF.
+//! else there is reads $FF. Its keyboard has a key to switch consoles,
+//! $F1, as GeckOS has two: F7, and in the menu.
 //!
 //! A character's bit 7 shows it inverse; its colour's 16, as GeckOS
 //! numbers them, the colours coming up light grey on black. The font's
@@ -73,6 +74,9 @@ const ACIA: u16 = 0x9030;
 const FRAME: u8 = 0x80;
 /// The keys held to be read, at most.
 const KEYS_HELD: usize = 32;
+/// The key to switch consoles, and the function key it's on.
+const SWITCH: u8 = 0xF1;
+const SWITCH_KEY: u8 = 7;
 /// The colours as they come up: light grey on black.
 const COLOURS_ON: u8 = 0x0E;
 
@@ -315,6 +319,19 @@ impl Machine for Skink {
     }
 
     fn input(&mut self, _input: Input) {}
+
+    fn menu(&self) -> Vec<(&'static str, u8)> {
+        vec![("SWITCH CONSOLE", SWITCH_KEY)]
+    }
+
+    /// F7, the key to switch consoles.
+    fn function_key(&mut self, key: u8) -> Option<String> {
+        if key != SWITCH_KEY {
+            return None;
+        }
+        self.typed(SWITCH);
+        Some("Switch console".to_string())
+    }
 
     fn reset_button(&mut self, held: bool) {
         self.reset_held = held;
