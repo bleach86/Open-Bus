@@ -187,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn its_buttons_are_two_or_one_as_swchb_drives_them() {
+    fn its_buttons_are_one_unless_swchb_drives_pin_6_low() {
         let mut cpu = console_of(&[0xEA; 0x4000]);
         let atari = &mut cpu.memory;
         let pad = Gamepad {
@@ -198,12 +198,25 @@ mod tests {
             gamepad: pad,
             ..Input::default()
         });
-        assert_eq!(atari.read(0x09) & 0x80, 0x80, "button 1, INPT1, high");
-        assert_eq!(atari.read(0x08) & 0x80, 0x00, "button 2 not pressed");
-        assert_eq!(atari.read(0x0C) & 0x80, 0x80, "INPT4, two buttons: not");
+        let buttons =
+            |atari: &mut Atari7800| [0x09, 0x08, 0x0C].map(|register| atari.read(register) & 0x80);
+        assert_eq!(
+            buttons(atari),
+            [0, 0, 0],
+            "one button at power-on, pin 6 pulled high: INPT4 low, the others not"
+        );
         atari.write(0x0283, 0x04); // SWBCNT: bit 2 an output
-        atari.write(0x0282, 0x04); // SWCHB: driven high
-        assert_eq!(atari.read(0x0C) & 0x80, 0x00, "one button: INPT4 low");
+        atari.write(0x0282, 0x00); // SWCHB: driven low
+        assert_eq!(
+            buttons(atari),
+            [0x80, 0, 0x80],
+            "two buttons: button 1, INPT1, high, button 2 not; INPT4 not"
+        );
+        atari.write(0x0282, 0x04); // driven high
+        assert_eq!(buttons(atari), [0, 0, 0], "one button again");
+        atari.write(0x0282, 0x00);
+        atari.write(0x0283, 0x00); // an input again, pulled high
+        assert_eq!(buttons(atari), [0, 0, 0], "and again");
     }
 
     #[test]

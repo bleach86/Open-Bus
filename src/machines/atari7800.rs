@@ -174,7 +174,7 @@ pub struct Atari7800 {
     /// MARIA's clocks to the TIA's sound's next two.
     sound_clocks: u32,
     /// Each port's buttons, as the game drives SWCHB: one button, INPT4 or
-    /// INPT5's, not two.
+    /// INPT5's, not two. One at power-on, its pin 6 pulled high.
     one_button: [bool; 2],
     pub frames: u64,
     frame_ended: bool,
@@ -234,7 +234,7 @@ impl Atari7800 {
             stolen: 0,
             riot_owed: 0,
             sound_clocks: 0,
-            one_button: [false; 2],
+            one_button: [true; 2],
             frames: 0,
             frame_ended: false,
             region,
@@ -277,17 +277,19 @@ impl Atari7800 {
 
     /// A read of the TIA's input `register`, $0 to $F: its buttons, the
     /// joystick's 1 and 2 on INPT1 and INPT0 (the right port's INPT3 and
-    /// INPT2), high when pressed; on INPT4 and INPT5, either, low, in one
-    /// button mode; the collisions none.
+    /// INPT2), high when pressed, in two button mode; on INPT4 and INPT5,
+    /// either, low, in one button mode, as ProSystem's tests of a console
+    /// found them; the collisions none.
     fn tia_read(&self, register: u8) -> u8 {
         let pressed = |pressed: bool| if pressed { 0x80 } else { 0 };
         let pad = |port: usize| self.gamepads[port];
+        let two = |port: usize| !self.one_button[port];
         match register {
             0x0..=0x7 => 0,
-            0x8 => pressed(pad(0).b),
-            0x9 => pressed(pad(0).a),
-            0xA => pressed(pad(1).b),
-            0xB => pressed(pad(1).a),
+            0x8 => pressed(two(0) && pad(0).b),
+            0x9 => pressed(two(0) && pad(0).a),
+            0xA => pressed(two(1) && pad(1).b),
+            0xB => pressed(two(1) && pad(1).a),
             0xC | 0xD => {
                 let port = register as usize - 0xC;
                 let fire = self.one_button[port] && (pad(port).a || pad(port).b);
@@ -328,13 +330,11 @@ impl Atari7800 {
     }
 
     /// The RIOT's port B written: each port's one button mode, as its pin 6
-    /// is driven.
+    /// is: two buttons only driven low, one if it's an input, pulled high.
     fn port_b_written(&mut self) {
         let (out, ddr) = self.riot.outputs_b();
         for (port, bit) in [0x04, 0x10].into_iter().enumerate() {
-            if ddr & bit != 0 {
-                self.one_button[port] = out & bit != 0;
-            }
+            self.one_button[port] = ddr & bit == 0 || out & bit != 0;
         }
     }
 
