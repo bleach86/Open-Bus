@@ -2,15 +2,17 @@
 //! 0, its slow accesses, VIA 1's wiring to the SNES controllers and the IEC
 //! bus, the SMC's reset and power off, its keyboard's keys; and with its
 //! ROM (roms/x16/, a release's rom.bin; without one those tests say so and
-//! pass), booted to BASIC, typed to, its mouse pointer shown, and a
-//! program saved to its SD card and loaded back (with mtools, to make the
-//! card).
+//! pass), booted to BASIC, typed to, its mouse pointer shown, its date the
+//! host's, and a program saved to its SD card and loaded back (with
+//! mtools, to make the card). Its clock's RAM kept in a file.
 
 #[cfg(test)]
 mod tests {
     use crate::cpu::CPU;
     use crate::cpu::bus::Bus;
+    use crate::host::clock;
     use crate::host::display::{Gamepad, Key, Pointer};
+    use crate::host::files;
     use crate::host::machine::{Input, Machine};
     use crate::machines::x16::i2c::Asked;
     use crate::machines::x16::{self, X16, keyboard};
@@ -297,5 +299,38 @@ mod tests {
         let text = cpu.memory.screen_text().unwrap_or_default();
         assert!(text.ends_with("RUN\n 42\n\nREADY."), "the screen:\n{text}");
         std::fs::remove_file(&image).unwrap();
+    }
+
+    #[test]
+    fn its_clock_is_the_hosts_time_as_basic_has_it() {
+        let Some(mut cpu) = booting() else { return };
+        frames(&mut cpu, 300);
+        cpu.memory.type_text("print da$\n");
+        frames(&mut cpu, 60);
+        let now = clock::now();
+        let date = format!("{}{:02}{:02}", now.year, now.month, now.day);
+        let text = cpu.memory.screen_text().unwrap_or_default();
+        assert!(text.contains(&date), "{date}, the screen:\n{text}");
+    }
+
+    #[test]
+    fn its_clocks_ram_is_read_from_its_file_and_saved_as_its_written() {
+        let file = std::env::temp_dir().join(format!("cpu_emu_{}_nvram.bin", std::process::id()));
+        std::fs::write(&file, [0x5A; 64]).unwrap();
+        let mut x16 = x16();
+        x16.keep_nvram(&file);
+        assert_eq!(x16.i2c.rtc.ram, [0x5A; 64]);
+        x16.keep_saved(false);
+        files::all_saved();
+        assert_eq!(std::fs::read(&file).unwrap(), [0x5A; 64], "not written");
+        x16.i2c.rtc.ram[3] = 0x33;
+        x16.i2c.rtc.ram_written = true;
+        x16.keep_saved(false);
+        files::all_saved();
+        assert_eq!(std::fs::read(&file).unwrap()[3], 0x33);
+        std::fs::remove_file(&file).unwrap();
+        let mut x16 = self::x16();
+        x16.keep_nvram(&file);
+        assert_eq!(x16.i2c.rtc.ram, [0; 64], "no file yet: as it was");
     }
 }

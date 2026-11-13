@@ -25,8 +25,10 @@
 //! 0x1F, its control registers, holding what's written; 0x20 to 0x5F, its
 //! RAM. Its address steps on with each byte, round within the clock's
 //! registers or its RAM. It starts as a new one does, stopped: its
-//! oscillator on once ST is set, the time counted each second from then.
+//! oscillator on once ST is set, the time counted each second from then;
+//! or set, as an X16's is, its battery keeping it (`set`).
 
+use crate::host::clock::DateTime;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
@@ -367,6 +369,9 @@ pub struct Rtc {
     /// 0x07 to 0x1F, as written.
     control: Vec<u8>,
     pub ram: Vec<u8>,
+    /// Its RAM written, since it was last asked.
+    #[serde(skip)]
+    pub ram_written: bool,
     /// The register at its address.
     address: u8,
     /// The CPU's cycles to the next second.
@@ -400,9 +405,29 @@ impl Rtc {
             battery: false,
             control,
             ram: vec![0; 0x40],
+            ram_written: false,
             address: 0,
             cycles: 0,
         }
+    }
+
+    /// Set to `now`, running, 24 hours to a day, its battery on: as one
+    /// in an X16 is, set once and kept by its battery since. Sunday's day 7
+    /// of the week, as x16emu has it; the year's of 2000 to 2099.
+    pub fn set(&mut self, now: DateTime) {
+        self.seconds = now.second as u8;
+        self.minutes = now.minute as u8;
+        self.hours = now.hour as u8;
+        self.weekday = if now.weekday == 0 {
+            7
+        } else {
+            now.weekday as u8
+        };
+        self.day = now.day as u8;
+        self.month = now.month as u8;
+        self.year = (now.year - 2000).clamp(0, 99) as u8;
+        (self.running, self.twelve, self.battery) = (true, false, true);
+        self.cycles = 0;
     }
 
     /// Its address stepped on: round within its clock's registers, or its
@@ -472,7 +497,10 @@ impl Rtc {
             0x05 => self.month = unbcd(byte & 0x1F),
             0x06 => self.year = unbcd(byte),
             n @ 0x07..=0x1F => self.control[(n - 7) as usize] = byte,
-            n @ 0x20..=0x5F => self.ram[(n - 0x20) as usize] = byte,
+            n @ 0x20..=0x5F => {
+                self.ram[(n - 0x20) as usize] = byte;
+                self.ram_written = true;
+            }
             _ => {}
         }
         self.step();

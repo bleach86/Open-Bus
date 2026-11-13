@@ -37,7 +37,10 @@
 //! The SMC asked to reset it, it resets; to power off, it's held in reset
 //! till its Reset button. Its SD card's an image of one (`sd_card`), if
 //! it's given, or roms/x16/sdcard.img, if that's there; its light's the
-//! SMC's activity light, or the card being read or written.
+//! SMC's activity light, or the card being read or written. Its clock's
+//! the host's time as it's turned on, kept by its battery since; its
+//! clock's RAM is kept in roms/x16/nvram.bin, read as it's run and saved
+//! as it's written.
 
 #[cfg(test)]
 mod tests {
@@ -55,7 +58,9 @@ pub mod vera;
 use crate::chips::via6522::Via6522;
 use crate::cpu::bus::Bus;
 use crate::cpu::{CPU, Variant};
+use crate::host::clock;
 use crate::host::display::{Gamepad, Key, Pointer};
+use crate::host::files;
 use crate::host::machine::{Input, Machine, Picture};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::run::Host;
@@ -75,6 +80,8 @@ pub const CLOCK_HZ: u32 = 8_000_000;
 /// Where its ROM is, unless it's said: roms/x16/rom.bin, or a release's
 /// folder's in roms/x16/, the last by name.
 pub const ROM_FOLDER: &str = "roms/x16";
+/// The RTC's 64 bytes of RAM, kept by its battery, as they're kept here.
+pub const NVRAM_FILE: &str = "roms/x16/nvram.bin";
 
 const RAM_TOP: usize = 0x9F00;
 const BANK: usize = 0x2000;
@@ -165,6 +172,9 @@ pub struct X16 {
     mouse: Mouse,
     #[serde(skip)]
     reset_held: bool,
+    /// Where its clock's RAM is kept, if it is.
+    #[serde(skip)]
+    nvram_file: Option<PathBuf>,
     #[serde(skip)]
     pub name: String,
     #[serde(skip)]
@@ -214,10 +224,12 @@ impl X16 {
             gamepads: [Gamepad::default(); 2],
             mouse: Mouse::default(),
             reset_held: false,
+            nvram_file: None,
             name: String::new(),
             rom_crc: crc32(rom),
             samples: Vec::new(),
         };
+        x16.i2c.rtc.set(clock::now());
         x16.port_a_changed();
         Ok(x16)
     }
@@ -290,6 +302,17 @@ impl X16 {
         self.vera.tick();
         self.i2c.tick();
         self.nmi = self.nmi.saturating_sub(1);
+    }
+
+    /// Its clock's RAM kept in the file at `path`: read from it, if it's
+    /// there, and saved to it as it's written.
+    pub fn keep_nvram(&mut self, path: &Path) {
+        if let Ok(saved) = files::read(path) {
+            let ram = &mut self.i2c.rtc.ram;
+            let len = saved.len().min(ram.len());
+            ram[..len].copy_from_slice(&saved[..len]);
+        }
+        self.nvram_file = Some(path.to_path_buf());
     }
 
     /// The keys typed moved on to the SMC, as it has room.
@@ -544,6 +567,14 @@ impl Machine for X16 {
         true
     }
 
+    /// Its clock's RAM, saved as it's written.
+    fn keep_saved(&mut self, _closing: bool) {
+        let Some(path) = &self.nvram_file else { return };
+        if std::mem::take(&mut self.i2c.rtc.ram_written) {
+            files::save_later(path, self.i2c.rtc.ram.clone());
+        }
+    }
+
     fn leave_out_picture(&mut self, leave_out: bool) -> bool {
         self.vera.leave_out = leave_out;
         leave_out
@@ -569,6 +600,7 @@ impl Machine for X16 {
         self.typing = take(&mut running.typing);
         self.gamepads = running.gamepads;
         self.mouse = running.mouse;
+        self.nvram_file = take(&mut running.nvram_file);
         self.vera.picture = take(&mut running.vera.picture);
         self.name = take(&mut running.name);
         self.rom_crc = running.rom_crc;
@@ -604,7 +636,7 @@ pub fn sd_card_file() -> Option<PathBuf> {
 /// `sd_card`, if there's one.
 pub fn build(rom: &str, sd_card: Option<&str>) -> Result<CPU<X16>, String> {
     let path = Path::new(rom);
-    let bytes = crate::host::files::read(path).map_err(|e| format!("{rom}: {e}"))?;
+    let bytes = files::read(path).map_err(|e| format!("{rom}: {e}"))?;
     let mut x16 = X16::new(&bytes).map_err(|e| format!("{rom}: {e}"))?;
     if let Some(image) = sd_card {
         x16.vera.sd_card().image = Some(sd_card::Image::open(Path::new(image))?);
@@ -629,7 +661,8 @@ pub fn size() -> (u32, u32) {
 /// state saved beside its SD card's image, or its ROM, with none.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run(rom: &str, sd_card: Option<&str>, fullscreen: bool) {
-    let cpu = build(rom, sd_card).unwrap_or_else(|e| panic!("{e}"));
+    let mut cpu = build(rom, sd_card).unwrap_or_else(|e| panic!("{e}"));
+    cpu.memory.keep_nvram(Path::new(NVRAM_FILE));
     let title = cpu.memory.title();
     let window = Window::new(&title, WIDTH, HEIGHT, size(), fullscreen);
     let state = save_state::path(Path::new(sd_card.unwrap_or(rom)));

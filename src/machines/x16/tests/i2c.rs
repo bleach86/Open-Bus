@@ -1,10 +1,12 @@
 //! The I2C bus, bit-banged as the KERNAL does it: an address no device is
 //! at, NACKed; the RTC's time and RAM, written and read, its address
-//! stepping on, its time counted once it's running; the SMC's version, its
-//! keys, its mouse's packets, and what it's asked to do.
+//! stepping on, its time counted once it's running, or set as an X16's
+//! is; the SMC's version, its keys, its mouse's packets, and what it's
+//! asked to do.
 
 #[cfg(test)]
 mod tests {
+    use crate::host::clock::DateTime;
     use crate::machines::x16::i2c::{Asked, I2c, RTC, SMC};
 
     fn start(i2c: &mut I2c) {
@@ -156,5 +158,27 @@ mod tests {
         assert_eq!(packet.collect::<Vec<_>>(), [0x1A, 0x00, 0xFF]);
         write(&mut i2c, SMC, &[0x20, 0x03]);
         assert!(i2c.smc.mouse.is_empty(), "its ID set: let go");
+    }
+
+    #[test]
+    fn the_rtc_set_as_an_x16s_is_running_its_time_given() {
+        let mut i2c = I2c::new();
+        i2c.rtc.set(DateTime {
+            year: 2026,
+            month: 11,
+            day: 15,
+            weekday: 0,
+            hour: 23,
+            minute: 59,
+            second: 58,
+        });
+        assert_eq!(
+            read(&mut i2c, RTC, 0x00, 7),
+            [0x80 | 0x58, 0x59, 0x23, 0x20 | 0x08 | 7, 0x15, 0x11, 0x26],
+            "ST, OSCRUN and VBATEN; Sunday the 7th day"
+        );
+        assert!(!i2c.rtc.ram_written);
+        write(&mut i2c, RTC, &[0x20, 0x12]);
+        assert!(i2c.rtc.ram_written);
     }
 }
