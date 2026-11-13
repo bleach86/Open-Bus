@@ -1,5 +1,6 @@
 //! POKEY: held in reset by SKCTL; a pure tone's pitch at each of its clocks,
-//! 8 bits and 16 joined; volume only; its timer's IRQ; RANDOM; STIMER.
+//! 8 bits and 16 joined; volume only, and as a state loaded has it; its
+//! timer's IRQ; RANDOM; STIMER.
 
 #[cfg(test)]
 mod tests {
@@ -94,6 +95,20 @@ mod tests {
         for _ in 0..100 {
             pokey.clock();
             assert_eq!(pokey.output(), 11.0 / 44.0);
+        }
+    }
+
+    #[test]
+    fn a_state_loaded_sounds_as_it_did() {
+        let mut pokey = pokey(0x40, 0);
+        pokey.write(AUDC1, 0x1B);
+        let state = postcard::to_stdvec(&pokey).unwrap();
+        let mut loaded: Pokey = postcard::from_bytes(&state).unwrap();
+        assert_eq!(loaded.output(), 11.0 / 44.0, "its volume, not yet changed");
+        for _ in 0..1000 {
+            pokey.clock();
+            loaded.clock();
+            assert_eq!(loaded.output(), pokey.output());
         }
     }
 

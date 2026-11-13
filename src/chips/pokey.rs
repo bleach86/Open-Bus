@@ -114,6 +114,23 @@ fn step(at: u32, length: u32) -> u32 {
     if at + 1 == length { 0 } else { at + 1 }
 }
 
+/// The clocks counted to a tick, a clock on: whether it's come, each
+/// `divisor` of them.
+fn tick(clocks: &mut u32, divisor: u32) -> bool {
+    *clocks += 1;
+    if *clocks >= divisor {
+        *clocks = 0;
+        return true;
+    }
+    false
+}
+
+/// The volumes' sum not yet worked out, as a state's just been loaded.
+fn unknown() -> u8 {
+    UNKNOWN
+}
+const UNKNOWN: u8 = 0xFF;
+
 /// A channel: its registers, its 8-bit counter counting up to its borrow,
 /// the borrow's cycles still to come through, its output and its
 /// high-pass filter's sample.
@@ -172,13 +189,18 @@ pub struct Pokey {
     irqen: u8,
     /// IRQST's bits, set high here, though it reads them low.
     irqst: u8,
-    /// The clocks counted to the 1.79 MHz, 64 kHz and 15 kHz ticks.
+    /// The clocks counted to the 1.79 MHz, 64 kHz and 15 kHz ticks: the
+    /// first's each clock, its count always 0.
     clocks: [u32; 3],
     /// Where each polynomial counter is.
     p4: u32,
     p5: u32,
     p9: u32,
     p17: u32,
+    /// The channels' volumes summed, kept as they change, not each clock:
+    /// UNKNOWN till they do, a state loaded.
+    #[serde(skip, default = "unknown")]
+    volumes: u8,
 }
 
 impl Pokey {
@@ -203,7 +225,13 @@ impl Pokey {
             p5: 0,
             p9: 0,
             p17: 0,
+            volumes: 0,
         }
+    }
+
+    /// Its channels' volumes summed, 0 to 60.
+    fn volumes(&self) -> u8 {
+        self.channels.iter().map(Channel::volume).sum()
     }
 
     /// Channel `n` counted on a clock, its timer's IRQ raised if it's come
@@ -239,24 +267,20 @@ impl Pokey {
         let audctl = self.audctl;
         let (joined_12, joined_34) = (audctl & CH12_JOINED != 0, audctl & CH34_JOINED != 0);
         if self.skctl & NOT_RESET != 0 {
-            let mut ticked = [false; 3];
-            for (n, clocks) in self.clocks.iter_mut().enumerate() {
-                *clocks += 1;
-                if *clocks >= DIVISORS[n] {
-                    *clocks = 0;
-                    ticked[n] = true;
-                }
-            }
-            let base = ticked[if audctl & CLOCK_15KHZ != 0 { 2 } else { 1 }];
+            let khz64 = tick(&mut self.clocks[1], DIVISORS[1]);
+            let khz15 = tick(&mut self.clocks[2], DIVISORS[2]);
+            let base = if audctl & CLOCK_15KHZ != 0 {
+                khz15
+            } else {
+                khz64
+            };
             self.p4 = step(self.p4, 0xF);
             self.p5 = step(self.p5, 0x1F);
             self.p9 = step(self.p9, 0x1FF);
             self.p17 = step(self.p17, 0x1FFFF);
             for (n, fast, joined) in [(0, CH1_FAST, joined_12), (2, CH3_FAST, joined_34)] {
                 if audctl & fast != 0 {
-                    if ticked[0] {
-                        self.count(n, if joined { 7 } else { 4 });
-                    }
+                    self.count(n, if joined { 7 } else { 4 });
                 } else if base {
                     self.count(n, 1);
                 }
@@ -271,7 +295,13 @@ impl Pokey {
             }
         }
 
+        // Most clocks, no borrow's coming through.
+        if self.channels.iter().all(|channel| channel.borrow == 0) {
+            return;
+        }
+        let mut changed = false;
         if self.channels[2].borrowed() {
+            changed = true;
             if joined_34 {
                 self.count(3, 1);
             } else {
@@ -282,6 +312,7 @@ impl Pokey {
             first.filter_sample = audctl & CH1_FILTER == 0 || first.output;
         }
         if self.channels[3].borrowed() {
+            changed = true;
             if joined_34 {
                 self.channels[2].reset();
             }
@@ -294,6 +325,7 @@ impl Pokey {
             self.channels[0].reset();
         }
         if self.channels[0].borrowed() {
+            changed = true;
             if joined_12 {
                 self.count(1, 1);
             } else {
@@ -302,17 +334,24 @@ impl Pokey {
             self.come_round(0);
         }
         if self.channels[1].borrowed() {
+            changed = true;
             if joined_12 {
                 self.channels[0].reset();
             }
             self.channels[1].reset();
             self.come_round(1);
         }
+        if changed {
+            self.volumes = self.volumes();
+        }
     }
 
     /// Its output, its four channels' volumes summed, 0 to 1.
     pub fn output(&self) -> f32 {
-        let sum: u8 = self.channels.iter().map(Channel::volume).sum();
+        let sum = match self.volumes {
+            UNKNOWN => self.volumes(),
+            volumes => volumes,
+        };
         LEVELS[sum as usize]
     }
 
@@ -347,6 +386,7 @@ impl Pokey {
                     channel.audf = value;
                 } else {
                     channel.audc = value;
+                    self.volumes = self.volumes();
                 }
             }
             0x8 => self.audctl = value,
@@ -357,6 +397,7 @@ impl Pokey {
                     channel.output = false;
                     channel.filter_sample = n < 2;
                 }
+                self.volumes = self.volumes();
             }
             // IRQEN: what it masks cleared, serial output complete aside.
             0xE => {
