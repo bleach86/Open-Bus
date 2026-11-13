@@ -56,7 +56,8 @@ const DISK_II_ROMS = ['disk2-p5-341-0027.bin', 'disk2-p6-341-0028.bin'];
 const CHANGE_DISK_KEY = 9;
 const FDS_BIOS = 'disksys.rom';
 const kind = (name) => name.split('.').pop().toLowerCase();
-const isGame = (name) => ['nes', 'fds', 'a26', 'a78', 'zip'].includes(kind(name));
+/// A game's file: a .bin a 2600's or a 7800's, unless it's an Apple's ROM.
+const isGame = (name) => ['nes', 'fds', 'a26', 'a78', 'bin', 'zip'].includes(kind(name)) && !isRom(name);
 const isDisk = (name) => ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'].includes(kind(name));
 /// The consoles whose games are on the shelf of games, each its own tab; and
 /// which a game's is: as the emulator's said of it, else as its file says, a
@@ -440,7 +441,7 @@ const artFor = (title, ...names) =>
 /// What's said of an empty shelf.
 const noGames = native
     ? 'No games yet. Add a folder of them in Settings.'
-    : 'No games yet. Add .nes, .fds, .a26, .a78 or .zip files in Settings, or drop them here.';
+    : 'No games yet. Add .nes, .fds, .a26, .a78, .bin or .zip files in Settings, or drop them here.';
 
 /// Whether what's searched for is in a game's title, file, or what's known
 /// of it.

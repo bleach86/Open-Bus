@@ -569,7 +569,7 @@ pub fn game(machine: &Value) -> Option<(String, Value)> {
 /// image, a Disk System's, a 2600's, a 7800's, or a zip of one.
 fn is_cartridge(path: &str) -> bool {
     let kind = path.rsplit('.').next().unwrap_or_default().to_lowercase();
-    ["nes", "fds", "a26", "a78", "zip"].contains(&kind.as_str())
+    ["nes", "fds", "a26", "a78", "bin", "zip"].contains(&kind.as_str())
 }
 
 /// A file as the page has one: its path, and its size.

@@ -5,8 +5,8 @@
 //! whether it's a Famicom's and a Zapper's, why it won't load if it won't,
 //! and its path, a tab between each, as `cpu_emu facts` says it.
 //!
-//! Whose it is, by its file: a 7800's an .a78, a 2600's an .a26 or .bin, or a
-//! zip of one; the rest, a NES's.
+//! Whose it is, by its file: a 7800's an .a78, a 2600's an .a26, or a zip of
+//! one; a .bin either, as its bytes say; the rest, a NES's.
 
 use crate::machines::{atari2600, atari7800, nes};
 use std::path::Path;
@@ -19,7 +19,8 @@ pub enum System {
     Atari7800,
 }
 
-/// Whose game a file's `name` says it is, if it says: a 7800's, or a 2600's.
+/// Whose game a file's `name` says it is, if it says: a 7800's, or a 2600's
+/// (a .bin's, unless its bytes say a 7800's).
 fn named(name: &str) -> Option<System> {
     let name = name.to_lowercase();
     if name.ends_with(".a78") {
@@ -35,14 +36,22 @@ fn named(name: &str) -> Option<System> {
 pub fn system_of(path: &Path, bytes: &[u8]) -> System {
     let name = path.to_string_lossy();
     let zipped = name.to_lowercase().ends_with(".zip");
-    let said = if zipped {
-        crate::host::zip::names(bytes)
-            .ok()
-            .and_then(|names| names.iter().find_map(|name| named(name)))
+    let names = if zipped {
+        crate::host::zip::names(bytes).unwrap_or_default()
     } else {
-        named(&name)
+        vec![name.into_owned()]
     };
-    said.unwrap_or(System::Nes)
+    match names.iter().find_map(|name| Some((name, named(name)?))) {
+        Some((name, System::Atari2600))
+            if name.to_lowercase().ends_with(".bin")
+                && atari7800::image_of(path, bytes.to_vec())
+                    .is_ok_and(|image| atari7800::is_7800(&image)) =>
+        {
+            System::Atari7800
+        }
+        Some((_, system)) => system,
+        None => System::Nes,
+    }
 }
 
 /// The facts of the game at `path`, its file's `bytes`.

@@ -208,8 +208,8 @@ fn library_settings(app: AppHandle) -> Result<Value, String> {
 /// The kinds of file the library has, a game's or a disk's: what's worth a
 /// watcher's noticing. Saves and states beside them change as games are
 /// played, and don't matter to it.
-const GAMES: [&str; 12] = [
-    "nes", "fds", "a26", "a78", "zip", "dsk", "do", "po", "nib", "woz", "hdv", "2mg",
+const GAMES: [&str; 13] = [
+    "nes", "fds", "a26", "a78", "bin", "zip", "dsk", "do", "po", "nib", "woz", "hdv", "2mg",
 ];
 
 /// The folders added, watched for games coming and going, and the watcher.

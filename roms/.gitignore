@@ -29,3 +29,4 @@ nes/tests/
 *.a26
 # Atari 7800 ROMs, likewise
 *.a78
+7800/*.zip

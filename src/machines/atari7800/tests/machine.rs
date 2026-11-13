@@ -254,4 +254,45 @@ mod tests {
         let mut cpu = console_of(&[0xEA; 0xC000]);
         assert_eq!(cpu.memory.read(0x400A), 0xEA, "no POKEY: the ROM");
     }
+
+    #[test]
+    fn a_bin_is_a_7800s_if_it_ends_as_the_bios_wants_and_is_16k_or_more() {
+        use crate::machines::facts::{System, system_of};
+        // $FFF8 and $FFF9 as a 7800's cartridge has them, the vectors after.
+        let ending = |size: usize, region: u8, start: u8| {
+            let mut rom = vec![0xEA; size];
+            rom[size - 8..size - 6].copy_from_slice(&[region, start]);
+            rom
+        };
+        let system = |name: &str, rom: &[u8]| system_of(Path::new(name), rom);
+        assert_eq!(
+            system("game.bin", &ending(0x4000, 0xFF, 0xC7)),
+            System::Atari7800
+        );
+        assert_eq!(
+            system("game.bin", &ending(0x8000, 0xF1, 0x83)),
+            System::Atari7800,
+            "PAL's bits, and no logo"
+        );
+        assert_eq!(
+            system("game.bin", &ending(0x4000, 0xFE, 0xC7)),
+            System::Atari2600,
+            "$FFF8's bit 0 clear"
+        );
+        assert_eq!(
+            system("game.bin", &ending(0x4000, 0xFF, 0xC5)),
+            System::Atari2600,
+            "$FFF9 not 3 or 7"
+        );
+        assert_eq!(
+            system("game.bin", &ending(0x2000, 0xFF, 0xF7)),
+            System::Atari2600,
+            "8K: a 2600's, ending so by chance"
+        );
+        assert_eq!(
+            system("game.a26", &ending(0x4000, 0xFF, 0xC7)),
+            System::Atari2600,
+            "an .a26 a 2600's, whatever it holds"
+        );
+    }
 }

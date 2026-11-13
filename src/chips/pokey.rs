@@ -47,6 +47,16 @@ const SERIAL_OUT_COMPLETE: u8 = 0x08;
 /// The output's gain, as a7800 has it: a sum of the four volumes, 0 to 60,
 /// as 0 to 1, louder than 60's share and clipped.
 const GAIN: f32 = 11.0 * 4.0;
+/// The output for each sum of the volumes: worked out once, not each cycle.
+const LEVELS: [f32; 61] = {
+    let mut levels = [0.0; 61];
+    let mut sum = 0;
+    while sum < 61 {
+        levels[sum] = (sum as f32 / GAIN).min(1.0);
+        sum += 1;
+    }
+    levels
+};
 
 /// The polynomial counters' sequences: 4 and 5 bits, as Altirra has them;
 /// 9 and 17, as MAME's, RANDOM in the 17's bits 8 to 15.
@@ -96,6 +106,12 @@ fn polys() -> &'static Polys {
             poly17,
         }
     })
+}
+
+/// A polynomial counter's place, `at`, a clock on: round again after
+/// `length`.
+fn step(at: u32, length: u32) -> u32 {
+    if at + 1 == length { 0 } else { at + 1 }
 }
 
 /// A channel: its registers, its 8-bit counter counting up to its borrow,
@@ -232,10 +248,10 @@ impl Pokey {
                 }
             }
             let base = ticked[if audctl & CLOCK_15KHZ != 0 { 2 } else { 1 }];
-            self.p4 = (self.p4 + 1) % 0xF;
-            self.p5 = (self.p5 + 1) % 0x1F;
-            self.p9 = (self.p9 + 1) % 0x1FF;
-            self.p17 = (self.p17 + 1) % 0x1FFFF;
+            self.p4 = step(self.p4, 0xF);
+            self.p5 = step(self.p5, 0x1F);
+            self.p9 = step(self.p9, 0x1FF);
+            self.p17 = step(self.p17, 0x1FFFF);
             for (n, fast, joined) in [(0, CH1_FAST, joined_12), (2, CH3_FAST, joined_34)] {
                 if audctl & fast != 0 {
                     if ticked[0] {
@@ -297,7 +313,7 @@ impl Pokey {
     /// Its output, its four channels' volumes summed, 0 to 1.
     pub fn output(&self) -> f32 {
         let sum: u8 = self.channels.iter().map(Channel::volume).sum();
-        (sum as f32 / GAIN).min(1.0)
+        LEVELS[sum as usize]
     }
 
     /// Whether its IRQ line's held: a timer come round, as IRQEN lets it.

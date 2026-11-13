@@ -690,6 +690,22 @@ fn header(image: &[u8]) -> Option<&[u8]> {
     (image.len() > 128 && &image[1..10] == b"ATARI7800").then(|| &image[..128])
 }
 
+/// Whether `image`, a ROM with no name to say, is a 7800's and not a 2600's:
+/// it has an .a78's header, or ProSystem's database knows it, or it's 16K
+/// or more and ends as the 7800's BIOS wants a cartridge to, $FFF8's high
+/// nibble $F and bit 0 set, $FFF9's low nibble 3 or 7. (A 2600's few that
+/// end so by chance are 4K or 8K.)
+pub fn is_7800(image: &[u8]) -> bool {
+    if header(image).is_some() || database::find(&crate::host::md5::md5(image)).is_some() {
+        return true;
+    }
+    // $FFF8 and $FFF9, before the vectors.
+    let [.., region, start, _, _, _, _, _, _] = image[..] else {
+        return false;
+    };
+    image.len() >= 0x4000 && region & 0xF1 == 0xF1 && start & 0x0B == 0x03
+}
+
 /// The ROM at `path`, or in the zip there, the first .a78 or .bin in it.
 pub fn image(path: &Path) -> Result<Vec<u8>, String> {
     image_of(path, files::read(path).map_err(|e| e.to_string())?)
