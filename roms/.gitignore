@@ -30,3 +30,5 @@ nes/tests/
 # Atari 7800 ROMs, likewise
 *.a78
 7800/*.zip
+# Skink's boot image and disk, GeckOS's, as its "make install" puts them
+skink/

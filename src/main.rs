@@ -29,10 +29,11 @@
 /// an .a78, or a dump without its header, or a zip of one, F5 and F7 its
 /// difficulty switches and F8 its Pause button, the High Score Cartridge
 /// in it if highscre.bin's beside the game or in roms/atari7800/; or a
-/// 2600's, played as a 2600, as the 7800 plays one. `cpu_emu skink IMAGE
+/// 2600's, played as a 2600, as the 7800 plays one. `cpu_emu skink [IMAGE]
 /// [--disk=DISK] [--fullscreen]` for Skink, a 6502 computer of our own for
 /// GeckOS, IMAGE its boot image, loaded to the top of its memory, and DISK
-/// a disk's image, a FAT floppy's, say, written back as it's written. With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
+/// a disk's image, a FAT floppy's, say, written back as it's written:
+/// roms/skink/rom.bin and roms/skink/geckos.img, if they're not given. With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
 /// to be resized: as the desktop app has it, in place of its library.
 /// `--ram=zeros` or `--ram=random` for its RAM at power-on all 0s, or as
 /// random as a real console's, not all 1s ($FF). `--region=ntsc` or `pal`,
@@ -79,7 +80,7 @@ fn main() {
     if args.iter().any(|arg| arg == "--launched") {
         cpu_emu::host::window::LAUNCHED.store(true, std::sync::atomic::Ordering::Relaxed);
     }
-    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal] [--console=nes|famicom] [--port2=controller|zapper] | atari2600 ROM [--fullscreen] [--region=ntsc|pal] | atari7800 ROM [--fullscreen] [--region=ntsc|pal] | skink IMAGE [--disk=DISK] [--fullscreen]";
+    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal] [--console=nes|famicom] [--port2=controller|zapper] | atari2600 ROM [--fullscreen] [--region=ntsc|pal] | atari7800 ROM [--fullscreen] [--region=ntsc|pal] | skink [IMAGE] [--disk=DISK] [--fullscreen]";
     match args.get(1).map(String::as_str) {
         Some("controls") => machines::nes::controls(),
         Some("pads") => cpu_emu::host::pads::report(),
@@ -165,11 +166,19 @@ fn main() {
             }
         }
         Some("skink") => {
+            // Its boot image and disk as they're given, else as GeckOS's
+            // "make install" puts them, in roms/skink/.
             let image = args[2..]
                 .iter()
                 .find(|arg| !arg.starts_with("--"))
-                .expect(usage);
-            let disk = args.iter().find_map(|arg| arg.strip_prefix("--disk="));
+                .map_or(machines::skink::IMAGE_FILE, String::as_str);
+            let disk = args
+                .iter()
+                .find_map(|arg| arg.strip_prefix("--disk="))
+                .or_else(|| {
+                    let disk = machines::skink::DISK_FILE;
+                    std::path::Path::new(disk).exists().then_some(disk)
+                });
             machines::skink::run(image, disk, args.iter().any(|arg| arg == "--fullscreen"));
         }
         Some(machine @ ("apple2" | "apple2e")) => {

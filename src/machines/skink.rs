@@ -56,6 +56,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
+/// Where its boot image and its disk are, unless they're said: as
+/// GeckOS's arch/skink "make install" puts them.
+pub const IMAGE_FILE: &str = "roms/skink/rom.bin";
+pub const DISK_FILE: &str = "roms/skink/geckos.img";
+
 pub const CLOCK_HZ: u32 = 2_000_000;
 /// A frame's cycles, 60 frames a second.
 pub const FRAME_CYCLES: u32 = CLOCK_HZ / 60;
