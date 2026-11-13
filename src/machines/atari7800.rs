@@ -25,7 +25,8 @@
 //! for one button. A gamepad's Start is the console's Reset, its Select the
 //! Select button; and the Reset button the Reset switch too. The difficulty
 //! switches (A, as a7800 sets them) F5 and F7, and the Pause button F8, and
-//! in the menu.
+//! in the menu. Or in one port, if the game's one of those, a light gun
+//! (light_gun.rs), aimed by the pointer.
 //!
 //! The High Score Cartridge (high_score.rs) between it and the game, if its
 //! ROM's found, as if it's always plugged in; unless the game's a bankset's
@@ -35,12 +36,14 @@
 pub mod cartridge;
 pub mod database;
 pub mod high_score;
+pub mod light_gun;
 pub mod maria;
 pub mod palette;
 
 #[cfg(test)]
 mod tests {
     mod cartridge;
+    mod light_gun;
     mod machine;
     mod maria;
 }
@@ -63,6 +66,7 @@ use crate::host::zip::crc32;
 use crate::machines::region::Region;
 use cartridge::{Cartridge, Kind};
 use high_score::HighScore;
+use light_gun::LightGun;
 use maria::{CELLS, DMA_LIMIT, Maria};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -208,6 +212,9 @@ pub struct Atari7800 {
     /// RAM every game's.
     #[serde(skip)]
     pub high_score: Option<HighScore>,
+    /// The light gun, if the game's one of those, in place of a joystick.
+    #[serde(skip)]
+    pub light_gun: Option<LightGun>,
 }
 
 impl Atari7800 {
@@ -250,6 +257,7 @@ impl Atari7800 {
             sound: None,
             samples: Vec::new(),
             high_score: None,
+            light_gun: None,
         };
         atari.controls_to_pins();
         atari
@@ -264,7 +272,11 @@ impl Atari7800 {
             !(up as u8 | (down as u8) << 1 | (left as u8) << 2 | (right as u8) << 3) & 0x0F
         };
         let [first, second] = self.gamepads;
-        self.riot.pins_a = stick(first) << 4 | stick(second);
+        let mut sticks = [stick(first), stick(second)];
+        if let Some(gun) = self.light_gun {
+            sticks[gun.port] = gun.stick();
+        }
+        self.riot.pins_a = sticks[0] << 4 | sticks[1];
         let reset = self.reset_held || first.start;
         let pause = self.pause_frames > 0;
         self.riot.pins_b = 0x34
@@ -284,6 +296,15 @@ impl Atari7800 {
         let pressed = |pressed: bool| if pressed { 0x80 } else { 0 };
         let pad = |port: usize| self.gamepads[port];
         let two = |port: usize| !self.one_button[port];
+        if let Some(gun) = self.light_gun {
+            match register {
+                0xC | 0xD if register as usize - 0xC == gun.port => {
+                    return if self.gun_sees(gun) { 0 } else { 0x80 };
+                }
+                0x8..=0xB if (register as usize - 0x8) / 2 == gun.port => return 0,
+                _ => {}
+            }
+        }
         match register {
             0x0..=0x7 => 0,
             0x8 => pressed(two(0) && pad(0).b),
@@ -297,6 +318,19 @@ impl Atari7800 {
             }
             _ => 0xFF,
         }
+    }
+
+    /// Whether the light gun `gun` sees light now, the line's dots shown up
+    /// to the beam.
+    fn gun_sees(&self, gun: LightGun) -> bool {
+        let colours = match self.region {
+            Region::Ntsc => &palette::NTSC,
+            Region::Pal => &palette::PAL,
+        };
+        let row = self.line as i32 - TOP as i32;
+        let clock = self.clock as i32 - FIRST_DOT as i32;
+        row <= height(self.region) as i32
+            && gun.sees(row, clock, LINE as i32, &self.drawn, WIDTH, colours)
     }
 
     /// A write of the TIA's `register`, $00 to $1F: INPTCTRL's, until it's
@@ -511,6 +545,9 @@ impl Bus for Atari7800 {
             _ if is_tia(addr) => {
                 self.advance(SLOW_CYCLE - CYCLE);
                 self.stolen += SLOW_CYCLE - CYCLE;
+                if self.light_gun.is_some() {
+                    self.show_dots();
+                }
                 self.tia_read(addr as u8 & 0x0F)
             }
             _ if is_maria(addr) => self.maria.read(addr as u8 & 0x1F),
@@ -660,12 +697,19 @@ impl Machine for Atari7800 {
 
     fn input(&mut self, input: Input) {
         self.gamepads = [input.gamepad, input.gamepad_2];
+        if let Some(gun) = &mut self.light_gun {
+            gun.aim(input.pointer, WIDTH, height(self.region));
+        }
         self.pause_frames = self.pause_frames.saturating_sub(1);
         self.controls_to_pins();
     }
 
     fn rewinds(&self) -> bool {
         true
+    }
+
+    fn aimed_at(&self) -> bool {
+        self.light_gun.is_some()
     }
 
     fn menu(&self) -> Vec<(&'static str, u8)> {
@@ -735,6 +779,7 @@ impl Machine for Atari7800 {
         self.sound = running.sound.take();
         self.samples = take(&mut running.samples);
         self.high_score = running.high_score.take();
+        self.light_gun = running.light_gun;
         self.controls_to_pins();
     }
 }
@@ -787,7 +832,7 @@ pub fn image_of(path: &Path, bytes: Vec<u8>) -> Result<Vec<u8>, String> {
 /// header, its cartridge, and why it won't load, if it won't.
 pub fn facts_of(path: &Path, image: Result<Vec<u8>, String>) -> String {
     let fact = |image: &[u8]| -> Result<[String; 2], String> {
-        let (cartridge, _) = cartridge(image)?;
+        let (cartridge, _, _) = cartridge(image)?;
         Ok([
             format!("{:08X}", crc32(&cartridge.rom)),
             format!("ATARI 7800 {}", cartridge.name()),
@@ -804,7 +849,7 @@ pub fn facts_of(path: &Path, image: Result<Vec<u8>, String>) -> String {
 /// The cartridge in `image`, as ProSystem's database says (as ProSystem
 /// has it, before a header, which is sometimes wrong), or its header, or
 /// its size; and whether it says it's PAL.
-fn cartridge(image: &[u8]) -> Result<(Cartridge, Option<bool>), String> {
+fn cartridge(image: &[u8]) -> Result<(Cartridge, Option<bool>, Option<usize>), String> {
     let headed = header(image);
     // Its size as its header says, not what's after it.
     let rom = match headed {
@@ -829,7 +874,18 @@ fn cartridge(image: &[u8]) -> Result<(Cartridge, Option<bool>), String> {
         }
         (None, None) => (Kind::sized(rom.len()), None, None),
     };
-    Ok((Cartridge::new(rom, kind, pokey)?, pal))
+    // A light gun's port: the database's 2 or 3 (as it has Alien Brigade's
+    // and Crossbow's, which their old headers have too), else a header's 2
+    // (its 3 a paddle's).
+    let gun = match (known, headed) {
+        (Some(known), _) => known
+            .controllers
+            .iter()
+            .position(|&kind| kind == 2 || kind == 3),
+        (None, Some(header)) => header[55..57].iter().position(|&kind| kind == 2),
+        (None, None) => None,
+    };
+    Ok((Cartridge::new(rom, kind, pokey)?, pal, gun))
 }
 
 /// The 7800, on whichever host, with the game at `rom` (an .a78 or a
@@ -838,13 +894,15 @@ fn cartridge(image: &[u8]) -> Result<(Cartridge, Option<bool>), String> {
 pub fn build(rom: &str, region: Option<Region>) -> Result<CPU<Atari7800>, String> {
     let path = Path::new(rom);
     let image = image(path).map_err(|e| format!("{rom}: {e}"))?;
-    let (cartridge, pal) = cartridge(&image).map_err(|e| format!("{rom}: {e}"))?;
+    let (cartridge, pal, gun) = cartridge(&image).map_err(|e| format!("{rom}: {e}"))?;
     let named = path
         .file_name()
         .and_then(|name| Region::from_name(&name.to_string_lossy()));
     let said = pal.map(|pal| if pal { Region::Pal } else { Region::Ntsc });
     let region = region.or(said).or(named).unwrap_or_default();
     let mut atari = Atari7800::new(cartridge, region);
+    atari.light_gun = gun.map(LightGun::new);
+    atari.controls_to_pins();
     let md5 = crate::host::md5::md5(&atari.cartridge.rom);
     if !atari.cartridge.from_3000() && !high_score::left_out_for(&md5) {
         atari.high_score = HighScore::found(path);

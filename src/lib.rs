@@ -68,6 +68,7 @@ pub mod machines {
     pub mod atari7800;
     pub mod basic;
     pub mod facts;
+    pub mod light_gun;
     pub mod nes;
     pub mod region;
 }

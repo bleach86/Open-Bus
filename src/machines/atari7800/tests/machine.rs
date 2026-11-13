@@ -306,6 +306,55 @@ mod tests {
     }
 
     #[test]
+    fn a_light_gun_has_its_trigger_on_up_and_its_light_on_fire() {
+        use crate::host::display::Pointer;
+        use crate::machines::atari7800::light_gun::LightGun;
+        let mut cpu = console_of(&[0xEA; 0x4000]);
+        let atari = &mut cpu.memory;
+        atari.light_gun = Some(LightGun::new(0));
+        let pulled = |pulled: bool| Input {
+            pointer: Pointer {
+                at: Some((100.0, 100.0)),
+                buttons: [pulled, false],
+            },
+            ..Input::default()
+        };
+        atari.input(pulled(false));
+        assert_eq!(atari.read(0x0280) & 0xF0, 0xE0, "up low, not pulled");
+        atari.input(pulled(true));
+        assert_eq!(atari.read(0x0280) & 0xF0, 0xF0, "pulled");
+        assert_eq!(atari.read(0x0280) & 0x0F, 0x0F, "the right port's joystick");
+        assert_eq!(
+            atari.read(0x0C) & 0x80,
+            0x80,
+            "INPT4: no light, the screen dark"
+        );
+        assert_eq!(
+            (atari.read(0x08) & 0x80, atari.read(0x09) & 0x80),
+            (0, 0),
+            "no buttons"
+        );
+        assert!(atari.aimed_at());
+    }
+
+    #[test]
+    fn a_header_says_a_light_guns_port_its_paddles_not() {
+        use crate::machines::atari7800::cartridge as fitted;
+        let headed = |left: u8, right: u8| {
+            let mut image = vec![0; 128];
+            image[1..10].copy_from_slice(b"ATARI7800");
+            image[55] = left;
+            image[56] = right;
+            image.extend(std::iter::repeat_n(0xEA, 0x4000));
+            fitted(&image).unwrap().2
+        };
+        assert_eq!(headed(2, 0), Some(0));
+        assert_eq!(headed(1, 2), Some(1));
+        assert_eq!(headed(1, 1), None);
+        assert_eq!(headed(3, 3), None, "paddles");
+    }
+
+    #[test]
     fn a_bin_is_a_7800s_if_it_ends_as_the_bios_wants_and_is_16k_or_more() {
         use crate::machines::facts::{System, system_of};
         // $FFF8 and $FFF9 as a 7800's cartridge has them, the vectors after.
