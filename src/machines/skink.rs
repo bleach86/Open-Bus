@@ -48,6 +48,7 @@ use crate::host::font;
 use crate::host::machine::{Input, Machine, Picture};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::run::Host;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::host::save_state;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::window::Window;

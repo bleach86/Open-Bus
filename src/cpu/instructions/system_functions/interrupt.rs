@@ -19,7 +19,15 @@ impl<B: Bus> CPU<B> {
         }
 
         let vector = self.hijacked(vector);
-        self.pc = self.read_word(vector);
+        self.pc = self.read_vector(vector);
+    }
+
+    /// The vector at `vector` read, VPB low as it is.
+    pub(crate) fn read_vector(&mut self, vector: u16) -> u16 {
+        self.memory.vector_pull(true);
+        let address = self.read_word(vector);
+        self.memory.vector_pull(false);
+        address
     }
 
     /// The vector an IRQ's or BRK's sequence takes, `vector`: or on the

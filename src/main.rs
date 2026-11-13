@@ -33,7 +33,9 @@
 /// [--disk=DISK] [--fullscreen]` for Skink, a 6502 computer of our own for
 /// GeckOS, IMAGE its boot image, loaded to the top of its memory, and DISK
 /// a disk's image, a FAT floppy's, say, written back as it's written:
-/// roms/skink/rom.bin and roms/skink/geckos.img, if they're not given. With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
+/// roms/skink/rom.bin and roms/skink/geckos.img, if they're not given.
+/// `cpu_emu x16 [ROM] [--fullscreen]` for the Commander X16, ROM its
+/// rom.bin, roms/x16/'s if it's not given (or its release folder's there). With any, `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size,
 /// to be resized: as the desktop app has it, in place of its library.
 /// `--ram=zeros` or `--ram=random` for its RAM at power-on all 0s, or as
 /// random as a real console's, not all 1s ($FF). `--region=ntsc` or `pal`,
@@ -180,6 +182,16 @@ fn main() {
                     std::path::Path::new(disk).exists().then_some(disk)
                 });
             machines::skink::run(image, disk, args.iter().any(|arg| arg == "--fullscreen"));
+        }
+        Some("x16") => {
+            // Its ROM as it's given, else as it's found in roms/x16/.
+            let rom = args[2..]
+                .iter()
+                .find(|arg| !arg.starts_with("--"))
+                .cloned()
+                .or_else(|| machines::x16::rom_file().map(|rom| rom.to_string_lossy().into_owned()))
+                .expect("cpu_emu x16 ROM: no rom.bin in roms/x16/");
+            machines::x16::run(&rom, args.iter().any(|arg| arg == "--fullscreen"));
         }
         Some(machine @ ("apple2" | "apple2e")) => {
             let files: Vec<&String> = args[2..]

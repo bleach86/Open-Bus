@@ -74,6 +74,7 @@ pub mod machines {
     pub mod nes;
     pub mod region;
     pub mod skink;
+    pub mod x16;
 }
 
 /// What a web page calls.

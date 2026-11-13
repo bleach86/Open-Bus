@@ -32,3 +32,5 @@ nes/tests/
 7800/*.zip
 # Skink's boot image and disk, GeckOS's, as its "make install" puts them
 skink/
+# The Commander X16's ROM releases, its makers'
+x16/

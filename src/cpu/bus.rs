@@ -31,6 +31,11 @@ pub trait Bus {
         false
     }
 
+    /// VPB, the 65C02's vector pull, low while it reads the vector of an
+    /// interrupt, BRK or RESET: `pulling`, as it begins and ends, for a
+    /// machine that maps the vectors as it is.
+    fn vector_pull(&mut self, _pulling: bool) {}
+
     /// The RDY line, held by the machine for a DMA of its own: the CPU
     /// halted on its read of `addr`, a cycle at a time, for as long as it
     /// is; the machine's DMA has those cycles, its own work done in their

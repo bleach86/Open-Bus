@@ -176,7 +176,7 @@ impl<B: Bus> CPU<B> {
             self.read_byte(self.sp_to_addr());
             self.sp = self.sp.wrapping_sub(1);
         }
-        self.pc = self.read_word(0xFFFC); // the reset vector
+        self.pc = self.read_vector(0xFFFC); // the reset vector
 
         self.status.interrupt_disable = true; // reset sets I, as on the 6502
         if self.cmos() {
