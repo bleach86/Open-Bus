@@ -204,7 +204,8 @@ fn main() {
                     .iter()
                     .find_map(|arg| arg.strip_prefix(&prefix).map(str::to_string))
             };
-            let sd_card = match said("game") {
+            let game = said("game");
+            let sd_card = match &game {
                 Some(game) => {
                     let game = std::path::Path::new(&game);
                     let card = said("sd").unwrap_or_else(|| {
@@ -226,7 +227,7 @@ fn main() {
                 },
             };
             let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
-            machines::x16::run(&rom, sd_card.as_deref(), fullscreen);
+            machines::x16::run(&rom, sd_card.as_deref(), game.as_deref(), fullscreen);
         }
         Some(machine @ ("apple2" | "apple2e")) => {
             let files: Vec<&String> = args[2..]

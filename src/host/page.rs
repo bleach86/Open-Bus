@@ -3,7 +3,7 @@
 //! controls kept for the host. No more of a browser than that: the page
 //! has the canvas and the sound, and calls in through `web.rs`.
 
-use crate::host::display::{Display, Gamepad, Joystick, Key, Pointer};
+use crate::host::display::{Display, Gamepad, Joystick, Key, Pointer, Scancode};
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -18,8 +18,10 @@ pub struct Shared {
     /// The sound played and not yet taken; the title.
     pub samples: Vec<f32>,
     pub title: String,
-    /// What's pressed, and held.
+    /// What's pressed, and held; for a machine that takes the keys
+    /// themselves, each pressed and let go.
     pub keys: VecDeque<Key>,
+    pub key_changes: VecDeque<(Scancode, bool)>,
     pub function_keys: VecDeque<u8>,
     pub gamepad: Gamepad,
     pub gamepad_2: Gamepad,
@@ -52,6 +54,10 @@ impl Display for Page {
 
     fn key(&mut self) -> Option<Key> {
         self.0.borrow_mut().keys.pop_front()
+    }
+
+    fn key_change(&mut self) -> Option<(Scancode, bool)> {
+        self.0.borrow_mut().key_changes.pop_front()
     }
 
     fn joystick(&self) -> Joystick {

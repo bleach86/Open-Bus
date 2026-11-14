@@ -86,6 +86,8 @@ use std::path::{Path, PathBuf};
 use vera::{HEIGHT, Vera, WIDTH};
 
 pub const CLOCK_HZ: u32 = 8_000_000;
+/// A frame's CPU cycles: VERA's 525 lines, 59.52 frames a second.
+pub const FRAME_CYCLES: u32 = vera::LINE_CYCLES * vera::LINES as u32;
 /// The YM2151's.
 const YM_CLOCK_HZ: u32 = 3_579_545;
 
@@ -531,6 +533,8 @@ impl Machine for X16 {
 
     fn title(&self) -> String {
         format!("Commander X16   {}", self.name)
+            .trim_end()
+            .to_string()
     }
 
     fn sound_on(&mut self) {
@@ -809,6 +813,14 @@ pub fn is_game_zip(bytes: &[u8]) -> bool {
         })
 }
 
+/// The name of the game at `path`, as it's shown: its zip's, its folder's,
+/// its program's.
+pub fn game_name(path: &Path) -> String {
+    game_of(path)
+        .file_stem()
+        .map_or(String::new(), |name| name.to_string_lossy().into_owned())
+}
+
 /// The card at `card` for the game at `game` (a zip, a folder, or a
 /// program, `game_of`), made if it isn't there yet: its files, and
 /// AUTOBOOT.X16 to run it. Once made, it's kept, and what the game saves on
@@ -868,12 +880,16 @@ pub fn size() -> (u32, u32) {
     ((WIDTH * 3 / 2) as u32, (HEIGHT * 3 / 2) as u32)
 }
 
-/// The X16 as `build` has it, run in a window, `fullscreen` or not; its
-/// state saved beside its SD card's image, or its ROM, with none.
+/// The X16 as `build` has it, run in a window, `fullscreen` or not, named
+/// for its `game`, if it's playing one; its state saved beside its SD
+/// card's image, or its ROM, with none.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run(rom: &str, sd_card: Option<&str>, fullscreen: bool) {
+pub fn run(rom: &str, sd_card: Option<&str>, game: Option<&str>, fullscreen: bool) {
     let mut cpu = build(rom, sd_card).unwrap_or_else(|e| panic!("{e}"));
     cpu.memory.keep_nvram(Path::new(NVRAM_FILE));
+    if let Some(game) = game {
+        cpu.memory.name = game_name(Path::new(game));
+    }
     let title = cpu.memory.title();
     let window = Window::new(&title, WIDTH, HEIGHT, size(), fullscreen);
     let state = save_state::path(Path::new(sd_card.unwrap_or(rom)));

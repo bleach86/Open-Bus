@@ -4,7 +4,7 @@
 
 use crate::cpu::Variant;
 use crate::host::clock;
-use crate::host::display::{COPY_KEY, Gamepad, Joystick, Key, PASTE_KEY, Pointer};
+use crate::host::display::{COPY_KEY, Gamepad, Joystick, Key, PASTE_KEY, Pointer, Scancode};
 use crate::host::files;
 use crate::host::machine::{Machine, PowerOnRam};
 use crate::host::page::{Page, Shared};
@@ -18,6 +18,7 @@ use crate::machines::atari7800::{self, Atari7800};
 use crate::machines::facts;
 use crate::machines::nes::{self, Nes};
 use crate::machines::region::Region;
+use crate::machines::x16::{self, X16};
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
@@ -120,6 +121,21 @@ enum Running {
     Nes(Host<Nes>),
     Atari2600(Host<Atari2600>),
     Atari7800(Host<Atari7800>),
+    /// Boxed, its host far bigger than the others'.
+    X16(Box<Host<X16>>),
+}
+
+/// Each running machine's host, `host`, as it's asked of: `$then`.
+macro_rules! each {
+    ($running:expr, $host:ident => $then:expr) => {
+        match $running {
+            Running::Apple($host) => $then,
+            Running::Nes($host) => $then,
+            Running::Atari2600($host) => $then,
+            Running::Atari7800($host) => $then,
+            Running::X16($host) => $then,
+        }
+    };
 }
 
 #[wasm_bindgen]
@@ -128,6 +144,9 @@ pub struct Emulator {
     page: Rc<RefCell<Shared>>,
     size: (u32, u32),
 }
+
+/// The X16's RTC's RAM, as the page keeps it.
+const X16_NVRAM: &str = "x16-nvram.bin";
 
 fn model(name: &str) -> Result<Model, String> {
     match name {
@@ -245,15 +264,42 @@ impl Emulator {
         })
     }
 
+    /// The Commander X16, its ROM `rom`, with `game` (a zip, or a program)
+    /// on a card of its own, `card`, made if it isn't there yet; or with
+    /// none, "", to BASIC, `card` made blank. Its clock set to the time
+    /// where the page is, `local_seconds` after 1970 began; the RTC's RAM
+    /// kept in X16_NVRAM.
+    pub fn x16(rom: &str, game: &str, card: &str, local_seconds: f64) -> Result<Emulator, String> {
+        clock::set_local(local_seconds as i64);
+        let card_path = Path::new(card);
+        if game.is_empty() {
+            x16::blank_card(card_path)?;
+        } else {
+            x16::make_card(Path::new(game), card_path)?;
+        }
+        let mut cpu = x16::build(rom, Some(card))?;
+        cpu.memory.keep_nvram(Path::new(X16_NVRAM));
+        if !game.is_empty() {
+            cpu.memory.name = x16::game_name(Path::new(game));
+        }
+        let page = Rc::new(RefCell::new(Shared::default()));
+        let host = Host::new(
+            cpu,
+            Box::new(Page(page.clone())),
+            save_state::path(card_path),
+        );
+        let (width, height) = x16::size();
+        Ok(Emulator {
+            running: Running::X16(Box::new(host)),
+            page,
+            size: (width, height),
+        })
+    }
+
     /// A frame, `local_seconds` after 1970 began, where the page is.
     pub fn frame(&mut self, local_seconds: f64) {
         clock::set_local(local_seconds as i64);
-        match &mut self.running {
-            Running::Apple(host) => host.frame(),
-            Running::Nes(host) => host.frame(),
-            Running::Atari2600(host) => host.frame(),
-            Running::Atari7800(host) => host.frame(),
-        };
+        each!(&mut self.running, host => host.frame());
     }
 
     /// Frames a second.
@@ -263,6 +309,7 @@ impl Emulator {
             Running::Nes(host) => host.cpu.memory.region.frames_per_second(),
             Running::Atari2600(host) => atari2600::frames_per_second(&host.cpu.memory),
             Running::Atari7800(host) => atari7800::frames_per_second(&host.cpu.memory),
+            Running::X16(_) => x16::CLOCK_HZ as f64 / x16::FRAME_CYCLES as f64,
         }
     }
 
@@ -322,12 +369,28 @@ impl Emulator {
 
     /// Whether it's aimed at, as a light gun is, the pointer its.
     pub fn aimed_at(&self) -> bool {
-        match &self.running {
-            Running::Apple(host) => host.cpu.memory.aimed_at(),
-            Running::Nes(host) => host.cpu.memory.aimed_at(),
-            Running::Atari2600(host) => host.cpu.memory.aimed_at(),
-            Running::Atari7800(host) => host.cpu.memory.aimed_at(),
-        }
+        each!(&self.running, host => host.cpu.memory.aimed_at())
+    }
+
+    /// Whether it has a mouse: the pointer its as it's locked, its moves
+    /// told however far they go.
+    pub fn has_mouse(&self) -> bool {
+        each!(&self.running, host => host.cpu.memory.has_mouse())
+    }
+
+    /// Whether it takes the keyboard's keys themselves (`key_change`), not
+    /// the characters they type.
+    pub fn raw_keys(&self) -> bool {
+        each!(&self.running, host => host.cpu.memory.raw_keys())
+    }
+
+    /// The key at `usage`, its USB HID usage, pressed (`down`, again as it
+    /// repeats) or let go.
+    pub fn key_change(&self, usage: u16, down: bool) {
+        self.page
+            .borrow_mut()
+            .key_changes
+            .push_back((Scancode(usage), down));
     }
 
     /// The pointer as it is: at `x`, `y` on the picture, in its pixels, if
@@ -357,12 +420,7 @@ impl Emulator {
 
     /// `text` said over the picture, as the host's notices are.
     pub fn say(&mut self, text: &str) {
-        match &mut self.running {
-            Running::Apple(host) => host.say(text),
-            Running::Nes(host) => host.say(text),
-            Running::Atari2600(host) => host.say(text),
-            Running::Atari7800(host) => host.say(text),
-        }
+        each!(&mut self.running, host => host.say(text))
     }
 
     /// The screen's text, as it was copied, once: for the page to put on

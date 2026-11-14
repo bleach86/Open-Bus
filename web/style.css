@@ -1016,7 +1016,8 @@ kbd {
   margin-left: 0.7em;
 }
 #machine[data-machine="console"] .for-apple,
-#machine[data-machine="apple"] .for-nes {
+#machine[data-machine="apple"] .for-nes,
+#machine[data-machine="x16"] .help .for-apple {
   display: none;
 }
 

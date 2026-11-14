@@ -10,6 +10,7 @@ import { artKey, isMedia, keyOf, plainTitle, tagsOf, takeArt, titleWords } from 
 import { drawScene } from './scenes.js';
 import { learnDetails, learnedDetails } from './details.js';
 import { versionKey, versionName, versionRank } from './versions.js';
+import { usageOf } from './keys.js';
 
 /// The emulator's WebAssembly: the browser's only, the desktop app's games
 /// being the native emulator's, which sorts its ROMs too.
@@ -62,6 +63,11 @@ const HIGH_SCORE_ROM = 'highscre.bin';
 const X16_ROM = 'x16-rom.bin';
 const X16_TITLE = 'Commander X16';
 const isX16Itself = (name) => name === X16_ROM;
+/// Where the X16's games' SD cards are kept, each of its game's name; and
+/// the X16's own.
+const X16_CARDS = 'x16 cards/';
+const x16Card = (game) => `${X16_CARDS}${game ?? X16_TITLE}.img`;
+const isCard = (name) => name.startsWith(X16_CARDS) && kind(name) === 'img';
 const kind = (name) => name.split('.').pop().toLowerCase();
 /// A game's file: a .bin a 2600's or a 7800's, unless it's an Apple's ROM.
 const isGame = (name) => ['nes', 'fds', 'a26', 'a78', 'bin', 'zip', 'prg'].includes(kind(name)) && !isRom(name);
@@ -868,7 +874,13 @@ async function playGame(machine) {
     if (native) {
         playNatively(machine);
     } else if (machine.kind === 'x16') {
-        say('The Commander X16 plays in the desktop app, for now.', true);
+        if (!files.includes(X16_ROM)) {
+            say("X16 games need the X16's ROM, a release's rom.bin or its zip: add it in Settings.", true);
+            return;
+        }
+        const card = x16Card(machine.game);
+        const x16 = () => Emulator.x16(X16_ROM, machine.game ?? '', card, localSeconds());
+        start(x16, 'x16', [machine.game, card].filter(Boolean), machine);
     } else if (machine.kind === 'atari7800') {
         const chosen = await keeper.gameSettings(machine);
         rewind(page('rewind').checked);
@@ -2764,8 +2776,9 @@ async function start(make, machine, using, game) {
     starting = true;
     say('Starting…');
     try {
+        // Not the X16's cards, but the one it's given: they're big.
         for (const name of await names()) {
-            if (using.includes(name) || (!isGame(name) && !isDisk(name))) {
+            if (using.includes(name) || (!isGame(name) && !isDisk(name) && !isCard(name))) {
                 put_file(name, await bytes(name));
             }
         }
@@ -2790,8 +2803,12 @@ async function start(make, machine, using, game) {
     page('library').hidden = true;
     showPadHints(); // the library's, gone with it
     page('machine').hidden = false;
-    // A console's, the NES's or the 2600's, laid out as a console's.
-    page('machine').dataset.machine = machine === 'apple' ? 'apple' : 'console';
+    // A console's, the NES's or the 2600's, laid out as a console's; the
+    // X16 as both, its keyboard's and its SNES pads'.
+    page('machine').dataset.machine = ['apple', 'x16'].includes(machine) ? machine : 'console';
+    page('x16-help').hidden = machine !== 'x16';
+    rawKeys = emulator.raw_keys();
+    hasMouse = emulator.has_mouse();
     page('disk').hidden = page('disk-help').hidden = !emulator.disk_system();
     page('switch-help').hidden = machine !== 'atari2600';
     page('switch-help-7800').hidden = machine !== 'atari7800';
@@ -2832,9 +2849,14 @@ async function stop() {
         playing = null;
     }
     await saveWritten();
+    letGoKeys();
     emulator.free();
     emulator = null;
     held.clear();
+    rawKeys = hasMouse = false;
+    if (locked()) {
+        document.exitPointerLock();
+    }
     fastForward = rewinding = false;
     clearTimeout(pointerTimer);
     letGo(page('handheld'));
@@ -2908,9 +2930,13 @@ function padState(pad) {
 }
 
 /// Whether what's bound to `action` is held, for `who`, with gamepad `pad`.
+/// Whether what's bound to `action` is held, for `who`, with gamepad `pad`:
+/// not by the keyboard, if the machine has all its keys.
 function boundHeld(who, action, pad, state) {
     return bindings.holds(controlsBound, who, action, (source) =>
-        source.startsWith('key:') ? held.has(source.slice('key:'.length)) : bindings.padHeld(source, pad, state),
+        source.startsWith('key:')
+            ? !rawKeys && held.has(source.slice('key:'.length))
+            : bindings.padHeld(source, pad, state),
     );
 }
 
@@ -3008,8 +3034,7 @@ function tick(now) {
     let ran = false;
     for (let frames = 0; frames < 3 * speed && now - last >= period; frames++) {
         controls();
-        const here = (Date.now() - new Date().getTimezoneOffset() * 60000) / 1000;
-        emulator.frame(here);
+        emulator.frame(localSeconds());
         last += period;
         ran = true;
         putCopied();
@@ -3025,7 +3050,24 @@ function tick(now) {
     }
 }
 
+/// Now, where the page is: seconds after 1970 began there.
+const localSeconds = () => (Date.now() - new Date().getTimezoneOffset() * 60000) / 1000;
+
 const ARROWS = { ArrowLeft: 0, ArrowRight: 1, ArrowUp: 2, ArrowDown: 3 };
+
+/// Whether the machine takes the keys themselves, as they're pressed and let
+/// go, by where they are: the X16's; and those held for it, to be let go.
+let rawKeys = false;
+const rawHeld = new Set();
+
+/// The keys held for the machine let go, as the page's no longer typed in.
+function letGoKeys() {
+    for (const code of rawHeld) {
+        emulator?.key_change(usageOf(code), false);
+    }
+    rawHeld.clear();
+}
+addEventListener('blur', letGoKeys);
 
 addEventListener('keydown', (event) => {
     if (!emulator) {
@@ -3052,6 +3094,16 @@ addEventListener('keydown', (event) => {
     }
     held.add(code);
     const number = /^F(\d+)$/.exec(code)?.[1];
+    // The machine's keys, all but the page's own, F11 and F12, and the
+    // clipboard's; the function keys the host's too, for those it has.
+    if (rawKeys && code !== 'F11' && code !== 'F12' && usageOf(code) !== undefined) {
+        rawHeld.add(code);
+        emulator.key_change(usageOf(code), true);
+        if (number && !event.repeat) {
+            emulator.function_key(Number(number));
+        }
+        return;
+    }
     if (number) {
         if (event.repeat) {
             return;
@@ -3108,6 +3160,9 @@ press('paste', pasteClipboard);
 
 addEventListener('keyup', (event) => {
     held.delete(event.code);
+    if (rawHeld.delete(event.code)) {
+        emulator?.key_change(usageOf(event.code), false);
+    }
     if (event.code === 'F12') {
         reset = false;
     }
@@ -3128,8 +3183,54 @@ function fullscreen() {
 attach(page('handheld'));
 page('full').hidden = !page('frame').requestFullscreen;
 
-// Not a light gun's: its double clicks are shots.
-page('screen').ondblclick = () => aiming || fullscreen();
+// Not a light gun's: its double clicks are shots; nor a machine's with a
+// mouse, its clicks its own.
+page('screen').ondblclick = () => aiming || hasMouse || fullscreen();
+
+/// Whether the machine has a mouse: the pointer locked to the picture for
+/// it by a click there, the browser's Esc letting it go; its moves summed,
+/// in the picture's dots, however far they go, and its buttons.
+let hasMouse = false;
+const mouse = { x: 0, y: 0, buttons: 0 };
+const locked = () => document.pointerLockElement === page('screen');
+function tellMouse() {
+    emulator?.pointer(mouse.x, mouse.y, locked(), locked() ? mouse.buttons : 0);
+}
+page('screen').addEventListener('mousedown', (event) => {
+    if (!hasMouse) {
+        return;
+    }
+    if (!locked()) {
+        // Where it was clicked, the mouse's from there; that click not its.
+        const canvas = page('screen');
+        const box = canvas.getBoundingClientRect();
+        mouse.x = ((event.clientX - box.left) / box.width) * canvas.width;
+        mouse.y = ((event.clientY - box.top) / box.height) * canvas.height;
+        canvas.requestPointerLock?.();
+        return;
+    }
+    mouse.buttons = event.buttons & 3;
+    tellMouse();
+});
+addEventListener('mouseup', (event) => {
+    if (hasMouse && locked()) {
+        mouse.buttons = event.buttons & 3;
+        tellMouse();
+    }
+});
+addEventListener('mousemove', (event) => {
+    if (hasMouse && locked()) {
+        const canvas = page('screen');
+        const box = canvas.getBoundingClientRect();
+        mouse.x += (event.movementX / box.width) * canvas.width;
+        mouse.y += (event.movementY / box.height) * canvas.height;
+        tellMouse();
+    }
+});
+document.addEventListener('pointerlockchange', () => {
+    mouse.buttons = 0;
+    tellMouse();
+});
 
 /// Whether the machine's aimed at, a light gun's: the pointer on the picture
 /// its, where it is and its buttons, the left (or a finger) and the right.
