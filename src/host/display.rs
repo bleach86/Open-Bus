@@ -63,6 +63,17 @@ pub trait Display {
     /// them the display's own (a double click its fullscreen).
     fn aiming(&mut self, _on: bool) {}
 
+    /// Whether the machine takes the keyboard's keys as they're pressed and
+    /// let go (`key_change`), not just the characters they type: none of
+    /// them the gamepads' then.
+    fn raw_keys(&mut self, _on: bool) {}
+
+    /// The next key pressed or let go, as `raw_keys` has them, pressed
+    /// again as it repeats; but those the display keeps for its own uses.
+    fn key_change(&mut self) -> Option<(Scancode, bool)> {
+        None
+    }
+
     /// Whether the machine has a mouse: the host's captured for it once
     /// it's clicked on the picture, its cursor gone and its moves and
     /// clicks the machine's, till it's let go; not captured, it's none of
@@ -180,6 +191,19 @@ impl Joystick {
 pub struct Pointer {
     pub at: Option<(f32, f32)>,
     pub buttons: [bool; 2],
+}
+
+/// A key on the host's keyboard, by where it is, not what it types: its
+/// USB HID usage, the keyboard page's, as SDL's scancodes have it and a web
+/// page's `KeyboardEvent.code` names it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Scancode(pub u16);
+
+impl Scancode {
+    /// F1 to F12, `n` 1 to 12.
+    pub fn function(n: u16) -> Scancode {
+        Scancode(0x39 + n)
+    }
 }
 
 /// A gamepad as a console has it: its D-pad, its A and B, its Select and

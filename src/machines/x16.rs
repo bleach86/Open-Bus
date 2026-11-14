@@ -21,16 +21,20 @@
 //! pulling its line low, and PB6 and PB7 CLK and DATA in, as the lines
 //! are: nothing's on it, so as the X16 has them.
 //!
-//! The YM2151 at 2 MHz, as the cards from `$9FA0` are: each access takes
-//! 3 cycles more. It takes its registers, but makes no sound yet, and
-//! never says it's busy. What isn't anything reads as the bus was left,
-//! the address's high byte.
+//! The YM2151 (`chips::ym2151`), clocked at 3.58 MHz: its address at
+//! `$9F40`, its data at `$9F41`, its status read there; its IRQ the CPU's,
+//! as the KERNAL has it (x16emu's only with -ymirq); reset with the rest.
+//! It's on the bus at 2 MHz, as the cards from `$9FA0` are: each access
+//! takes 3 cycles more. Its sound's mixed as x16emu has it: VERA's twice,
+//! the YM's once. What isn't anything reads as the bus was left, the
+//! address's high byte.
 //!
 //! The 65C02's VPB, low as it reads a vector, has them read from ROM
 //! bank 0, `$01` as it was: the KERNAL's handlers in RAM, saving it and
 //! setting bank 0 themselves.
 //!
-//! Its keyboard's characters are typed as its keys (`keyboard`); its SNES
+//! Its keyboard's keys are the host's, each pressed and let go, by its
+//! place; what's pasted is typed as its keys (`keyboard`); its SNES
 //! controllers 1 and 2 are the host's gamepads, their A and B the SNES's.
 //! Its mouse is the host's pointer: how far it's moved over the picture
 //! each frame, a dot a dot, and its buttons, sent as the mouse's packets.
@@ -48,24 +52,28 @@ mod tests {
     mod machine;
     mod sd_card;
     mod vera;
+    mod vera_audio;
 }
 
 pub mod i2c;
 pub mod keyboard;
 pub mod sd_card;
 pub mod vera;
+pub mod vera_audio;
 
 use crate::chips::via6522::Via6522;
+use crate::chips::ym2151::Ym2151;
 use crate::cpu::bus::Bus;
 use crate::cpu::{CPU, Variant};
 use crate::host::clock;
-use crate::host::display::{Gamepad, Key, Pointer};
+use crate::host::display::{Gamepad, Key, Pointer, Scancode};
 use crate::host::files;
 use crate::host::machine::{Input, Machine, Picture};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::run::Host;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::save_state;
+use crate::host::sound::Sampler;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::window::Window;
 use crate::host::zip::crc32;
@@ -76,6 +84,8 @@ use std::path::{Path, PathBuf};
 use vera::{HEIGHT, Vera, WIDTH};
 
 pub const CLOCK_HZ: u32 = 8_000_000;
+/// The YM2151's.
+const YM_CLOCK_HZ: u32 = 3_579_545;
 
 /// Where its ROM is, unless it's said: roms/x16/rom.bin, or a release's
 /// folder's in roms/x16/, the last by name.
@@ -149,9 +159,10 @@ pub struct X16 {
     /// The SNES latch and clock as they were.
     latch: bool,
     clock: bool,
-    /// The YM2151's register chosen, and its registers.
-    ym_register: u8,
-    ym: Vec<u8>,
+    ym: Ym2151,
+    /// The YM2151's clock, in 8ths of a microsecond: its next tick due as
+    /// this passes the CPU's.
+    ym_clock: u32,
     nmi: u8,
     /// VPB low, a vector being read: from ROM bank 0, whatever `$01` says.
     #[serde(skip)]
@@ -181,6 +192,9 @@ pub struct X16 {
     rom_crc: u32,
     #[serde(skip)]
     samples: Vec<f32>,
+    /// Its sound sampled a cycle at a time, once it's on.
+    #[serde(skip)]
+    sampler: Option<Sampler<2>>,
 }
 
 /// The host's pointer as the mouse has it: where it was, as far as its
@@ -212,8 +226,8 @@ impl X16 {
             pads: [Snes::default(); 2],
             latch: false,
             clock: false,
-            ym_register: 0,
-            ym: vec![0; 256],
+            ym: Ym2151::new(),
+            ym_clock: 0,
             nmi: 0,
             vector_pull: false,
             resetting: false,
@@ -228,6 +242,7 @@ impl X16 {
             name: String::new(),
             rom_crc: crc32(rom),
             samples: Vec::new(),
+            sampler: None,
         };
         x16.i2c.rtc.set(clock::now());
         x16.port_a_changed();
@@ -241,6 +256,7 @@ impl X16 {
             via.reset();
         }
         self.vera.reset();
+        self.ym = Ym2151::new();
         self.port_a_changed();
         self.port_b_changed();
     }
@@ -302,6 +318,21 @@ impl X16 {
         self.vera.tick();
         self.i2c.tick();
         self.nmi = self.nmi.saturating_sub(1);
+        self.ym_clock += YM_CLOCK_HZ;
+        if self.ym_clock >= CLOCK_HZ {
+            self.ym_clock -= CLOCK_HZ;
+            self.ym.tick();
+        }
+        if let Some(sampler) = &mut self.sampler {
+            // As x16emu mixes them: VERA's twice, the YM's once, of 16 bits.
+            let (vera, ym) = (self.vera.sound(), self.ym.output());
+            let level = |vera: i32, ym: i16| (vera * 2 + ym as i32) as f32 / 32768.0;
+            let levels = [level(vera.0, ym.0), level(vera.1, ym.1)];
+            if let Some(sample) = sampler.cycle(levels) {
+                self.samples
+                    .extend(sample.map(|level| level.clamp(-1.0, 1.0)));
+            }
+        }
     }
 
     /// Its clock's RAM kept in the file at `path`: read from it, if it's
@@ -387,8 +418,12 @@ impl Bus for X16 {
             0x9F20..=0x9F3F => self.vera.read(addr as u8),
             0x9F40..=0x9F5F => {
                 self.slow();
-                // The YM2151's status, never busy; its other address, nothing.
-                if addr & 1 != 0 { 0 } else { open }
+                // The YM2151's status; its other address, nothing.
+                if addr & 1 != 0 {
+                    self.ym.status()
+                } else {
+                    open
+                }
             }
             0x9F60..=0x9F9F => open,
             0x9FA0..=0x9FFF => {
@@ -423,9 +458,9 @@ impl Bus for X16 {
             0x9F40..=0x9F5F => {
                 self.slow();
                 if addr & 1 == 0 {
-                    self.ym_register = value;
+                    self.ym.write_address(value);
                 } else {
-                    self.ym[self.ym_register as usize] = value;
+                    self.ym.write_data(value);
                 }
             }
             0x9F60..=0x9F9F => {}
@@ -467,7 +502,7 @@ impl Bus for X16 {
     }
 
     fn irq(&self) -> bool {
-        self.vera.irq() || self.vias[0].irq() || self.vias[1].irq()
+        self.vera.irq() || self.vias[0].irq() || self.vias[1].irq() || self.ym.irq()
     }
 
     fn nmi(&self) -> bool {
@@ -496,7 +531,9 @@ impl Machine for X16 {
         format!("Commander X16   {}", self.name)
     }
 
-    fn sound_on(&mut self) {}
+    fn sound_on(&mut self) {
+        self.sampler = Some(Sampler::new(CLOCK_HZ));
+    }
 
     fn sound(&mut self) -> &mut Vec<f32> {
         &mut self.samples
@@ -567,6 +604,18 @@ impl Machine for X16 {
         true
     }
 
+    fn raw_keys(&self) -> bool {
+        true
+    }
+
+    /// The key in its place pressed or let go, after what's typed already.
+    fn key_change(&mut self, key: Scancode, down: bool) {
+        if let Some(code) = keyboard::change(key, down) {
+            self.typing.push_back(code);
+            self.type_on();
+        }
+    }
+
     /// Its clock's RAM, saved as it's written.
     fn keep_saved(&mut self, _closing: bool) {
         let Some(path) = &self.nvram_file else { return };
@@ -605,6 +654,7 @@ impl Machine for X16 {
         self.name = take(&mut running.name);
         self.rom_crc = running.rom_crc;
         self.samples = take(&mut running.samples);
+        self.sampler = running.sampler.take();
     }
 }
 

@@ -1,17 +1,18 @@
 //! The X16 as a whole: its memory map and banks, its vectors from ROM bank
 //! 0, its slow accesses, VIA 1's wiring to the SNES controllers and the IEC
-//! bus, the SMC's reset and power off, its keyboard's keys; and with its
-//! ROM (roms/x16/, a release's rom.bin; without one those tests say so and
-//! pass), booted to BASIC, typed to, its mouse pointer shown, its date the
-//! host's, and a program saved to its SD card and loaded back (with
-//! mtools, to make the card). Its clock's RAM kept in a file.
+//! bus, the SMC's reset and power off, its keyboard's keys, the host's in
+//! their places; and with its ROM (roms/x16/, a release's rom.bin; without
+//! one those tests say so and pass), booted to BASIC, typed to, a key held,
+//! its mouse pointer shown, its date the host's, a note played on the PSG
+//! and on the YM2151, and a program saved to its SD card and loaded back
+//! (with mtools, to make the card). Its clock's RAM kept in a file.
 
 #[cfg(test)]
 mod tests {
     use crate::cpu::CPU;
     use crate::cpu::bus::Bus;
     use crate::host::clock;
-    use crate::host::display::{Gamepad, Key, Pointer};
+    use crate::host::display::{Gamepad, Key, Pointer, Scancode};
     use crate::host::files;
     use crate::host::machine::{Input, Machine};
     use crate::machines::x16::i2c::Asked;
@@ -184,6 +185,27 @@ mod tests {
     }
 
     #[test]
+    fn a_host_key_is_the_x16s_in_its_place() {
+        let number = |usage| keyboard::number(Scancode(usage));
+        assert_eq!([number(0x04), number(0x1D)], [Some(31), Some(46)], "A, Z");
+        assert_eq!([number(0x1E), number(0x27)], [Some(2), Some(11)], "1, 0");
+        assert_eq!(number(0x3A), Some(112), "F1");
+        assert_eq!(
+            [number(0xE1), number(0xE5)],
+            [Some(44), Some(57)],
+            "the Shifts"
+        );
+        assert_eq!(number(0x46), None, "Print Screen: none");
+        assert_eq!(keyboard::change(Scancode(0x04), false), Some(31 | 0x80));
+        let mut x16 = x16();
+        x16.key_change(Scancode(0x52), true);
+        x16.key_change(Scancode(0x52), true);
+        x16.key_change(Scancode(0x52), false);
+        let keys: Vec<u8> = x16.i2c.smc.keys.iter().copied().collect();
+        assert_eq!(keys, [83, 83, 83 | 0x80], "Up, again as it repeats, let go");
+    }
+
+    #[test]
     fn pasted_capitals_are_letters_but_in_mixed_case_shifted() {
         // Its codes, in the SMC and waiting for room there.
         let typed = |text: &str| {
@@ -332,5 +354,82 @@ mod tests {
         let mut x16 = self::x16();
         x16.keep_nvram(&file);
         assert_eq!(x16.i2c.rtc.ram, [0; 64], "no file yet: as it was");
+    }
+
+    #[test]
+    fn a_held_key_is_held_for_the_kernals_keyboard_joystick() {
+        let Some(mut cpu) = booting() else { return };
+        frames(&mut cpu, 300);
+        cpu.memory.type_text(
+            "10 if joy(0)<>1 then 10\n20 print joy(0):if joy(0)=1 then 20\n30 print \"up\"\nrun\n",
+        );
+        // Return, typing RUN, is START for a moment: past that, waiting.
+        frames(&mut cpu, 300);
+        let text = cpu.memory.screen_text().unwrap_or_default();
+        assert!(text.ends_with("RUN"), "waiting for RIGHT:\n{text}");
+        let right = Scancode(0x4F);
+        cpu.memory.key_change(right, true);
+        frames(&mut cpu, 30);
+        let text = cpu.memory.screen_text().unwrap_or_default();
+        assert!(text.ends_with(" 1"), "RIGHT, 1, held:\n{text}");
+        cpu.memory.key_change(right, false);
+        frames(&mut cpu, 30);
+        let text = cpu.memory.screen_text().unwrap_or_default();
+        assert!(text.ends_with(" 1\nUP\n\nREADY."), "let go:\n{text}");
+    }
+
+    #[test]
+    fn psgnote_plays_its_note_at_its_pitch() {
+        let Some(mut cpu) = booting() else { return };
+        cpu.memory.sound_on();
+        frames(&mut cpu, 300);
+        cpu.memory.type_text("psgnote 1,$4a\n");
+        frames(&mut cpu, 60);
+        cpu.memory.sound().clear();
+        frames(&mut cpu, 60);
+        // A second's samples, left and right, at 48 kHz: A4, 440 Hz.
+        let samples = std::mem::take(cpu.memory.sound());
+        assert!(
+            (95_000..97_000).contains(&samples.len()),
+            "{} samples",
+            samples.len()
+        );
+        let left: Vec<f32> = samples.iter().step_by(2).copied().collect();
+        let rises = left
+            .windows(2)
+            .filter(|w| w[0] < 0.0 && w[1] >= 0.0)
+            .count();
+        assert!((435..=445).contains(&rises), "{rises} cycles in a second");
+        let loudest = left
+            .iter()
+            .fold(0.0f32, |most, level| most.max(level.abs()));
+        assert!(loudest > 0.01, "loudest {loudest}");
+    }
+
+    #[test]
+    fn fmnote_plays_its_note_on_the_ym2151() {
+        let Some(mut cpu) = booting() else { return };
+        cpu.memory.sound_on();
+        frames(&mut cpu, 300);
+        cpu.memory.type_text("fmnote 0,$4a\n");
+        frames(&mut cpu, 30);
+        cpu.memory.sound().clear();
+        frames(&mut cpu, 60);
+        let samples = std::mem::take(cpu.memory.sound());
+        let left: Vec<f32> = samples.iter().step_by(2).copied().collect();
+        let loudest = left
+            .iter()
+            .fold(0.0f32, |most, level| most.max(level.abs()));
+        assert!(loudest > 0.01, "loudest {loudest}");
+        // Its period, where it's most like itself: A4's, 48,000 / 440.
+        let likeness =
+            |lag: usize| -> f32 { left.iter().zip(&left[lag..]).map(|(a, b)| a * b).sum() };
+        let period = (60..300)
+            .max_by(|&a, &b| likeness(a).total_cmp(&likeness(b)))
+            .unwrap();
+        assert!(
+            (108..=110).contains(&period),
+            "a period of {period} samples"
+        );
     }
 }

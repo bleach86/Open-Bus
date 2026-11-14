@@ -19,11 +19,13 @@
 //! scroll, as it is; its sprites as their attributes are then, as many as
 //! its renderer has time for, their collisions into ISR as line 480 begins.
 //! Its FX's ways of writing aren't here yet (its registers, DCSEL 2 to 6,
-//! hold what's written, and that's all); NTSC and RGB are shown as VGA. Its sound, the PSG and PCM, isn't
-//! here either: the FIFO takes nothing and reads empty. Its SPI port has
-//! the SD card on it (`sd_card`), if there is one.
+//! hold what's written, and that's all); NTSC and RGB are shown as VGA.
+//! Its sound's the PSG's and the PCM's (`vera_audio`), a sample each 512
+//! of its clocks. Its SPI port has the SD card on it (`sd_card`), if
+//! there is one.
 
 use super::sd_card::SdCard;
+use super::vera_audio::{Pcm, Psg};
 use serde::{Deserialize, Serialize};
 
 pub const WIDTH: usize = 640;
@@ -34,6 +36,7 @@ pub const LINE_CYCLES: u32 = 256;
 pub const LINES: u16 = 525;
 
 const VRAM_SIZE: usize = 0x20000;
+const PSG: usize = 0x1F9C0;
 const PALETTE: usize = 0x1FA00;
 const SPRITES: usize = 0x1FC00;
 
@@ -46,6 +49,11 @@ const AFLOW: u8 = 0x08;
 /// The sprite renderer's clocks a line, as x16emu counts them: one a
 /// sprite looked at, one a 32 bits fetched, one a dot drawn.
 const SPRITE_BUDGET: u32 = 800;
+
+/// Its sound's samples, in CPU cycles: each 512 of its 25 MHz clocks, the
+/// CPU at 8 MHz, counted in 25ths of a CPU cycle.
+const SAMPLE_CYCLES: u32 = 512 * 8;
+const CLOCKS_A_CYCLE: u32 = 25;
 
 /// DC_VER0 to 3, read where a register's only written: "V", 47.0.2.
 const VERSION: [u8; 4] = [b'V', 47, 0, 2];
@@ -217,8 +225,12 @@ pub struct Vera {
     composer: [u8; 8],
     /// DCSEL 2 to 6's, FX's, as written.
     fx: [u8; 20],
-    audio_ctrl: u8,
-    audio_rate: u8,
+    psg: Psg,
+    pcm: Pcm,
+    /// Its clocks to its next sample, and its sound as it is, left and
+    /// right: the PSG's and the PCM's.
+    sample_clock: u32,
+    sound: (i32, i32),
     spi: Spi,
     /// The line being scanned out, and its cycles so far.
     line: u16,
@@ -256,8 +268,10 @@ impl Vera {
             layers: [[0; 7]; 2],
             composer: [0; 8],
             fx: [0; 20],
-            audio_ctrl: 0,
-            audio_rate: 0,
+            psg: Psg::new(),
+            pcm: Pcm::new(),
+            sample_clock: 0,
+            sound: (0, 0),
             spi: Spi {
                 received: 0xFF,
                 ..Spi::default()
@@ -297,7 +311,7 @@ impl Vera {
             (HEIGHT >> 1) as u8,
         ];
         self.fx = [0; 20];
-        (self.audio_ctrl, self.audio_rate) = (0, 0);
+        (self.psg, self.pcm, self.sound) = (Psg::new(), Pcm::new(), (0, 0));
         for (n, colour) in DEFAULT_PALETTE.iter().enumerate() {
             self.palette[n * 2..n * 2 + 2].copy_from_slice(&colour.to_le_bytes());
         }
@@ -315,9 +329,11 @@ impl Vera {
     fn poke(&mut self, address: usize, value: u8) {
         let address = address & (VRAM_SIZE - 1);
         self.vram[address] = value;
-        // The PSG's and the sprites' are read where they're written; the
-        // palette's kept apart, for RESET to set it again.
-        if (PALETTE..SPRITES).contains(&address) {
+        // The sprites' are read where they're written; the palette's kept
+        // apart, for RESET to set it again.
+        if (PSG..PALETTE).contains(&address) {
+            self.psg.write(address - PSG, value);
+        } else if (PALETTE..SPRITES).contains(&address) {
             self.palette[address - PALETTE] = value;
         }
     }
@@ -362,7 +378,7 @@ impl Vera {
             0x06 => {
                 (self.irq_line >> 1 & 0x80) as u8 | (self.scanline() >> 2 & 0x40) as u8 | self.ien
             }
-            0x07 => self.isr | AFLOW,
+            0x07 => self.isr | self.aflow(),
             0x08 => self.scanline() as u8,
             reg @ 0x09..=0x0C => {
                 let n = (reg - 9) as usize;
@@ -376,8 +392,8 @@ impl Vera {
             reg @ 0x0D..=0x13 => self.layers[0][(reg - 0x0D) as usize],
             reg @ 0x14..=0x1A => self.layers[1][(reg - 0x14) as usize],
             // AUDIO_CTRL: the FIFO empty, as it always is.
-            0x1B => self.audio_ctrl | 0x40,
-            0x1C => self.audio_rate,
+            0x1B => self.pcm.ctrl(),
+            0x1C => self.pcm.rate(),
             0x1D => 0,
             0x1E => {
                 let received = self.spi.received;
@@ -445,9 +461,9 @@ impl Vera {
             }
             reg @ 0x0D..=0x13 => self.layers[0][(reg - 0x0D) as usize] = value,
             reg @ 0x14..=0x1A => self.layers[1][(reg - 0x14) as usize] = value,
-            0x1B => self.audio_ctrl = value & 0x3F,
-            0x1C => self.audio_rate = value,
-            0x1D => {}
+            0x1B => self.pcm.write_ctrl(value),
+            0x1C => self.pcm.write_rate(value),
+            0x1D => self.pcm.write_data(value),
             0x1E => self.spi.send(value),
             _ => {
                 if value & 1 != 0 && !self.spi.select {
@@ -467,7 +483,7 @@ impl Vera {
 
     /// Whether it's holding the IRQ line: an interrupt it has that's on.
     pub fn irq(&self) -> bool {
-        (self.isr | AFLOW) & self.ien != 0
+        (self.isr | self.aflow()) & self.ien != 0
     }
 
     /// Whether a frame's ended since it was last asked.
@@ -477,8 +493,25 @@ impl Vera {
 
     /// A CPU cycle: its SPI's; and a line, as one ends: drawn, the next
     /// begun, and its interrupts.
+    /// AFLOW, as the PCM's FIFO has it.
+    fn aflow(&self) -> u8 {
+        if self.pcm.low() { AFLOW } else { 0 }
+    }
+
+    /// Its sound as it is, left and right: the PSG's and the PCM's, signed
+    /// 16 bits each.
+    pub fn sound(&self) -> (i32, i32) {
+        self.sound
+    }
+
     pub fn tick(&mut self) {
         self.spi.tick();
+        self.sample_clock += CLOCKS_A_CYCLE;
+        if self.sample_clock >= SAMPLE_CYCLES {
+            self.sample_clock -= SAMPLE_CYCLES;
+            let (psg, pcm) = (self.psg.sample(), self.pcm.sample());
+            self.sound = (psg.0 as i32 + pcm.0 as i32, psg.1 as i32 + pcm.1 as i32);
+        }
         self.cycles += 1;
         if self.cycles < LINE_CYCLES {
             return;

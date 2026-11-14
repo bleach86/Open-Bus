@@ -2,13 +2,14 @@
 //! none of these of its own. Its picture shown, as big as it is, and its
 //! sound played, a frame at a time; its title; a notice over its picture;
 //! F2 and F4; its Reset button, and the keys given to it; the window
-//! closed, and what it keeps saved.
+//! closed, and what it keeps saved. And on the X16, a machine that takes
+//! the keyboard's keys: them, but the host's own.
 
 #[cfg(test)]
 mod tests {
     use crate::cpu::{CPU, Variant};
     use crate::host::controls::{Action, Controls};
-    use crate::host::display::{Display, Gamepad, Key};
+    use crate::host::display::{Display, Gamepad, Key, Scancode};
     use crate::host::machine::Machine;
     use crate::host::run::Host;
     use crate::machines::nes::cartridge::Cartridge;
@@ -37,6 +38,9 @@ mod tests {
         /// they were at the last picture.
         pressed: Vec<String>,
         controls: Option<Controls>,
+        /// Characters typed, and keys pressed and let go.
+        keys: Vec<Key>,
+        key_changes: Vec<(Scancode, bool)>,
     }
 
     /// The test's window: its own controls, never saved, as the window's
@@ -70,7 +74,13 @@ mod tests {
         }
 
         fn key(&mut self) -> Option<Key> {
-            None
+            let keys = &mut self.0.borrow_mut().keys;
+            (!keys.is_empty()).then(|| keys.remove(0))
+        }
+
+        fn key_change(&mut self) -> Option<(Scancode, bool)> {
+            let changes = &mut self.0.borrow_mut().key_changes;
+            (!changes.is_empty()).then(|| changes.remove(0))
         }
 
         fn gamepad(&self) -> Gamepad {
@@ -568,5 +578,33 @@ mod tests {
         let took = start.elapsed().as_secs_f32();
         assert!(took >= 0.45, "30 frames in {took} seconds");
         assert_eq!(seen.borrow().pictures, 30);
+    }
+
+    #[test]
+    fn a_machine_that_takes_the_keys_has_them_but_the_hosts_not_what_they_type() {
+        use crate::machines::x16::X16;
+        let mut cpu = CPU::with_bus(X16::new(&[0xEA; 0x4000]).unwrap());
+        cpu.variant = Variant::Wdc65C02;
+        cpu.reset();
+        let seen = Rc::new(RefCell::new(Seen::default()));
+        let state =
+            std::env::temp_dir().join(format!("cpu_emu_{}_host_keys.state", std::process::id()));
+        let window = Window(seen.clone(), Controls::default());
+        let mut host = Host::new(cpu, Box::new(window), state);
+        let a = Scancode(0x04);
+        seen.borrow_mut().keys.push(Key::Char(b'a'));
+        seen.borrow_mut().key_changes = vec![
+            (a, true),
+            (Scancode::function(2), true), // the host's: saving a state
+            (Scancode::function(5), true),
+            (a, false),
+        ];
+        host.frame();
+        let keys: Vec<u8> = host.cpu.memory.i2c.smc.keys.iter().copied().collect();
+        assert_eq!(
+            keys,
+            [31, 116, 31 | 0x80],
+            "A, F5, A let go; not F2, nor 'a' typed"
+        );
     }
 }

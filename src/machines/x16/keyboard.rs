@@ -1,10 +1,11 @@
 //! The X16's keyboard, a PS/2 one, its keys as the SMC has them: IBM's key
-//! numbers, sent as a key goes down, and with bit 7 set as it's let go.
-//! The host gives characters typed, not keys: each is the keys a US
-//! keyboard types it with, pressed and let go, Shift or Ctrl with it if it
-//! takes one.
+//! numbers, sent as a key goes down (again as it repeats), and with bit 7
+//! set as it's let go. The host's keys are each the one in its place, as
+//! x16emu has them (`number`). What's pasted is characters, not keys: each
+//! is the keys a US keyboard types it with, pressed and let go, Shift or
+//! Ctrl with it if it takes one (`codes`).
 
-use crate::host::display::Key;
+use crate::host::display::{Key, Scancode};
 
 const LEFT_SHIFT: u8 = 44;
 const LEFT_CTRL: u8 = 58;
@@ -59,6 +60,85 @@ fn key_of(c: u8) -> Option<(u8, bool)> {
             })
         }
     }
+}
+
+/// The X16's key in the host's key's place, by its USB HID usage, if it
+/// has one there.
+pub fn number(key: Scancode) -> Option<u8> {
+    // The letters', A to Z, and the digits', 1 to 9 then 0, in HID's order.
+    const LETTERS: [u8; 26] = [
+        31, 50, 48, 33, 19, 34, 35, 36, 24, 37, 38, 39, 52, 51, 25, 26, 17, 20, 32, 21, 23, 49, 18,
+        47, 22, 46,
+    ];
+    let usage = key.0;
+    Some(match usage {
+        0x04..=0x1D => LETTERS[(usage - 0x04) as usize],
+        0x1E..=0x27 => (usage - 0x1E) as u8 + 2,
+        0x28 => 43,                                // Return
+        0x29 => 110,                               // Escape
+        0x2A => 15,                                // Backspace
+        0x2B => 16,                                // Tab
+        0x2C => 61,                                // Space
+        0x2D => 12,                                // -
+        0x2E => 13,                                // =
+        0x2F => 27,                                // [
+        0x30 => 28,                                // ]
+        0x31 => 29,                                // \
+        0x33 => 40,                                // ;
+        0x34 => 41,                                // '
+        0x35 => 1,                                 // `
+        0x36 => 53,                                // ,
+        0x37 => 54,                                // .
+        0x38 => 55,                                // /
+        0x39 => 30,                                // Caps Lock
+        0x3A..=0x45 => (usage - 0x3A) as u8 + 112, // F1 to F12
+        0x47 => 125,                               // Scroll Lock
+        0x48 => 126,                               // Pause
+        0x49 => 75,                                // Insert
+        0x4A => 80,                                // Home
+        0x4B => 85,                                // Page Up
+        0x4C => 76,                                // Delete
+        0x4D => 81,                                // End
+        0x4E => 86,                                // Page Down
+        0x4F => RIGHT,
+        0x50 => LEFT,
+        0x51 => DOWN,
+        0x52 => UP,
+        0x53 => 90,  // Num Lock
+        0x54 => 95,  // keypad /
+        0x55 => 100, // keypad *
+        0x56 => 105, // keypad -
+        0x57 => 106, // keypad +
+        0x58 => 108, // keypad Enter
+        0x59 => 93,  // keypad 1, and on
+        0x5A => 98,
+        0x5B => 103,
+        0x5C => 92,
+        0x5D => 97,
+        0x5E => 102,
+        0x5F => 91,
+        0x60 => 96,
+        0x61 => 101,
+        0x62 => 99,  // keypad 0
+        0x63 => 104, // keypad .
+        0x64 => 45,  // the key beside Left Shift, off US keyboards
+        0x65 => 65,  // Menu
+        0x87 => 56,  // International 1
+        0xE0 => LEFT_CTRL,
+        0xE1 => LEFT_SHIFT,
+        0xE2 => 60, // Left Alt
+        0xE3 => 59, // Left GUI
+        0xE4 => 64, // Right Ctrl
+        0xE5 => 57, // Right Shift
+        0xE6 => 62, // Right Alt
+        0xE7 => 63, // Right GUI
+        _ => return None,
+    })
+}
+
+/// The code for the key in `key`'s place, pressed (`down`) or let go.
+pub fn change(key: Scancode, down: bool) -> Option<u8> {
+    number(key).map(|number| if down { number } else { number | UP_BIT })
 }
 
 /// The codes `key` is typed with: its key down and up, and Shift's or

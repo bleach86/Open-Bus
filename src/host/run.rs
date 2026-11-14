@@ -15,7 +15,7 @@
 use crate::cpu::CPU;
 use crate::host::clock;
 use crate::host::controls::{ACTIONS, Action, BUTTONS, Controls, is_stick, name, said};
-use crate::host::display::{COPY_KEY, Display, Gamepad, Key, PASTE_KEY};
+use crate::host::display::{COPY_KEY, Display, Gamepad, Key, PASTE_KEY, Scancode};
 use crate::host::files;
 use crate::host::machine::{Input, Machine};
 use crate::host::notice;
@@ -117,6 +117,9 @@ const RESET_FRAMES: u32 = 6;
 /// The function keys while they're changing, and what cancels it; about how
 /// many frames a second they're shown at.
 const CONTROLS_KEY: u8 = 6;
+/// The function keys the host has for itself, as above: none of them a
+/// machine's that takes the keyboard's keys.
+const HOSTS_KEYS: [u8; 5] = [MENU_KEY, 2, 3, 4, CONTROLS_KEY];
 const NEXT_PLAYER_KEY: u8 = 7;
 const DEFAULTS_KEY: u8 = 8;
 const CANCEL: &str = "key:Escape";
@@ -199,6 +202,7 @@ impl<M: Machine> Host<M> {
         }
         display.aiming(cpu.memory.aimed_at());
         display.mouse(cpu.memory.has_mouse());
+        display.raw_keys(cpu.memory.raw_keys());
         let moments = (REWIND.load(Ordering::Relaxed) && cpu.memory.rewinds()).then(VecDeque::new);
         Host {
             cpu,
@@ -466,6 +470,12 @@ impl<M: Machine> Host<M> {
             newly(gamepad.b, menu.before.b),
         );
         menu.before = gamepad;
+        // Keys let go meanwhile, let go for the machine too.
+        while let Some((key, down)) = self.display.key_change() {
+            if !down {
+                self.cpu.memory.key_change(key, false);
+            }
+        }
         while let Some(key) = self.display.key() {
             match key {
                 Key::Up => up = true,
@@ -590,8 +600,19 @@ impl<M: Machine> Host<M> {
             self.title = title;
         }
 
+        // A machine that takes the keyboard's keys has them, not what they
+        // type: but the host's own.
+        let raw = self.cpu.memory.raw_keys();
         while let Some(key) = self.display.key() {
-            self.cpu.memory.key(key);
+            if !raw {
+                self.cpu.memory.key(key);
+            }
+        }
+        while let Some((key, down)) = self.display.key_change() {
+            let hosts = HOSTS_KEYS.map(|n| Scancode::function(n as u16));
+            if !hosts.contains(&key) {
+                self.cpu.memory.key_change(key, down);
+            }
         }
         self.frames = self.frames.wrapping_add(1);
         let mut gamepad = self.display.gamepad().turbo(self.frames);

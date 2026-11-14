@@ -12,6 +12,7 @@ pub mod chips {
     pub mod riot6532;
     pub mod tia_sound;
     pub mod via6522;
+    pub mod ym2151;
 
     #[cfg(test)]
     mod tests {
@@ -20,6 +21,7 @@ pub mod chips {
         mod pokey;
         mod riot6532;
         mod via6522;
+        mod ym2151;
     }
 }
 

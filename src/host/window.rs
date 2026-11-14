@@ -14,13 +14,16 @@
 //! hairs then, and its clicks the machine's. For a machine with a mouse, a
 //! click on the picture captures it, its cursor gone, its moves the
 //! machine's however far they go; Ctrl+M, or another window, lets it go,
-//! as the title says. Ctrl+Shift+V or Shift+Insert, the clipboard pasted, and Ctrl+Shift+C or
+//! as the title says. For a machine that takes the keyboard's keys, each
+//! key's pressed and let go, by its place on the keyboard, but those it
+//! keeps for its own (F11, F12, the clipboard's, Ctrl+M), and let go as
+//! another window's chosen; none of them a gamepad's. Ctrl+Shift+V or Shift+Insert, the clipboard pasted, and Ctrl+Shift+C or
 //! Ctrl+Insert, the screen copied to it, for a machine with a keyboard.
 //! Closed, it tells the machine, to turn itself off.
 
 use crate::host::controls::{Action, Controls};
 use crate::host::display::{
-    CHANNELS, COPY_KEY, Display, Gamepad, Joystick, Key, PASTE_KEY, Pointer, SAMPLE_RATE,
+    CHANNELS, COPY_KEY, Display, Gamepad, Joystick, Key, PASTE_KEY, Pointer, SAMPLE_RATE, Scancode,
 };
 use crate::host::pads::{self, Pads};
 use sdl2::EventPump;
@@ -101,6 +104,11 @@ pub struct Window {
     has_mouse: bool,
     captured: bool,
     title: String,
+    /// Whether the machine takes the keyboard's keys; their presses and
+    /// lettings go, for it; those held, to be let go.
+    raw_keys: bool,
+    key_changes: VecDeque<(Scancode, bool)>,
+    raw_held: HashSet<Scancode>,
 }
 
 /// How long Select and Start are held together to go back to the library.
@@ -209,6 +217,9 @@ impl Window {
             has_mouse: false,
             captured: false,
             title: title.to_string(),
+            raw_keys: false,
+            key_changes: VecDeque::new(),
+            raw_held: HashSet::new(),
         };
         if fullscreen {
             window.toggle_fullscreen();
@@ -219,6 +230,10 @@ impl Window {
     /// Whether a binding's held, for `player`: a key, anyone's; a gamepad's,
     /// their own.
     fn is_held(&self, player: usize, source: &str) -> bool {
+        // The keyboard's all the machine's, if it takes its keys.
+        if self.raw_keys && source.starts_with("key:") {
+            return false;
+        }
         match source.strip_prefix("pad:") {
             Some(button) => self.pads.holds(player, button),
             None => self.held.contains(source),
@@ -293,6 +308,14 @@ impl Window {
         let _ = self.canvas.window_mut().set_fullscreen(state);
     }
 
+    /// The keys held for the machine let go, as the window's no longer the
+    /// one typed in.
+    fn let_go_keys(&mut self) {
+        for key in self.raw_held.drain() {
+            self.key_changes.push_back((key, false));
+        }
+    }
+
     /// The mouse captured for the machine, at `at` on the picture, or let
     /// go: its cursor gone, its moves told however far they go, and the
     /// title saying how it's let go.
@@ -322,6 +345,13 @@ impl Window {
         let mut toggle = false; // fullscreen, once the events are taken
         let events: Vec<Event> = self.events.poll_iter().collect();
         for event in events {
+            if let Event::Window {
+                win_event: WindowEvent::FocusLost,
+                ..
+            } = event
+            {
+                self.let_go_keys();
+            }
             match event {
                 Event::Quit { .. } => self.closed = true,
                 Event::TextInput { text, .. } => {
@@ -337,6 +367,7 @@ impl Window {
                 }
                 Event::KeyDown {
                     keycode: Some(keycode),
+                    scancode,
                     keymod,
                     repeat,
                     ..
@@ -348,6 +379,13 @@ impl Window {
                     {
                         self.capture(None);
                         continue;
+                    }
+                    let own = matches!(keycode, Keycode::F11 | Keycode::F12)
+                        || clipboard_key(keycode, keymod).is_some();
+                    if let (true, false, Some(scancode)) = (self.raw_keys, own, scancode) {
+                        let key = Scancode(scancode as i32 as u16);
+                        self.raw_held.insert(key);
+                        self.key_changes.push_back((key, true));
                     }
                     let name = format!("key:{}", keycode.name());
                     if !repeat && self.capturing && !is_fixed(keycode) {
@@ -385,15 +423,7 @@ impl Window {
                         continue;
                     }
                     let ctrl = keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
-                    let shift = keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
-                    let clipboard = match keycode {
-                        Keycode::V if ctrl && shift => Some(PASTE_KEY),
-                        Keycode::Insert if shift => Some(PASTE_KEY),
-                        Keycode::C if ctrl && shift => Some(COPY_KEY),
-                        Keycode::Insert if ctrl => Some(COPY_KEY),
-                        _ => None,
-                    };
-                    if let Some(n) = clipboard {
+                    if let Some(n) = clipboard_key(keycode, keymod) {
                         if !repeat {
                             self.function_keys.push_back(n);
                         }
@@ -425,8 +455,15 @@ impl Window {
                 }
                 Event::KeyUp {
                     keycode: Some(keycode),
+                    scancode,
                     ..
                 } => {
+                    if let Some(scancode) = scancode {
+                        let key = Scancode(scancode as i32 as u16);
+                        if self.raw_held.remove(&key) {
+                            self.key_changes.push_back((key, false));
+                        }
+                    }
                     self.keypad_held.remove(&keycode);
                     self.keys_held.remove(&keycode);
                     self.held.remove(&format!("key:{}", keycode.name()));
@@ -527,6 +564,20 @@ fn on_picture(picture: (usize, usize), logical: (u32, u32), x: i32, y: i32) -> O
     on.then_some((x, y))
 }
 
+/// The clipboard's keys: Ctrl+Shift+V or Shift+Insert, pasting; and
+/// Ctrl+Shift+C or Ctrl+Insert, copying.
+fn clipboard_key(keycode: Keycode, keymod: Mod) -> Option<u8> {
+    let ctrl = keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
+    let shift = keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
+    match keycode {
+        Keycode::V if ctrl && shift => Some(PASTE_KEY),
+        Keycode::Insert if shift => Some(PASTE_KEY),
+        Keycode::C if ctrl && shift => Some(COPY_KEY),
+        Keycode::Insert if ctrl => Some(COPY_KEY),
+        _ => None,
+    }
+}
+
 /// The picture's pixels to a window's in its `logical` size, across and
 /// down.
 fn scale(picture: (usize, usize), logical: (u32, u32)) -> (f32, f32) {
@@ -620,6 +671,15 @@ impl Display for Window {
             return Pointer::default();
         }
         self.pointer
+    }
+
+    fn raw_keys(&mut self, on: bool) {
+        self.raw_keys = on;
+        self.let_go_keys();
+    }
+
+    fn key_change(&mut self) -> Option<(Scancode, bool)> {
+        self.key_changes.pop_front()
     }
 
     fn mouse(&mut self, on: bool) {

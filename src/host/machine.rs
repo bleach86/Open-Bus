@@ -5,7 +5,7 @@
 //! host gives it: the keys, the controls, the Reset button.
 
 use crate::cpu::bus::Bus;
-use crate::host::display::{Gamepad, Joystick, Key, Pointer};
+use crate::host::display::{Gamepad, Joystick, Key, Pointer, Scancode};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -59,6 +59,16 @@ pub trait Machine: Bus + Serialize + DeserializeOwned {
 
     /// A key typed.
     fn key(&mut self, _key: Key) {}
+
+    /// Whether it takes the keyboard's keys as they go down and up
+    /// (`key_change`), as a keyboard that's scanned has them, and not the
+    /// characters typed (`key`).
+    fn raw_keys(&self) -> bool {
+        false
+    }
+
+    /// A key pressed (`down`, again as it repeats) or let go.
+    fn key_change(&mut self, _key: Scancode, _down: bool) {}
 
     /// Whether it has a keyboard, for what's pasted to be typed on.
     fn keyboard(&self) -> bool {
