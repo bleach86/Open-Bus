@@ -1,9 +1,10 @@
 # The ROMs, the hard disk and clock cards' firmware, and the interrupt,
-# bus, WAI and STP, Apple II, Mockingboard, hard disk, Atari 7800 and Skink tests'
-# programs, built with cc65 (from ~/cc65 if it is there).
+# bus, WAI and STP, Apple II, Mockingboard, hard disk, Atari 7800, Skink
+# and Commander X16 FX tests' programs, built with cc65 (from ~/cc65 if it
+# is there).
 CC65 ?= $(if $(wildcard $(HOME)/cc65/bin/cl65),$(HOME)/cc65/bin/)
 
-all: monitor.bin interrupt_test.bin bus_test.bin wai_stp_test.bin apple2_test.bin mockingboard_test.bin hard_disk.bin hard_disk_test.bin clock.bin atari7800_test.bin skink_test.bin
+all: monitor.bin interrupt_test.bin bus_test.bin wai_stp_test.bin apple2_test.bin mockingboard_test.bin hard_disk.bin hard_disk_test.bin clock.bin atari7800_test.bin skink_test.bin x16_fx_test.bin
 
 monitor.bin: monitor.c crt0.s monitor.cfg
 	$(CC65)cl65 -t none -O -C monitor.cfg -m monitor.map -o $@ crt0.s monitor.c
@@ -57,5 +58,9 @@ skink_test.bin: skink_test.s skink_test.cfg
 	$(CC65)ca65 -g -o skink_test.o skink_test.s
 	$(CC65)ld65 -C skink_test.cfg -Ln skink_test.lbl -o $@ skink_test.o
 
+# The Commander X16's VERA FX test: a program, loaded at $0801.
+x16_fx_test.bin: x16_fx_test.c
+	$(CC65)cl65 -t cx16 -O -o $@ x16_fx_test.c
+
 clean:
-	rm -f monitor.bin monitor.map interrupt_test.bin interrupt_test.lbl bus_test.bin bus_test.lbl wai_stp_test.bin wai_stp_test.lbl apple2_test.bin apple2_test.lbl mockingboard_test.bin mockingboard_test.lbl hard_disk.lbl hard_disk_test.bin hard_disk_test.lbl clock.lbl atari7800_test.bin atari7800_test.lbl skink_test.bin skink_test.lbl *.o
+	rm -f monitor.bin monitor.map interrupt_test.bin interrupt_test.lbl bus_test.bin bus_test.lbl wai_stp_test.bin wai_stp_test.lbl apple2_test.bin apple2_test.lbl mockingboard_test.bin mockingboard_test.lbl hard_disk.lbl hard_disk_test.bin hard_disk_test.lbl clock.lbl atari7800_test.bin atari7800_test.lbl skink_test.bin skink_test.lbl x16_fx_test.bin *.o

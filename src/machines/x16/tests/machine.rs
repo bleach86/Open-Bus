@@ -5,7 +5,9 @@
 //! one those tests say so and pass), booted to BASIC, typed to, a key held,
 //! its mouse pointer shown, its date the host's, a note played on the PSG
 //! and on the YM2151, and a program saved to its SD card and loaded back
-//! (with mtools, to make the card). Its clock's RAM kept in a file.
+//! (with mtools, to make the card); VERA's FX, drawing what x16emu R49 does
+//! (roms/x16_fx_test.c, as make -C roms builds it). Its clock's RAM kept in
+//! a file.
 
 #[cfg(test)]
 mod tests {
@@ -15,6 +17,7 @@ mod tests {
     use crate::host::display::{Gamepad, Key, Pointer, Scancode};
     use crate::host::files;
     use crate::host::machine::{Input, Machine};
+    use crate::host::zip::crc32;
     use crate::machines::x16::i2c::Asked;
     use crate::machines::x16::{self, KEYD, NDX, X16, keyboard};
     use std::path::Path;
@@ -522,6 +525,69 @@ mod tests {
             high > samples.len() / 3 && low > samples.len() / 3,
             "{high} {low} of {}",
             samples.len()
+        );
+    }
+
+    /// The FX test's regions of video RAM, and their CRC-32s as x16emu R49
+    /// leaves them.
+    const FX_REGIONS: [(&str, usize, usize, u32); 12] = [
+        ("line 8-bit", 0x00000, 0x08000, 0x8846A5A2),
+        ("line 4-bit", 0x08000, 0x0C000, 0x13141804),
+        ("polygon 8-bit", 0x0C000, 0x12400, 0x5B7F3597),
+        ("polygon 4-bit", 0x12400, 0x14000, 0x26D078EC),
+        ("affine tiles and map", 0x14000, 0x15000, 0x0B37CCDA),
+        ("affine 8-bit wrapping", 0x15000, 0x15600, 0x75A57EFD),
+        ("affine 8-bit clipped", 0x15600, 0x15C00, 0xB2CB9197),
+        ("affine 4-bit", 0x15C00, 0x16400, 0xF9926578),
+        ("cache", 0x16400, 0x16800, 0xD93E9260),
+        ("multiplier", 0x16800, 0x17000, 0x3EADC0E4),
+        ("16-bit hop", 0x17000, 0x17800, 0xA98FCB62),
+        ("reads", 0x17800, 0x18000, 0xE97EAF80),
+    ];
+
+    #[test]
+    fn vera_fx_draws_what_x16emu_r49_does() {
+        let Some(rom) = booting().map(|_| x16::rom_file().unwrap()) else {
+            return;
+        };
+        let program = Path::new(env!("CARGO_MANIFEST_DIR")).join("roms/x16_fx_test.bin");
+        let Ok(program) = std::fs::read(program) else {
+            eprintln!("x16 FX test: no program; run make -C roms");
+            return;
+        };
+        let card = std::env::temp_dir().join(format!("cpu_emu_{}_x16_fx.img", std::process::id()));
+        let files = [("FXTEST.PRG".to_string(), program)];
+        std::fs::write(&card, x16::card::card(&files, clock::now()).unwrap()).unwrap();
+        let mut cpu = x16::build(&rom.to_string_lossy(), card.to_str()).unwrap();
+        frames(&mut cpu, 300);
+        cpu.memory.type_text("load\"fxtest.prg\"\nrun\n");
+        let done = |cpu: &mut CPU<X16>| {
+            let text = cpu.memory.screen_text().unwrap_or_default();
+            text.contains("FXTEST DONE 272")
+        };
+        for _ in 0..30 {
+            if done(&mut cpu) {
+                break;
+            }
+            frames(&mut cpu, 60);
+        }
+        std::fs::remove_file(&card).unwrap();
+        assert!(
+            done(&mut cpu),
+            "the screen:\n{}",
+            cpu.memory.screen_text().unwrap_or_default()
+        );
+        let differing: Vec<&str> = FX_REGIONS
+            .iter()
+            .filter(|&&(_, from, to, crc)| {
+                let drawn: Vec<u8> = (from..to).map(|at| cpu.memory.vera.peek(at)).collect();
+                crc32(&drawn) != crc
+            })
+            .map(|&(name, ..)| name)
+            .collect();
+        assert!(
+            differing.is_empty(),
+            "not as x16emu R49 draws them: {differing:?}"
         );
     }
 }
