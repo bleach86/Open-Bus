@@ -37,7 +37,8 @@
 /// `cpu_emu x16 [ROM] [--game=GAME] [--sd=IMAGE] [--fullscreen]` for the
 /// Commander X16, ROM its rom.bin, roms/x16/'s if it's not given (or its
 /// release folder's there), and IMAGE its SD card's, written back as it's
-/// written: roms/x16/sdcard.img, if it's not given and it's there. GAME,
+/// written, made blank if it isn't there yet: roms/x16/sdcard.img, if it's
+/// not given and it's there. GAME,
 /// a game's zip, folder or program, is played from a card of its own,
 /// IMAGE or beside it, as GAME.img: made, if it isn't there, to start it
 /// as the X16's turned on, and kept. With any,
@@ -214,9 +215,15 @@ fn main() {
                         .unwrap_or_else(|e| panic!("{e}"));
                     Some(card)
                 }
-                None => said("sd").or_else(|| {
-                    machines::x16::sd_card_file().map(|image| image.to_string_lossy().into_owned())
-                }),
+                None => match said("sd") {
+                    Some(card) => {
+                        machines::x16::blank_card(std::path::Path::new(&card))
+                            .unwrap_or_else(|e| panic!("{e}"));
+                        Some(card)
+                    }
+                    None => machines::x16::sd_card_file()
+                        .map(|image| image.to_string_lossy().into_owned()),
+                },
             };
             let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
             machines::x16::run(&rom, sd_card.as_deref(), fullscreen);

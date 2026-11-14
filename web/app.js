@@ -57,8 +57,11 @@ const CHANGE_DISK_KEY = 9;
 const FDS_BIOS = 'disksys.rom';
 /// The 7800's High Score Cartridge's ROM, and its RAM as it's kept.
 const HIGH_SCORE_ROM = 'highscre.bin';
-/// The Commander X16's ROM, as it's sorted into the library.
+/// The Commander X16's ROM, as it's sorted into the library; and the X16
+/// itself, to BASIC, its tile's name and title, first on its shelf.
 const X16_ROM = 'x16-rom.bin';
+const X16_TITLE = 'Commander X16';
+const isX16Itself = (name) => name === X16_ROM;
 const kind = (name) => name.split('.').pop().toLowerCase();
 /// A game's file: a .bin a 2600's or a 7800's, unless it's an Apple's ROM.
 const isGame = (name) => ['nes', 'fds', 'a26', 'a78', 'bin', 'zip', 'prg'].includes(kind(name)) && !isRom(name);
@@ -578,7 +581,7 @@ const boardOf = (facts) =>
         .replace(/^COMMANDER X16 /, 'Program ');
 
 /// A game's title, by what's known of it, else its file.
-const titleOf = (name) => art.get(nesArt(name))?.title ?? plainTitle(name);
+const titleOf = (name) => (isX16Itself(name) ? X16_TITLE : (art.get(nesArt(name))?.title ?? plainTitle(name)));
 
 /// What's known of a NES game: what a game list beside it said, else what's
 /// been learned of it from libretro's database.
@@ -647,6 +650,10 @@ function fillGames(wanted) {
     for (const [system, name] of Object.entries(CONSOLES)) {
         const all = oneEach(games.filter((game) => systemOf(game) === system));
         const shown = arranged(system, all.filter(matches), titleOf, knownOf);
+        // The X16 itself, first, once there's its ROM to start it.
+        if (system === 'x16' && files.includes(X16_ROM) && found(wanted, X16_TITLE, 'basic')) {
+            shown.unshift(X16_ROM);
+        }
         showCount(`tab-${system}`, name, shown.length);
         if (system === consoleShowing) {
             shelf = shown;
@@ -834,6 +841,21 @@ function gameTile(name, alone = false) {
     }
     button.append(art, caption(titleOf(name), known, tagsOf(name)));
     item.append(button, removeButton(name), starButton(machine, titleOf(name)));
+    return item;
+}
+
+/// The X16 itself: started to BASIC, with a card of its own, blank to begin
+/// with and kept, and what's saved on it.
+function x16Tile() {
+    const item = document.createElement('li');
+    item.className = 'tile';
+    item.dataset.game = X16_ROM;
+    const button = document.createElement('button');
+    button.className = 'play';
+    button.dataset.tip = `${X16_TITLE}\nBASIC, with an SD card of its own`;
+    button.onclick = () => playGame({ kind: 'x16' });
+    button.append(cover('', X16_TITLE), caption(X16_TITLE, null, 'BASIC'));
+    item.append(button);
     return item;
 }
 
@@ -1035,7 +1057,7 @@ const settingsOpen = () => page('game-settings').open;
 /// Start pressed on a NES game: its details.
 function settingsOfSelected() {
     const tile = padFocus ? padFocus.closest('.tile') : gamesShowing() && tiles.get(selectedGame);
-    if (tile?.dataset.game) {
+    if (tile?.dataset.game && !isX16Itself(tile.dataset.game)) {
         openGameSettings(tile.dataset.game);
     }
 }
@@ -1279,7 +1301,7 @@ function padHints() {
     if (tile) {
         return [
             [A, 'Play'],
-            ...(tile.dataset.game ? [[start, 'Details']] : []),
+            ...(tile.dataset.game && !isX16Itself(tile.dataset.game) ? [[start, 'Details']] : []),
             [select, 'Favourite'],
             ...(!padFocus && gamesShowing() ? [[triggers, 'Page']] : []),
             shelves,
@@ -1746,7 +1768,7 @@ function placeShelf(force = true) {
     list.style.minHeight = `${Math.max(0, filled * (row + down) - down)}px`;
     const inView = shelf.slice(first * columns, (first + count) * columns).map((name) => {
         if (!tiles.has(name)) {
-            tiles.set(name, gameTile(name));
+            tiles.set(name, isX16Itself(name) ? x16Tile() : gameTile(name));
         }
         return tiles.get(name);
     });
@@ -2521,6 +2543,9 @@ const row = (text, detail, button, action) => {
 async function fillSettings() {
     const has = (name) => files.includes(name);
     const appleFound = [...DISK_II_ROMS, ...IIE_ROMS.apple2ee].filter(has).length;
+    const x16 = has(X16_ROM)
+        ? `Found: ${await x16Release()}`
+        : "Missing: X16 games need a release's rom.bin, or its zip";
     page('system-files').replaceChildren(
         row('Disk System BIOS', has(FDS_BIOS) ? 'Found' : 'Missing: Disk System games need disksys.rom'),
         row('Apple II ROMs', `${appleFound} of ${DISK_II_ROMS.length + IIE_ROMS.apple2ee.length} found`),
@@ -2530,9 +2555,21 @@ async function fillSettings() {
                 ? 'Found: plugged in for every game'
                 : 'Not added: it keeps high scores, for the games that know of it',
         ),
+        row('Commander X16 ROM', x16),
     );
     if (native) {
         fillFolders();
+    }
+}
+
+/// Which release the X16's ROM is, as its KERNAL says, at $FF80 in its
+/// first bank: R49, or less than 0 for a pre-release of one.
+async function x16Release() {
+    try {
+        const version = (await bytes(X16_ROM))[0x3f80];
+        return version < 0x80 ? `release R${version}` : `a pre-release of R${0x100 - version}`;
+    } catch {
+        return 'its release not known';
     }
 }
 

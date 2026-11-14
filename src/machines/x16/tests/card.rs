@@ -249,4 +249,19 @@ mod tests {
         assert_eq!(x16::game_of(&contra), contra, "a folder, itself");
         std::fs::remove_dir_all(&root).unwrap();
     }
+
+    #[test]
+    fn a_blank_card_is_made_once_and_kept() {
+        use crate::machines::x16;
+        let path = std::env::temp_dir().join(format!("cpu_emu_{}_blank.img", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        x16::blank_card(&path).unwrap();
+        let image = std::fs::read(&path).unwrap();
+        let root = Reader::new(&image).folder(2);
+        assert_eq!(root.len(), 1, "its volume's label alone");
+        std::fs::write(&path, b"kept").unwrap();
+        x16::blank_card(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"kept", "not made again");
+        std::fs::remove_file(&path).unwrap();
+    }
 }

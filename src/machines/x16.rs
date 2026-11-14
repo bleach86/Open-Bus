@@ -826,6 +826,16 @@ pub fn make_card(game: &Path, card: &Path) -> Result<(), String> {
     files::save(card, &image).map_err(|e| format!("{}: {e}", card.display()))
 }
 
+/// A card at `card`, blank, as a new one's formatted, if there isn't one
+/// there yet.
+pub fn blank_card(card: &Path) -> Result<(), String> {
+    if files::exists(card) {
+        return Ok(());
+    }
+    let image = card::card(&[], clock::now())?;
+    files::save(card, &image).map_err(|e| format!("{}: {e}", card.display()))
+}
+
 /// Its SD card's image, as it's looked for: roms/x16/sdcard.img, if it's
 /// there.
 pub fn sd_card_file() -> Option<PathBuf> {

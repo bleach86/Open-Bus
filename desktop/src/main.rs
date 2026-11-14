@@ -775,16 +775,21 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
     if text("kind")? == "x16" {
         // Its ROM, as it's been sorted into the library; the game on a card
         // of its own, in `x16 cards`, made the first time and kept, with
-        // what it saves.
-        let game = file(text("game")?)?;
-        let card = folder(app, "x16 cards")?.join(card_name(&game));
+        // what it saves. With no game, the X16 itself, to BASIC, with a card
+        // of its own, blank to start with.
+        let cards = folder(app, "x16 cards")?;
         let rom = folder(app, "library")?.join("x16-rom.bin");
-        return Ok(vec![
-            "x16".to_string(),
-            rom.to_string_lossy().into_owned(),
-            format!("--game={game}"),
-            format!("--sd={}", card.to_string_lossy()),
-        ]);
+        let mut line = vec!["x16".to_string(), rom.to_string_lossy().into_owned()];
+        match machine["game"].as_str() {
+            Some(game) => {
+                let game = file(game)?;
+                let card = cards.join(card_name(&game));
+                line.push(format!("--game={game}"));
+                line.push(format!("--sd={}", card.to_string_lossy()));
+            }
+            None => line.push(format!("--sd={}", cards.join(X16_CARD).to_string_lossy())),
+        }
+        return Ok(line);
     }
     let library = folder(app, "library")?.to_string_lossy().into_owned();
     let mut line = match text("model")? {
@@ -801,6 +806,9 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
     ));
     Ok(line)
 }
+
+/// The X16's own card, for BASIC and what's saved from it.
+const X16_CARD: &str = "Commander X16.img";
 
 /// An X16 game's card's file, by its game's path: its name, and a hash of
 /// the whole (FNV-1a), for two of a name.
