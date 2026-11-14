@@ -20,7 +20,14 @@
 //! its renderer has time for, their collisions into ISR as line 480 begins.
 //! Its FX (`vera_fx`, DCSEL 2 to 6) steps its ports' addresses and writes
 //! through them as its helpers, its cache and its multiplier have it.
-//! NTSC and RGB are shown as VGA.
+//! NTSC and RGB, 15 kHz, are interlaced: two fields a frame, each of 525
+//! half-lines of 794 dots, its 240 lines the picture's even ones or its
+//! odd, the other field's left as they were, as a TV shows them woven;
+//! VSYNC and LINE each field, LINE's line's bit 0 left out. In 240P, the
+//! fields 526 half-lines, both on the even lines, the odd ones dark. A
+//! TV's edge, past its title-safe part, shown dimmed in NTSC, as x16emu
+//! shows it. SCANLINE, the line being sent, as the docs have it: even in
+//! the first field, odd in the second.
 //! Its sound's the PSG's and the PCM's (`vera_audio`), a sample each 512
 //! of its clocks. Its SPI port has the SD card on it (`sd_card`), if
 //! there is one.
@@ -36,6 +43,18 @@ pub const HEIGHT: usize = 480;
 /// lines.
 pub const LINE_CYCLES: u32 = 256;
 pub const LINES: u16 = 525;
+/// VGA's line and NTSC's half-line, in 8ths of a dot, 25 a CPU cycle; a
+/// field's half-lines, interlaced and 240P; and the half-line each field's
+/// line 0 begins on (240P's both the first's).
+const VGA_LINE: u32 = 800 * 8;
+const HALF_LINE: u32 = 794 * 8;
+const FIELD: u16 = 525;
+const FIELD_240P: u16 = 526;
+const FIELD_TOPS: [i32; 2] = [42, 43];
+/// NTSC's title-safe part, inside a TV's edge, as x16emu has it: the rest
+/// dimmed.
+const SAFE_X: std::ops::RangeInclusive<usize> = 43..=597;
+const SAFE_Y: std::ops::RangeInclusive<usize> = 24..=456;
 
 const VRAM_SIZE: usize = 0x20000;
 const PSG: usize = 0x1F9C0;
@@ -237,7 +256,8 @@ pub struct Vera {
     sample_clock: u32,
     sound: (i32, i32),
     spi: Spi,
-    /// The line being scanned out, and its cycles so far.
+    /// The line being scanned out, or in NTSC or RGB the half-line, of
+    /// both fields; and its time so far, in 8ths of a dot.
     line: u16,
     cycles: u32,
     /// The layers' registers and VSCALE as they were when the line before
@@ -576,9 +596,34 @@ impl Vera {
         self.fetched[port] = self.peek(self.address[port] as usize);
     }
 
-    /// The line being scanned out, as SCANLINE has it: 511 past 511.
+    /// Whether it's sending NTSC or RGB, interlaced or 240P, not VGA.
+    fn tv(&self) -> bool {
+        self.composer[0] & 2 != 0
+    }
+
+    /// NTSC's or RGB's: its field's half-lines; the field being sent; and
+    /// the line of its half-line, from the field's line 0, the picture's
+    /// even lines its first halves (before it, those of the last field).
+    fn field(&self) -> (u16, usize, i32) {
+        let progressive = self.composer[0] & 0x08 != 0;
+        let size = if progressive { FIELD_240P } else { FIELD };
+        let field = (self.line >= size) as usize;
+        let half = self.line as i32 - size as i32 * field as i32;
+        // 240P's fields alike, each a whole number of lines.
+        let y = half - FIELD_TOPS[if progressive { 0 } else { field }];
+        (size, field, if y < 0 { y + size as i32 } else { y })
+    }
+
+    /// The line being scanned out, as SCANLINE has it: 511 past 511; in
+    /// NTSC or RGB, even in the first field, odd in the second.
     fn scanline(&self) -> u16 {
-        self.line.min(511)
+        let line = if self.tv() {
+            let (_, field, y) = self.field();
+            (y as u16 & !1) | field as u16
+        } else {
+            self.line
+        };
+        line.min(511)
     }
 
     /// A read of register `reg`, 0 to 31.
@@ -616,8 +661,16 @@ impl Vera {
             reg @ 0x09..=0x0C => {
                 let n = (reg - 9) as usize;
                 match self.dcsel {
-                    // DC_VIDEO's bit 7, the field: the line's odd or even.
-                    0 if n == 0 => self.composer[0] & 0x7F | (self.line as u8 & 1) << 7,
+                    // DC_VIDEO's bit 7, the field: NTSC's or RGB's, or in
+                    // VGA, the line's odd or even.
+                    0 if n == 0 => {
+                        let field = if self.tv() {
+                            self.field().1 as u8
+                        } else {
+                            self.line as u8 & 1
+                        };
+                        self.composer[0] & 0x7F | field << 7
+                    }
                     0 | 1 => self.composer[self.dcsel as usize * 4 + n],
                     // FX_CTRL; the fill length; the accumulator, reset or
                     // accumulated as it's read. The rest are written only.
@@ -706,8 +759,16 @@ impl Vera {
             reg @ 0x09..=0x0C => {
                 let n = (reg - 9) as usize;
                 match self.dcsel {
-                    // DC_VIDEO's field bit is read only.
-                    0 if n == 0 => self.composer[0] = self.composer[0] & 0x80 | value & 0x7F,
+                    // DC_VIDEO's field bit is read only. 240P begun, the
+                    // picture cleared, its odd lines left dark, as x16emu.
+                    0 if n == 0 => {
+                        let before = self.composer[0];
+                        let tv_240p = |video: u8| video & 2 != 0 && video & 8 != 0;
+                        if tv_240p(value) && !tv_240p(before) {
+                            self.picture.fill(0);
+                        }
+                        self.composer[0] = before & 0x80 | value & 0x7F;
+                    }
                     0 | 1 => self.composer[self.dcsel as usize * 4 + n] = value,
                     2..=6 => {
                         let moved = self.fx.write((self.dcsel as usize - 2) * 4 + n, value);
@@ -771,40 +832,89 @@ impl Vera {
             let (psg, pcm) = (self.psg.sample(), self.pcm.sample());
             self.sound = (psg.0 as i32 + pcm.0 as i32, psg.1 as i32 + pcm.1 as i32);
         }
-        self.cycles += 1;
-        if self.cycles < LINE_CYCLES {
+        self.cycles += CLOCKS_A_CYCLE;
+        let length = if self.tv() { HALF_LINE } else { VGA_LINE };
+        if self.cycles < length {
             return;
         }
-        self.cycles = 0;
-        self.scan(self.line);
+        self.cycles -= length;
+        if self.tv() {
+            self.half_line();
+        } else {
+            self.vga_line();
+        }
+    }
+
+    /// A VGA line ended: drawn, and the next begun.
+    fn vga_line(&mut self) {
+        let y = self.line;
+        self.scan(y, y, false);
         self.layers_before = self.layers;
         self.vscale_before = self.composer[2];
         self.line += 1;
-        if self.line == LINES {
+        if self.line >= LINES {
             self.line = 0;
             self.frame_ended = true;
         }
-        if self.line == HEIGHT as u16 {
+        self.begun(self.line as i32, self.irq_line);
+    }
+
+    /// An NTSC or RGB half-line ended: the first half of one of its
+    /// field's lines drawn, its line of the picture; and the next begun,
+    /// the field ended with its last.
+    fn half_line(&mut self) {
+        let (size, field, y) = self.field();
+        let progressive = self.composer[0] & 0x08 != 0;
+        if y & 1 == 0 && y < HEIGHT as i32 {
+            let shown = y as u16 | field as u16;
+            self.scan(shown, if progressive { y as u16 } else { shown }, true);
+            self.layers_before = self.layers;
+            self.vscale_before = self.composer[2];
+        }
+        self.line += 1;
+        if self.line == size || self.line >= size * 2 {
+            self.frame_ended = true;
+            if self.line >= size * 2 {
+                self.line = 0;
+            }
+        }
+        let (_, _, y) = self.field();
+        self.begun(y, self.irq_line & !1);
+    }
+
+    /// Line `y` of the picture begun (one of a field's): VSYNC as 480
+    /// does, the sprites' collisions with it; LINE as `irq_line` does.
+    fn begun(&mut self, y: i32, irq_line: u16) {
+        if y == HEIGHT as i32 {
             let collisions = std::mem::take(&mut self.collisions);
             self.isr = self.isr & 0x0F | collisions | VSYNC;
             if collisions != 0 {
                 self.isr |= SPRCOL;
             }
         }
-        if self.line == self.irq_line {
+        if y == irq_line as i32 {
             self.isr |= LINE;
         }
     }
 
     /// Line `y`, as it ends: the picture's line it shows, stepped on as
-    /// VSCALE says, and drawn, if it's one of the picture's.
-    fn scan(&mut self, y: u16) {
+    /// VSCALE says, and drawn, as line `row`, if it's one of the picture's.
+    /// `interlaced`, a field's, every other line: the first, 0 or 1, as
+    /// far down as its line is, and two lines' steps a line.
+    fn scan(&mut self, y: u16, row: u16, interlaced: bool) {
         let [_, _, _, _, _, _, vstart, vstop] = self.composer;
         let (vstart, vstop) = ((vstart as u16) << 1, (vstop as u16) << 1);
-        if y == 0 {
+        let vscale = self.vscale_before as u32;
+        if interlaced {
+            if y >> 1 == 0 {
+                self.picture_line = y as u32 * (vscale << 9);
+            } else if (vstart..vstop).contains(&(y & !1)) {
+                self.picture_line += vscale << 10;
+            }
+        } else if y == 0 {
             self.picture_line = 0;
         } else if (vstart..vstop).contains(&y) {
-            self.picture_line += (self.vscale_before as u32) << 9;
+            self.picture_line += vscale << 9;
         }
         if y as usize >= HEIGHT {
             return;
@@ -823,7 +933,7 @@ impl Vera {
         }
         if !self.leave_out {
             self.draw(
-                y as usize,
+                row as usize,
                 picture_y,
                 &sprites,
                 vstart as usize,
@@ -880,6 +990,14 @@ impl Vera {
         let line = &mut self.picture[y * WIDTH..(y + 1) * WIDTH];
         for (pixel, &index) in line.iter_mut().zip(indexes.iter()) {
             *pixel = colours[index as usize];
+        }
+        // NTSC: a TV's edge, dimmed to a quarter.
+        if video & 3 == 2 {
+            for (x, pixel) in line.iter_mut().enumerate() {
+                if !SAFE_X.contains(&x) || !SAFE_Y.contains(&y) {
+                    *pixel = (*pixel & 0xFCFCFC) >> 2;
+                }
+            }
         }
     }
 

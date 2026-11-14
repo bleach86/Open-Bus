@@ -1,5 +1,6 @@
 //! VERA: its ports' addresses, stepping and fetching; its palette, and
-//! RESET; its lines' time, SCANLINE, and its interrupts; a text layer and
+//! RESET; its lines' time, SCANLINE, and its interrupts, VGA's and NTSC's
+//! and RGB's fields, each drawing half the lines; a text layer and
 //! a tile layer drawn, scaled; sprites, over and under the layers, their
 //! collisions and their renderer's time; its SPI port, no card on it.
 
@@ -117,6 +118,103 @@ mod tests {
         lines(&mut vera, LINES as u32 - 512);
         assert!(vera.frame_ended());
         assert_eq!(vera.read(IRQLINE_L), 0);
+    }
+
+    /// Ticks to the end of the field, or frame, being sent.
+    fn to_field_end(vera: &mut Vera) -> u32 {
+        let mut ticks = 0;
+        while !vera.frame_ended() {
+            vera.tick();
+            ticks += 1;
+        }
+        ticks
+    }
+
+    /// DC_VIDEO's bit 7, the field being sent.
+    fn field(vera: &mut Vera) -> u8 {
+        vera.read(DC_VIDEO) >> 7
+    }
+
+    #[test]
+    fn ntsc_and_rgb_are_two_fields_each_of_525_half_lines_interrupting_each() {
+        let mut vera = Vera::new();
+        vera.write(DC_VIDEO, 0x03); // RGB
+        vera.write(IRQLINE_L, 101);
+        assert_eq!(field(&mut vera), 0);
+        // 525 half-lines of 794 dots at 25 MHz, the CPU's at 8.
+        assert_eq!(to_field_end(&mut vera), 133_392, "a field");
+        assert_eq!(field(&mut vera), 1, "the second");
+        assert_eq!(vera.read(ISR) & 0x03, 0x03, "VSYNC and LINE, the first's");
+        vera.write(ISR, 0x03);
+        // LINE at line 100 of the picture, IRQ_LINE's bit 0 left out:
+        // SCANLINE even in the first field, odd in the second.
+        let line_begun = |vera: &mut Vera| {
+            while vera.read(ISR) & 0x02 == 0 {
+                vera.tick();
+            }
+            vera.write(ISR, 0x02);
+            (vera.read(IRQLINE_L), field(vera))
+        };
+        assert_eq!(line_begun(&mut vera), (101, 1));
+        assert_eq!(vera.read(ISR) & 0x01, 0, "not VSYNC yet");
+        assert_eq!(line_begun(&mut vera), (100, 0), "the next frame's first");
+        assert_eq!(vera.read(ISR) & 0x01, 0x01, "VSYNC, the second's");
+        vera.write(DC_VIDEO, 0x01);
+        vera.frame_ended();
+        to_field_end(&mut vera);
+        assert_eq!(
+            to_field_end(&mut vera),
+            134_400,
+            "VGA: a frame of 525 lines"
+        );
+    }
+
+    #[test]
+    fn a_field_draws_the_pictures_even_lines_or_its_odd() {
+        let mut vera = Vera::new();
+        text(&mut vera);
+        vera.write(DC_VIDEO, 0x23); // RGB
+        to_field_end(&mut vera);
+        to_field_end(&mut vera);
+        vera.picture.fill(0);
+        to_field_end(&mut vera);
+        let first = |vera: &Vera, y: usize| vera.picture[y * WIDTH];
+        assert_eq!(
+            [first(&vera, 0), first(&vera, 1)],
+            [0xFFFFFF, 0],
+            "the first's even"
+        );
+        to_field_end(&mut vera);
+        assert_eq!(first(&vera, 1), 0x0000AA, "the second's odd");
+        // 240P, VSCALE half: both fields the even lines, the picture's line
+        // 0 on 0, the odd ones cleared and left dark.
+        vera.write(0x0B, 64);
+        vera.write(DC_VIDEO, 0x2B);
+        assert_eq!(first(&vera, 0), 0, "cleared");
+        for _ in 0..2 {
+            to_field_end(&mut vera);
+            assert_eq!([first(&vera, 0), first(&vera, 1)], [0xFFFFFF, 0]);
+        }
+        assert_eq!(
+            first(&vera, 2),
+            0x0000AA,
+            "its line 1: its 240 on the even 480"
+        );
+    }
+
+    #[test]
+    fn ntsc_shows_a_tvs_edge_dimmed_rgb_not() {
+        let mut vera = Vera::new();
+        poke(&mut vera, 0x1FA00, &[0xFF, 0x0F]); // colour 0 white
+        let corner_and_middle = |vera: &mut Vera, video: u8| {
+            vera.write(DC_VIDEO, video);
+            for _ in 0..4 {
+                to_field_end(vera);
+            }
+            [vera.picture[0], vera.picture[240 * WIDTH + 320]]
+        };
+        assert_eq!(corner_and_middle(&mut vera, 0x02), [0x3F3F3F, 0xFFFFFF]);
+        assert_eq!(corner_and_middle(&mut vera, 0x03), [0xFFFFFF, 0xFFFFFF]);
     }
 
     #[test]
