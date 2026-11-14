@@ -199,7 +199,9 @@ function showControlHelp() {
             }
             const key = document.createElement('kbd');
             key.textContent = bindings.said(source);
-            return [key, ` ${label} `];
+            const pair = document.createElement('span');
+            pair.append(key, ` ${label}`);
+            return [pair, ' '];
         }),
     );
 }

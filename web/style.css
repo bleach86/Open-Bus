@@ -1006,6 +1006,10 @@ canvas {
   text-align: center;
   word-spacing: 0.05em;
 }
+/* A key and what it does, kept on a line together. */
+.help span:has(> kbd:first-child) {
+  white-space: nowrap;
+}
 kbd {
   font: 500 0.85em var(--display);
   color: var(--highlight);
@@ -1017,7 +1021,8 @@ kbd {
 }
 #machine[data-machine="console"] .for-apple,
 #machine[data-machine="apple"] .for-nes,
-#machine[data-machine="x16"] .help .for-apple {
+#machine[data-machine="x16"] .help .for-apple,
+#machine[data-machine="x16"] .help .for-nes {
   display: none;
 }
 
