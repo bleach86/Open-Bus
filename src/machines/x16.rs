@@ -54,6 +54,7 @@ mod tests {
     mod sd_card;
     mod vera;
     mod vera_audio;
+    mod vera_fx;
 }
 
 pub mod card;
@@ -62,6 +63,7 @@ pub mod keyboard;
 pub mod sd_card;
 pub mod vera;
 pub mod vera_audio;
+pub mod vera_fx;
 
 use crate::chips::via6522::Via6522;
 use crate::chips::ym2151::Ym2151;

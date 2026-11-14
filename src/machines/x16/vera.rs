@@ -18,14 +18,16 @@
 //! registers as they were then: here, as it ends, but for its vertical
 //! scroll, as it is; its sprites as their attributes are then, as many as
 //! its renderer has time for, their collisions into ISR as line 480 begins.
-//! Its FX's ways of writing aren't here yet (its registers, DCSEL 2 to 6,
-//! hold what's written, and that's all); NTSC and RGB are shown as VGA.
+//! Its FX (`vera_fx`, DCSEL 2 to 6) steps its ports' addresses and writes
+//! through them as its helpers, its cache and its multiplier have it.
+//! NTSC and RGB are shown as VGA.
 //! Its sound's the PSG's and the PCM's (`vera_audio`), a sample each 512
 //! of its clocks. Its SPI port has the SD card on it (`sd_card`), if
 //! there is one.
 
 use super::sd_card::SdCard;
 use super::vera_audio::{Pcm, Psg};
+use super::vera_fx::Fx;
 use serde::{Deserialize, Serialize};
 
 pub const WIDTH: usize = 640;
@@ -210,10 +212,13 @@ pub struct Vera {
     /// The palette, 256 entries of 2 bytes: green and blue, then red.
     palette: Vec<u8>,
     /// The ports: each one's address, its ADDRx_H's high bits (its step
-    /// and DECR, and FX's nibble bits), the byte fetched for DATAx.
+    /// and DECR), the byte fetched for DATAx; in FX's 4-bit mode, its
+    /// nibble, and whether it steps by nibbles.
     address: [u32; 2],
     stepping: [u8; 2],
     fetched: [u8; 2],
+    nibble: [bool; 2],
+    nibble_steps: [bool; 2],
     addrsel: usize,
     dcsel: u8,
     ien: u8,
@@ -223,8 +228,8 @@ pub struct Vera {
     /// DCSEL 0 and 1's registers: DC_VIDEO, its scales and border, its
     /// active part's edges.
     composer: [u8; 8],
-    /// DCSEL 2 to 6's, FX's, as written.
-    fx: [u8; 20],
+    /// DCSEL 2 to 6's, FX's.
+    fx: Fx,
     psg: Psg,
     pcm: Pcm,
     /// Its clocks to its next sample, and its sound as it is, left and
@@ -260,6 +265,8 @@ impl Vera {
             address: [0; 2],
             stepping: [0; 2],
             fetched: [0; 2],
+            nibble: [false; 2],
+            nibble_steps: [false; 2],
             addrsel: 0,
             dcsel: 0,
             ien: 0,
@@ -267,7 +274,7 @@ impl Vera {
             irq_line: 0,
             layers: [[0; 7]; 2],
             composer: [0; 8],
-            fx: [0; 20],
+            fx: Fx::new(),
             psg: Psg::new(),
             pcm: Pcm::new(),
             sample_clock: 0,
@@ -296,6 +303,7 @@ impl Vera {
         self.address = [0; 2];
         self.stepping = [0; 2];
         self.fetched = [0; 2];
+        (self.nibble, self.nibble_steps) = ([false; 2], [false; 2]);
         (self.addrsel, self.dcsel) = (0, 0);
         (self.ien, self.isr, self.irq_line) = (0, 0, 0);
         self.layers = [[0; 7]; 2];
@@ -310,7 +318,7 @@ impl Vera {
             0,
             (HEIGHT >> 1) as u8,
         ];
-        self.fx = [0; 20];
+        self.fx = Fx::new();
         (self.psg, self.pcm, self.sound) = (Psg::new(), Pcm::new(), (0, 0));
         for (n, colour) in DEFAULT_PALETTE.iter().enumerate() {
             self.palette[n * 2..n * 2 + 2].copy_from_slice(&colour.to_le_bytes());
@@ -324,31 +332,243 @@ impl Vera {
         self.vram[address & (VRAM_SIZE - 1)]
     }
 
-    /// `value` written to video RAM at `address`, and to the register
-    /// that's there, if one is.
-    fn poke(&mut self, address: usize, value: u8) {
-        let address = address & (VRAM_SIZE - 1);
-        self.vram[address] = value;
+    /// `value` written by a port at `address` (in 4-bit mode, its
+    /// `nibble`), unless it's 0 and transparent writes are on; and to the
+    /// register that's there, if one is, as it's written.
+    fn poke(&mut self, address: usize, nibble: bool, value: u8) {
+        let at = address & (VRAM_SIZE - 1);
+        let (old, fx) = (self.vram[at], &self.fx);
+        let (low, high) = (value & 0x0F, value & 0xF0);
+        self.vram[at] = match (fx.four_bit, nibble) {
+            (true, true) if !fx.transparent || low != 0 => old & 0xF0 | low,
+            (true, false) if !fx.transparent || high != 0 => old & 0x0F | high,
+            (false, _) if !fx.transparent || value != 0 => value,
+            _ => old,
+        };
         // The sprites' are read where they're written; the palette's kept
         // apart, for RESET to set it again.
-        if (PSG..PALETTE).contains(&address) {
-            self.psg.write(address - PSG, value);
-        } else if (PALETTE..SPRITES).contains(&address) {
-            self.palette[address - PALETTE] = value;
+        if (PSG..PALETTE).contains(&at) {
+            self.psg.write(at - PSG, value);
+        } else if (PALETTE..SPRITES).contains(&at) {
+            self.palette[at - PALETTE] = value;
         }
     }
 
-    /// Port `port`'s address stepped on, as its ADDRx_H says, and the byte
-    /// there fetched.
-    fn step(&mut self, port: usize) {
-        let stepping = self.stepping[port];
-        let by = INCREMENTS[stepping as usize >> 4];
-        let address = &mut self.address[port];
-        *address = if stepping & 0x08 != 0 {
-            address.wrapping_sub(by)
+    /// Port `port`'s increment, as its ADDRx_H says: signed.
+    fn increment(&self, port: usize) -> i32 {
+        let by = INCREMENTS[self.stepping[port] as usize >> 4] as i32;
+        if self.stepping[port] & 0x08 != 0 {
+            -by
         } else {
-            address.wrapping_add(by)
-        } & (VRAM_SIZE as u32 - 1);
+            by
+        }
+    }
+
+    fn add(&mut self, port: usize, by: i32) {
+        let address = &mut self.address[port];
+        *address = address.wrapping_add(by as u32) & (VRAM_SIZE as u32 - 1);
+    }
+
+    /// Port `port`'s address a nibble on, or back (`down`): a byte on as
+    /// the high nibble's passed, or back as the low one's.
+    fn nibble_step(&mut self, port: usize, down: bool) {
+        if self.nibble[port] {
+            if !down {
+                self.add(port, 1);
+            }
+            self.nibble[port] = false;
+        } else {
+            if down {
+                self.add(port, -1);
+            }
+            self.nibble[port] = true;
+        }
+    }
+
+    /// Port `port`'s address stepped on, as its ADDRx_H says, as FX steps it
+    /// (by nibbles, by the 16-bit hop), and for a read or a `write`, ADDR1
+    /// as FX's helpers have it: where it was.
+    fn advance(&mut self, port: usize, write: bool) -> usize {
+        let address = self.address[port];
+        let mut by = self.increment(port);
+        if self.fx.four_bit && self.nibble_steps[port] && by == 0 {
+            self.nibble_step(port, self.stepping[port] & 0x08 != 0);
+        }
+        if port == 1 && self.fx.hop {
+            let aligned = self.fx.hop_align == address & 3;
+            by = match by {
+                4 => {
+                    if aligned {
+                        1
+                    } else {
+                        3
+                    }
+                }
+                320 => {
+                    if aligned {
+                        1
+                    } else {
+                        319
+                    }
+                }
+                by => by,
+            };
+        }
+        self.add(port, by);
+        let fx = &mut self.fx;
+        match fx.mode {
+            // The line: ADDR1 on by ADDR0's increment too, as X carries.
+            1 if port == 1 => {
+                fx.x = fx.x.wrapping_add(fx.x_increment);
+                if fx.x & 0x1_0000 != 0 {
+                    fx.x &= !0x1_0000;
+                    if fx.four_bit && self.nibble_steps[0] {
+                        self.nibble_step(1, self.stepping[0] & 0x08 != 0);
+                    }
+                    self.add(1, self.increment(0));
+                }
+            }
+            // The polygon: X1 and X2 on, and ADDR1 at ADDR0 and X1.
+            2 if !write => {
+                fx.x = fx.x.wrapping_add(fx.x_increment);
+                fx.y = fx.y.wrapping_add(fx.y_increment);
+                fx.fill_length = ((fx.y as i32 >> 16) - (fx.x as i32 >> 16)) as u16;
+                if port == 0 && fx.cycling && !fx.fill {
+                    fx.index = (fx.index + 1) & 3;
+                }
+                if port == 1 {
+                    let x = fx.x;
+                    let (shift, nibble) = if fx.four_bit {
+                        (17, x >> 16 & 1 != 0)
+                    } else {
+                        (16, false)
+                    };
+                    self.address[1] =
+                        self.address[0].wrapping_add(x >> shift) & (VRAM_SIZE as u32 - 1);
+                    self.nibble[1] = nibble;
+                }
+            }
+            3 if port == 1 && !write => {
+                fx.x = fx.x.wrapping_add(fx.x_increment);
+                fx.y = fx.y.wrapping_add(fx.y_increment);
+            }
+            _ => {}
+        }
+        address as usize
+    }
+
+    /// The affine helper's dot at X and Y, its tile's from its map, or
+    /// tile 0's past its edge if it clips, for ADDR1, fetched.
+    fn affine_fetch(&mut self) {
+        let fx = &self.fx;
+        if fx.mode != 3 {
+            return;
+        }
+        let (mut x, mut y) = ((fx.x >> 19) & 0xFF, (fx.y >> 19) & 0xFF);
+        let (dot_x, dot_y) = ((fx.x >> 16) & 7, (fx.y >> 16) & 7);
+        if !fx.clip {
+            (x, y) = (x & (fx.map_size - 1), y & (fx.map_size - 1));
+        }
+        let four = fx.four_bit as u32;
+        let within = ((dot_y << (3 - four)) + (dot_x >> four)) as usize;
+        let address = if x >= fx.map_size || y >= fx.map_size {
+            fx.tile_base + within
+        } else {
+            let tile = self.peek(fx.map_base + (y * fx.map_size + x) as usize) as usize;
+            fx.tile_base + (tile << (6 - four)) + within
+        };
+        self.nibble[1] = fx.four_bit && dot_x & 1 != 0;
+        self.address[1] = address as u32 & (VRAM_SIZE as u32 - 1);
+        self.fetch(1);
+    }
+
+    /// A byte read, `value`, by a port at `nibble`, into the cache at its
+    /// index: in 4-bit mode, the nibble.
+    fn fill_cache(&mut self, value: u8, nibble: bool) {
+        let fx = &mut self.fx;
+        let at = fx.index;
+        if fx.four_bit {
+            let read = if nibble { value << 4 } else { value & 0xF0 };
+            if fx.nibble_index {
+                fx.cache[at] = fx.cache[at] & 0xF0 | read >> 4;
+                (fx.nibble_index, fx.index) = (false, (at + 1) & 3);
+            } else {
+                fx.cache[at] = fx.cache[at] & 0x0F | read;
+                fx.nibble_index = true;
+            }
+        } else {
+            fx.cache[at] = value;
+            fx.index = if fx.pairs {
+                at & 2 | (at + 1) & 1
+            } else {
+                (at + 1) & 3
+            };
+        }
+    }
+
+    /// DATAx written, `value`: as it is, or through the cache, the
+    /// multiplier's product, or a byte of it cycled; the port stepped on.
+    fn write_data(&mut self, port: usize, value: u8) {
+        // A 2-bit poke: two bits of the cache's byte, as `value`'s top two
+        // say which, into what ADDR1 had.
+        if self.fx.poking && self.fx.mode != 0 {
+            self.fx.poking = false;
+            let mask = 0xC0 >> (2 * (value >> 6));
+            let at = self.address[1] as usize;
+            self.vram[at] = self.fx.cache[self.fx.index] & mask | self.fetched[1] & !mask;
+            return;
+        }
+        let nibble = self.nibble[port];
+        let address = self.advance(port, true);
+        let fx = &self.fx;
+        let byte = if fx.cycling {
+            fx.cache[fx.index]
+        } else {
+            value
+        };
+        if fx.cache_write {
+            let bytes = if fx.cycling {
+                [byte; 4]
+            } else if fx.multiplier {
+                let product = fx.product();
+                let sum = if fx.subtract {
+                    fx.accumulator.wrapping_sub(product)
+                } else {
+                    fx.accumulator.wrapping_add(product)
+                };
+                sum.to_le_bytes()
+            } else {
+                fx.cache
+            };
+            let at = address & 0x1_FFFC;
+            for (n, byte) in bytes.into_iter().enumerate() {
+                // A nibble mask's 1, its nibble left: as written, or each
+                // that's 0, transparent.
+                let mask = match (fx.transparent, fx.four_bit) {
+                    (false, _) => value >> (2 * n) & 3,
+                    (true, true) => ((byte & 0xF0 == 0) as u8) << 1 | (byte & 0x0F == 0) as u8,
+                    (true, false) => {
+                        if byte != 0 {
+                            0
+                        } else {
+                            3
+                        }
+                    }
+                };
+                if fx.transparent && byte == 0 {
+                    continue;
+                }
+                let old = self.vram[at + n];
+                self.vram[at + n] = match mask {
+                    0 => byte,
+                    1 => old & 0x0F | byte & 0xF0,
+                    2 => old & 0xF0 | byte & 0x0F,
+                    _ => old,
+                };
+            }
+        } else {
+            self.poke(address, nibble, byte);
+        }
         self.fetch(port);
     }
 
@@ -367,11 +587,24 @@ impl Vera {
         match reg & 0x1F {
             0x00 => self.address[port] as u8,
             0x01 => (self.address[port] >> 8) as u8,
-            0x02 => self.stepping[port] | (self.address[port] >> 16) as u8,
+            0x02 => {
+                self.stepping[port]
+                    | (self.nibble_steps[port] as u8) << 2
+                    | (self.nibble[port] as u8) << 1
+                    | (self.address[port] >> 16) as u8
+            }
             reg @ (0x03 | 0x04) => {
                 let port = (reg - 3) as usize;
-                let value = self.fetched[port];
-                self.step(port);
+                let (value, nibble) = (self.fetched[port], self.nibble[port]);
+                self.advance(port, false);
+                if port == 1 && self.fx.mode == 3 {
+                    self.affine_fetch();
+                } else {
+                    self.fetch(port);
+                }
+                if self.fx.fill {
+                    self.fill_cache(value, nibble);
+                }
                 value
             }
             0x05 => self.dcsel << 1 | port as u8,
@@ -386,6 +619,19 @@ impl Vera {
                     // DC_VIDEO's bit 7, the field: the line's odd or even.
                     0 if n == 0 => self.composer[0] & 0x7F | (self.line as u8 & 1) << 7,
                     0 | 1 => self.composer[self.dcsel as usize * 4 + n],
+                    // FX_CTRL; the fill length; the accumulator, reset or
+                    // accumulated as it's read. The rest are written only.
+                    2 if n == 0 => self.fx.regs[0],
+                    5 if n == 2 => self.fx.fill_low(),
+                    5 if n == 3 => self.fx.fill_high(),
+                    6 if n == 0 => {
+                        self.fx.accumulator = 0;
+                        VERSION[n]
+                    }
+                    6 if n == 1 => {
+                        self.fx.accumulate();
+                        VERSION[n]
+                    }
                     _ => VERSION[n],
                 }
             }
@@ -417,7 +663,17 @@ impl Vera {
         let port = self.addrsel;
         match reg & 0x1F {
             0x00 => {
-                self.address[port] = self.address[port] & 0x1FF00 | value as u32;
+                // In the 2-bit polygon mode, ADDR1's 2 bits, for a poke.
+                let fx = &mut self.fx;
+                if fx.two_bit && fx.four_bit && fx.mode == 2 && port == 1 {
+                    fx.poking = true;
+                    self.address[1] = self.address[1] & 0x1_FFFC | (value & 3) as u32;
+                } else {
+                    self.address[port] = self.address[port] & 0x1FF00 | value as u32;
+                    if fx.hop && port == 1 {
+                        fx.hop_align = (value & 3) as u32;
+                    }
+                }
                 self.fetch(port);
             }
             0x01 => {
@@ -426,14 +682,12 @@ impl Vera {
             }
             0x02 => {
                 self.address[port] = self.address[port] & 0x0FFFF | ((value & 1) as u32) << 16;
-                self.stepping[port] = value & 0xFE;
+                self.stepping[port] = value & 0xF8;
+                self.nibble[port] = value & 0x02 != 0;
+                self.nibble_steps[port] = value & 0x04 != 0;
                 self.fetch(port);
             }
-            reg @ (0x03 | 0x04) => {
-                let port = (reg - 3) as usize;
-                self.poke(self.address[port] as usize, value);
-                self.step(port);
-            }
+            reg @ (0x03 | 0x04) => self.write_data((reg - 3) as usize, value),
             0x05 => {
                 if value & 0x80 != 0 {
                     self.reset();
@@ -455,7 +709,12 @@ impl Vera {
                     // DC_VIDEO's field bit is read only.
                     0 if n == 0 => self.composer[0] = self.composer[0] & 0x80 | value & 0x7F,
                     0 | 1 => self.composer[self.dcsel as usize * 4 + n] = value,
-                    2..=6 => self.fx[(self.dcsel as usize - 2) * 4 + n] = value,
+                    2..=6 => {
+                        let moved = self.fx.write((self.dcsel as usize - 2) * 4 + n, value);
+                        if moved {
+                            self.affine_fetch();
+                        }
+                    }
                     _ => {}
                 }
             }
