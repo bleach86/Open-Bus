@@ -26,8 +26,10 @@
 //! as the KERNAL has it (x16emu's only with -ymirq); reset with the rest.
 //! It's on the bus at 2 MHz, as the cards from `$9FA0` are: each access
 //! takes 3 cycles more. Its sound's mixed as x16emu has it: VERA's twice,
-//! the YM's once. What isn't anything reads as the bus was left, the
-//! address's high byte.
+//! the YM's once, through its limiter, which turns it down at once as it
+//! would go past full, and up again over 2/3 of a second; at the volume of
+//! the other machines here. What isn't anything reads as the bus was left,
+//! the address's high byte.
 //!
 //! The 65C02's VPB, low as it reads a vector, has them read from ROM
 //! bank 0, `$01` as it was: the KERNAL's handlers in RAM, saving it and
@@ -92,6 +94,8 @@ pub const CLOCK_HZ: u32 = 8_000_000;
 pub const FRAME_CYCLES: u32 = vera::LINE_CYCLES * vera::LINES as u32;
 /// The YM2151's.
 const YM_CLOCK_HZ: u32 = 3_579_545;
+/// Its sound, full, as loud as the other machines' here.
+const VOLUME: f32 = 0.7;
 
 /// Where its ROM is, unless it's said: roms/x16/rom.bin, or a release's
 /// folder's in roms/x16/, the last by name.
@@ -198,9 +202,12 @@ pub struct X16 {
     rom_crc: u32,
     #[serde(skip)]
     samples: Vec<f32>,
-    /// Its sound sampled a cycle at a time, once it's on.
+    /// Its sound sampled a cycle at a time, once it's on; the limiter's
+    /// gain on it.
     #[serde(skip)]
     sampler: Option<Sampler<2>>,
+    #[serde(skip)]
+    limiter: f32,
 }
 
 /// The host's pointer as the mouse has it: where it was, as far as its
@@ -249,6 +256,7 @@ impl X16 {
             rom_crc: crc32(rom),
             samples: Vec::new(),
             sampler: None,
+            limiter: 1.0,
         };
         x16.i2c.rtc.set(clock::now());
         x16.port_a_changed();
@@ -335,8 +343,15 @@ impl X16 {
             let level = |vera: i32, ym: i16| (vera * 2 + ym as i32) as f32 / 32768.0;
             let levels = [level(vera.0, ym.0), level(vera.1, ym.1)];
             if let Some(sample) = sampler.cycle(levels) {
-                self.samples
-                    .extend(sample.map(|level| level.clamp(-1.0, 1.0)));
+                // x16emu's limiter: the gain cut to fit at once, then up by
+                // a 65,536th of full a sample.
+                let peak = sample[0].abs().max(sample[1].abs());
+                if peak > 1.0 {
+                    self.limiter = self.limiter.min(1.0 / peak);
+                }
+                let gain = self.limiter * VOLUME;
+                self.samples.extend(sample.map(|level| level * gain));
+                self.limiter = (self.limiter + 1.0 / 65536.0).min(1.0);
             }
         }
     }
@@ -663,6 +678,7 @@ impl Machine for X16 {
         self.rom_crc = running.rom_crc;
         self.samples = take(&mut running.samples);
         self.sampler = running.sampler.take();
+        self.limiter = running.limiter;
     }
 }
 

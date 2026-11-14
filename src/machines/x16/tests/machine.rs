@@ -462,4 +462,38 @@ mod tests {
         std::fs::remove_dir_all(&folder).unwrap();
         std::fs::remove_file(&card).unwrap();
     }
+
+    #[test]
+    fn loud_pcm_is_turned_down_by_the_limiter_not_clipped() {
+        let mut x16 = x16();
+        x16.sound_on();
+        // VERA's PCM, 16 bits mono at full volume, a full square wave:
+        // twice full, as VERA's doubled.
+        let vera = &mut x16.vera;
+        vera.write(0x1B, 0x2F);
+        for n in 0..2000 {
+            let level: i16 = if n / 20 % 2 == 0 { 32767 } else { -32768 };
+            for byte in level.to_le_bytes() {
+                vera.write(0x1D, byte);
+            }
+        }
+        vera.write(0x1C, 128);
+        for _ in 0..200_000 {
+            x16.cycle();
+        }
+        let samples = std::mem::take(x16.sound());
+        let peak = samples
+            .iter()
+            .fold(0f32, |most, level| most.max(level.abs()));
+        assert!(peak <= 0.7 + 1e-3, "past its volume: {peak}");
+        assert!(peak > 0.69, "turned down too far: {peak}");
+        // Square still: as many dots of it each way.
+        let high = samples.iter().filter(|&&level| level > 0.6).count();
+        let low = samples.iter().filter(|&&level| level < -0.6).count();
+        assert!(
+            high > samples.len() / 3 && low > samples.len() / 3,
+            "{high} {low} of {}",
+            samples.len()
+        );
+    }
 }
