@@ -1,30 +1,38 @@
 //! SD cards for the X16, made: a game's files on a card of its own, with
 //! an AUTOBOOT.X16 that runs it, the ROM loading that at power-on.
 //!
-//! A card's an MBR and one FAT32 partition from 1M on, as
-//! tools/make-x16-sd has mtools make it: clusters of a sector, 2 FATs, the
-//! root at cluster 2, an FSInfo sector and a backup boot sector. Its size
-//! is its files' and 16M more, 40M at least, FAT32's 65,525 clusters. Each
-//! file's and folder's clusters follow on from the last. A name that
+//! A card's an MBR and one FAT32 partition from 1M on: clusters of 32K, as
+//! an SD card's formatted, 2 FATs, the root at cluster 2, an FSInfo sector
+//! and a backup boot sector. Its size is its files' and 16M more, 40M at
+//! least. That's fewer clusters than FAT32's 65,525, which only Windows
+//! counts: the X16's DOS, mtools and Linux go by its boot sector's FAT32
+//! fields. Clusters of a sector each, as FAT32's count has them on a card
+//! this small, have the X16's DOS look up the FAT for every sector: too
+//! slow, by a fifth, for a video and its sound streamed from the card.
+//! Each file's and folder's clusters follow on from the last. A name that
 //! isn't 8.3, upper case, has a long name, its short one made up as
 //! Windows makes them, NAME~1.EXT.
 //!
 //! A game's files are a zip's or a folder's, as they are, but for one
-//! folder holding them all: its files. Its program's one that loads where
-//! BASIC's do, `$0801`, named .PRG or with no ending at all: one its name's
-//! part of the game's, or the shortest; AUTOBOOT.X16 a line of BASIC, `10 LOAD"PROGRAM"`, which
-//! loads it, and runs it, as a LOAD in a program does.
+//! folder holding them all: its files; not a card's image, as a game may
+//! come with, for x16emu. Its program's one that loads where BASIC's do,
+//! `$0801`, named .PRG or with no ending at all: one its name's part of the
+//! game's, or the shortest; AUTOBOOT.X16 a line of BASIC,
+//! `10 LOAD"PROGRAM"`, which loads it, and runs it, as a LOAD in a program
+//! does.
 
 use crate::host::clock::DateTime;
 use std::collections::{BTreeMap, HashSet};
 
 const SECTOR: usize = 512;
+/// A cluster's sectors, and bytes.
+const CLUSTER_SECTORS: usize = 64;
+const CLUSTER: usize = SECTOR * CLUSTER_SECTORS;
 /// The partition's first sector; its reserved sectors, the boot sector's,
 /// FSInfo's (1) and the backups' (6 and 7).
 const START: usize = 2048;
 const RESERVED: usize = 32;
 const FATS: usize = 2;
-const MIN_CLUSTERS: usize = 65_525;
 const ROOT: u32 = 2;
 /// A cluster chain's end.
 const END: u32 = 0x0FFF_FFFF;
@@ -135,7 +143,7 @@ struct Card {
 
 impl Card {
     fn cluster_at(&self, cluster: u32) -> usize {
-        (self.data + cluster as usize - 2) * SECTOR
+        (self.data + (cluster as usize - 2) * CLUSTER_SECTORS) * SECTOR
     }
 
     /// A short entry: its name, attributes, first cluster and size.
@@ -184,7 +192,7 @@ impl Card {
                 self.entry(short, ARCHIVE, first, bytes.len() as u32)
             });
             files.push((first, bytes));
-            cluster += bytes.len().div_ceil(SECTOR) as u32;
+            cluster += bytes.len().div_ceil(CLUSTER) as u32;
         }
         for (name, sub) in &folder.folders {
             named(name, &|short| self.entry(short, FOLDER, sub.cluster, 0));
@@ -240,11 +248,11 @@ fn long_entries(name: &str, short: &[u8; 11]) -> Vec<[u8; 32]> {
 fn allocate(folder: &mut Folder, next: &mut u32, root: bool) {
     let names = folder.files.keys().chain(folder.folders.keys());
     let entries = if root { 1 } else { 2 } + names.map(|name| entries_of(name)).sum::<usize>();
-    folder.clusters = (entries * 32).div_ceil(SECTOR).max(1);
+    folder.clusters = (entries * 32).div_ceil(CLUSTER).max(1);
     folder.cluster = *next;
     *next += folder.clusters as u32;
     for bytes in folder.files.values() {
-        *next += bytes.len().div_ceil(SECTOR) as u32;
+        *next += bytes.len().div_ceil(CLUSTER) as u32;
     }
     for sub in folder.folders.values_mut() {
         allocate(sub, next, false);
@@ -265,7 +273,7 @@ fn chains(folder: &Folder, fat: &mut [u32]) {
     chain(folder.cluster, folder.clusters);
     let mut cluster = folder.cluster + folder.clusters as u32;
     for bytes in folder.files.values() {
-        let count = bytes.len().div_ceil(SECTOR);
+        let count = bytes.len().div_ceil(CLUSTER);
         if count > 0 {
             chain(cluster, count);
         }
@@ -297,16 +305,16 @@ pub fn card(files: &[CardFile], when: DateTime) -> Result<Vec<u8>, String> {
     allocate(&mut root, &mut next, true);
     let used = (next - ROOT) as usize;
     // Its size, in whole megabytes; its FATs as big as its clusters need.
-    let size = ((used * SECTOR + 16 * MB).div_ceil(MB) + 1).max(40) * MB;
+    let size = ((used * CLUSTER + 16 * MB).div_ceil(MB) + 1).max(40) * MB;
     let sectors = size / SECTOR - START;
-    let mut fat_sectors = (sectors * 4).div_ceil(SECTOR);
+    let mut fat_sectors = (sectors / CLUSTER_SECTORS * 4).div_ceil(SECTOR);
     let mut clusters = 0;
     for _ in 0..4 {
-        clusters = sectors - RESERVED - FATS * fat_sectors;
+        clusters = (sectors - RESERVED - FATS * fat_sectors) / CLUSTER_SECTORS;
         fat_sectors = ((clusters + 2) * 4).div_ceil(SECTOR);
     }
-    if clusters < MIN_CLUSTERS.max(used) {
-        return Err("too few clusters for FAT32".to_string());
+    if clusters < used {
+        return Err("too few clusters for its files".to_string());
     }
     let mut card = Card {
         bytes: vec![0; size],
@@ -327,7 +335,7 @@ pub fn card(files: &[CardFile], when: DateTime) -> Result<Vec<u8>, String> {
     let mut boot = [0u8; SECTOR];
     boot[..11].copy_from_slice(b"\xEB\x58\x90MSWIN4.1");
     boot[11..13].copy_from_slice(&(SECTOR as u16).to_le_bytes());
-    boot[13] = 1; // a sector a cluster
+    boot[13] = CLUSTER_SECTORS as u8;
     boot[14..16].copy_from_slice(&(RESERVED as u16).to_le_bytes());
     boot[16] = FATS as u8;
     boot[21] = 0xF8;
@@ -385,7 +393,7 @@ fn plain(name: &str) -> String {
 /// The game `name`'s files, as a zip or a folder has them: its program
 /// found, and an AUTOBOOT.X16 to run it, if it hasn't one.
 pub fn game(name: &str, mut files: Vec<CardFile>) -> Result<Game, String> {
-    files.retain(|(path, _)| !path.ends_with('/'));
+    files.retain(|(path, bytes)| !path.ends_with('/') && !is_card_image(bytes));
     // One folder holding them all: its files.
     let first = |path: &str| path.split_once('/').map(|(folder, _)| folder.to_string());
     let folder = files.first().and_then(|(path, _)| first(path));
@@ -421,6 +429,13 @@ pub fn game(name: &str, mut files: Vec<CardFile>) -> Result<Game, String> {
         files.push(("AUTOBOOT.X16".to_string(), autoboot(&program)));
     }
     Ok(Game { files, program })
+}
+
+/// Whether `bytes` are a card's image: an MBR with a FAT32 partition, or a
+/// FAT32 boot sector by itself.
+pub fn is_card_image(bytes: &[u8]) -> bool {
+    let signed = bytes.len() >= 0x10_0000 && bytes[510..512] == [0x55, 0xAA];
+    signed && (matches!(bytes[450], 0x0B | 0x0C) || &bytes[82..90] == b"FAT32   ")
 }
 
 /// Whether the file at `path`, its `bytes`, is a program BASIC loads: at

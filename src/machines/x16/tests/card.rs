@@ -68,6 +68,12 @@ mod tests {
         );
         assert_eq!(own.unwrap().files.len(), 2, "its own AUTOBOOT.X16 kept");
         assert!(card::game("x", vec![file("DATA.BIN", &[0, 0xA0])]).is_err());
+        // A card's image it comes with, for x16emu: left off.
+        let mut image = vec![0; 0x10_0000];
+        image[450] = 0x0C;
+        image[510..512].copy_from_slice(&[0x55, 0xAA]);
+        let with = card::game("x", vec![file("X.PRG", &[1, 8]), file("x.img", &image)]);
+        assert_eq!(with.unwrap().files.len(), 2, "X.PRG and AUTOBOOT.X16");
     }
 
     /// A card read as FAT32 has it: enough of it to check what's on it.
@@ -75,6 +81,8 @@ mod tests {
         card: &'a [u8],
         data: usize,
         fat: usize,
+        /// A cluster's bytes.
+        cluster: usize,
     }
 
     impl Reader<'_> {
@@ -95,6 +103,7 @@ mod tests {
                 card,
                 fat,
                 data: fat + boot[16] as usize * fat_size * 512,
+                cluster: boot[13] as usize * 512,
             }
         }
 
@@ -103,8 +112,8 @@ mod tests {
             let mut bytes = Vec::new();
             let mut cluster = first;
             while cluster < 0x0FFF_FFF8 {
-                let at = self.data + (cluster as usize - 2) * 512;
-                bytes.extend(&self.card[at..at + 512]);
+                let at = self.data + (cluster as usize - 2) * self.cluster;
+                bytes.extend(&self.card[at..at + self.cluster]);
                 let entry = self.fat + cluster as usize * 4;
                 cluster = u32::from_le_bytes(self.card[entry..entry + 4].try_into().unwrap());
             }
@@ -164,7 +173,7 @@ mod tests {
 
     #[test]
     fn a_card_is_fat32_its_names_long_and_short_its_files_whole() {
-        let big: Vec<u8> = (0..3000).map(|n| (n % 251) as u8).collect();
+        let big: Vec<u8> = (0..70_000).map(|n| (n % 251) as u8).collect();
         let files = vec![
             file("HELLO.PRG", &[0x01, 0x08, 0, 0]),
             file("BlueShips.bin", &big),
@@ -194,8 +203,9 @@ mod tests {
             ]
         );
         let (.., cluster, size) = root[2];
-        assert_eq!(size, 3000);
-        assert_eq!(card.chain(cluster)[..3000], big[..], "across 6 clusters");
+        assert_eq!(size, 70_000);
+        assert_eq!(card.chain(cluster)[..70_000], big[..], "across 3 clusters");
+        assert_eq!(card.cluster, 32 << 10, "of 32K, as an SD card's");
         assert_eq!(root[3].3, 0, "empty: no cluster");
         let maps = card.folder(root[6].3);
         assert_eq!(maps[0].1, ".          ");

@@ -459,6 +459,12 @@ mod tests {
             text.contains("\"HELLO WORLD.PRG\""),
             "its long name:\n{text}"
         );
+        // Saved to, and loaded back: written in its 32K clusters.
+        cpu.memory
+            .type_text("new\n10 print 6*7\nsave\"answer\"\nnew\nload\"answer\"\nrun\n");
+        frames(&mut cpu, 300);
+        let text = cpu.memory.screen_text().unwrap_or_default();
+        assert!(text.ends_with("RUN\n 42\n\nREADY."), "the screen:\n{text}");
         std::fs::remove_dir_all(&folder).unwrap();
         std::fs::remove_file(&card).unwrap();
     }
