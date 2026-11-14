@@ -316,6 +316,23 @@ impl Window {
         }
     }
 
+    /// Ctrl, Shift, Alt and the logo keys let go for the machine, as the
+    /// clipboard's keys are pressed with them: they're the host's, and a
+    /// paste into an X16 with Ctrl held would scroll as slowly as its
+    /// KERNAL scrolls for Ctrl.
+    fn let_go_modifiers(&mut self) {
+        let modifiers: Vec<Scancode> = self
+            .raw_held
+            .iter()
+            .copied()
+            .filter(|key| (0xE0..=0xE7).contains(&key.0))
+            .collect();
+        for key in modifiers {
+            self.raw_held.remove(&key);
+            self.key_changes.push_back((key, false));
+        }
+    }
+
     /// The mouse captured for the machine, at `at` on the picture, or let
     /// go: its cursor gone, its moves told however far they go, and the
     /// title saying how it's let go.
@@ -425,6 +442,7 @@ impl Window {
                     let ctrl = keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD);
                     if let Some(n) = clipboard_key(keycode, keymod) {
                         if !repeat {
+                            self.let_go_modifiers();
                             self.function_keys.push_back(n);
                         }
                         continue;

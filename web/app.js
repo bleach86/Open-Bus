@@ -3129,6 +3129,19 @@ function letGoKeys() {
     }
     rawHeld.clear();
 }
+
+/// Ctrl, Shift, Alt and the logo keys let go for the machine, as the
+/// clipboard's keys are pressed with them: they're the page's, and a paste
+/// into an X16 with Ctrl held would scroll as slowly as its KERNAL scrolls
+/// for Ctrl.
+function letGoModifiers() {
+    for (const code of rawHeld) {
+        if (/^(Control|Shift|Alt|Meta)/.test(code)) {
+            emulator?.key_change(usageOf(code), false);
+            rawHeld.delete(code);
+        }
+    }
+}
 addEventListener('blur', letGoKeys);
 
 addEventListener('keydown', (event) => {
@@ -3147,10 +3160,12 @@ addEventListener('keydown', (event) => {
     const ctrl = event.ctrlKey || event.metaKey;
     const shifted = event.shiftKey || event.metaKey;
     if ((ctrl && shifted && code === 'KeyV') || (event.shiftKey && code === 'Insert')) {
+        letGoModifiers();
         pasteClipboard();
         return;
     }
     if ((ctrl && shifted && code === 'KeyC') || (ctrl && code === 'Insert')) {
+        letGoModifiers();
         emulator.copy_screen();
         return;
     }
