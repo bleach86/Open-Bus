@@ -17,8 +17,22 @@ const GAMES = ['nes', 'fds', 'a26', 'a78', 'bin', 'zip', ...DISKS];
 /// Where each name's file is: the page has names, the disk paths.
 const where = new Map();
 
+/// A file kept in the library, and in what's been found, as it's named
+/// there already: else what's found next, as a ROM's sorted, would have
+/// only what was there before.
 export async function keep(name, bytes) {
-    where.set(name, await invoke('keep_file', bytes, { headers: { name: encodeURIComponent(name) } }));
+    const path = await invoke('keep_file', bytes, { headers: { name: encodeURIComponent(name) } });
+    where.set(name, path);
+    unfound(path);
+    found?.library.push({ path, size: bytes.length });
+}
+
+/// What's been found, without the file at `path`.
+function unfound(path) {
+    if (found) {
+        found.library = found.library.filter((file) => file.path !== path);
+        found.folders = found.folders.filter((file) => file.path !== path);
+    }
 }
 
 /// The running machines' parts of a hard disk: they aren't here, a game
@@ -28,8 +42,10 @@ export const keepParts = async () => {};
 /// Gone from the library: its own copy deleted, or one in a folder of yours
 /// only hidden.
 export async function forget(name) {
-    await invoke('forget_path', { path: where.get(name) });
+    const path = where.get(name);
+    await invoke('forget_path', { path });
     where.delete(name);
+    unfound(path);
 }
 
 /// What the library has, from what was found: the library's, then the games
