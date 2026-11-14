@@ -53,6 +53,12 @@ pub trait Bus {
         0
     }
 
+    /// Between instructions, as the next is about to be fetched, with
+    /// whether I is set: for an emulator's own doing that's safe only
+    /// while interrupts are let in, as pasting into a keyboard buffer the
+    /// machine's code takes from with them masked.
+    fn between_instructions(&mut self, _masked: bool) {}
+
     /// Whether a frame has ended since it was last asked: the CPU's run
     /// loop handed back then, between instructions, to the host.
     fn hand_back(&mut self) -> bool {

@@ -103,6 +103,11 @@ pub const ROM_FOLDER: &str = "roms/x16";
 /// The RTC's 64 bytes of RAM, kept by its battery, as they're kept here.
 pub const NVRAM_FILE: &str = "roms/x16/nvram.bin";
 
+/// The KERNAL's keyboard buffer, KEYD, in RAM bank 0, and NDX, how many
+/// it holds, as they've been since R41, and as x16emu has them.
+const KEYD: usize = 0xA800 - 0xA000;
+const KEYD_SIZE: usize = 10;
+const NDX: usize = 0xA80A - 0xA000;
 const RAM_TOP: usize = 0x9F00;
 const BANK: usize = 0x2000;
 const RAM_BANKS: usize = 64;
@@ -187,6 +192,10 @@ pub struct X16 {
     /// The keys typed, waiting for room in the SMC.
     #[serde(skip)]
     typing: VecDeque<u8>,
+    /// What's pasted, in PETSCII, waiting for room in the KERNAL's keyboard
+    /// buffer.
+    #[serde(skip)]
+    pasting: VecDeque<u8>,
     #[serde(skip)]
     gamepads: [Gamepad; 2],
     #[serde(skip)]
@@ -248,6 +257,7 @@ impl X16 {
             stolen: 0,
             rom: flash,
             typing: VecDeque::new(),
+            pasting: VecDeque::new(),
             gamepads: [Gamepad::default(); 2],
             mouse: Mouse::default(),
             reset_held: false,
@@ -522,6 +532,24 @@ impl Bus for X16 {
         self.vector_pull = pulling;
     }
 
+    /// What's pasted, into the KERNAL's keyboard buffer as it has room,
+    /// as x16emu does: only with interrupts let in, the KERNAL taking from
+    /// it with them masked.
+    fn between_instructions(&mut self, masked: bool) {
+        if masked || self.pasting.is_empty() {
+            return;
+        }
+        let mut held = self.banked[NDX] as usize;
+        while held < KEYD_SIZE {
+            let Some(c) = self.pasting.pop_front() else {
+                break;
+            };
+            self.banked[KEYD + held] = c;
+            held += 1;
+        }
+        self.banked[NDX] = held as u8;
+    }
+
     fn irq(&self) -> bool {
         self.vera.irq() || self.vias[0].irq() || self.vias[1].irq() || self.ym.irq()
     }
@@ -569,9 +597,10 @@ impl Machine for X16 {
                 self.ram[0], self.ram[1]
             ),
             format!(
-                "KEYS {} TYPING {}",
+                "KEYS {} TYPING {} PASTING {}",
                 self.i2c.smc.keys.len(),
-                self.typing.len()
+                self.typing.len(),
+                self.pasting.len()
             ),
         ]
     }
@@ -585,21 +614,18 @@ impl Machine for X16 {
         true
     }
 
-    /// Text pasted: its letters as they're written; but with none in lower
-    /// case, all of them unshifted, as letters, not the graphics they'd be
-    /// shifted in the X16's first character set, upper case and graphics.
+    /// Text pasted, into the KERNAL's keyboard buffer, as fast as it's
+    /// taken, as x16emu pastes: its letters as they're written; but with
+    /// none in lower case, all of them unshifted, as letters, not the
+    /// graphics they'd be shifted in the X16's first character set, upper
+    /// case and graphics.
     fn type_text(&mut self, text: &str) {
         let mut text = text.replace("\r\n", "\n");
         if !text.bytes().any(|c| c.is_ascii_lowercase()) {
             text.make_ascii_lowercase();
         }
-        for c in text.chars() {
-            match c {
-                '\n' | '\r' => self.key(Key::Char(13)),
-                c if c.is_ascii() => self.key(Key::Char(c as u8)),
-                _ => {}
-            }
-        }
+        self.pasting
+            .extend(text.chars().filter_map(keyboard::petscii));
     }
 
     fn screen_text(&self) -> Option<String> {
@@ -670,6 +696,7 @@ impl Machine for X16 {
         self.rom = take(&mut running.rom);
         self.vera.sd_card().image = running.vera.sd_card().image.take();
         self.typing = take(&mut running.typing);
+        self.pasting = take(&mut running.pasting);
         self.gamepads = running.gamepads;
         self.mouse = running.mouse;
         self.nvram_file = take(&mut running.nvram_file);

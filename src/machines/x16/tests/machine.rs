@@ -16,7 +16,7 @@ mod tests {
     use crate::host::files;
     use crate::host::machine::{Input, Machine};
     use crate::machines::x16::i2c::Asked;
-    use crate::machines::x16::{self, X16, keyboard};
+    use crate::machines::x16::{self, KEYD, NDX, X16, keyboard};
     use std::path::Path;
 
     const VIA1_PB: u16 = 0x9F00;
@@ -207,31 +207,52 @@ mod tests {
 
     #[test]
     fn pasted_capitals_are_letters_but_in_mixed_case_shifted() {
-        // Its codes, in the SMC and waiting for room there.
-        let typed = |text: &str| {
+        // Its PETSCII, waiting for room in the KERNAL's keyboard buffer.
+        let pasted = |text: &str| {
             let mut x16 = x16();
             x16.type_text(text);
-            let codes: Vec<u8> = x16
-                .i2c
-                .smc
-                .keys
-                .iter()
-                .chain(&x16.typing)
-                .copied()
-                .collect();
-            codes
-        };
-        let codes = |text: &str| -> Vec<u8> {
-            text.bytes()
-                .flat_map(|c| keyboard::codes(Key::Char(c)))
-                .collect()
+            x16.pasting.iter().copied().collect::<Vec<u8>>()
         };
         assert_eq!(
-            typed("LOAD\"A\""),
-            codes("load\"a\""),
-            "no lower case: unshifted, letters"
+            pasted("LOAD\"A\"\r\n"),
+            b"LOAD\"A\"\r",
+            "no lower case: letters"
         );
-        assert_eq!(typed("Hi"), codes("Hi"), "as written");
+        assert_eq!(pasted("Hi\n"), [0xC8, b'I', 13], "as written, H shifted");
+    }
+
+    #[test]
+    fn pasted_text_goes_in_the_keyboard_buffer_while_interrupts_are_let_in() {
+        let mut x16 = x16();
+        x16.type_text("print 1234567890\n");
+        x16.between_instructions(true);
+        assert_eq!(x16.banked[NDX], 0, "masked: none");
+        x16.between_instructions(false);
+        assert_eq!(x16.banked[NDX], 10, "as many as it holds");
+        assert_eq!(&x16.banked[KEYD..KEYD + 10], b"PRINT 1234");
+        x16.banked[NDX] = 8;
+        x16.between_instructions(false);
+        assert_eq!(&x16.banked[KEYD + 8..KEYD + 10], b"56", "as it has room");
+    }
+
+    #[test]
+    fn a_long_paste_is_taken_by_basic_as_fast_as_its_typed_in_x16emu() {
+        let Some(mut cpu) = booting() else { return };
+        frames(&mut cpu, 300);
+        let program: String = (1..=100)
+            .map(|n| format!("{n}0 print \"line {n} of a long program\"\n"))
+            .collect();
+        cpu.memory.type_text(&format!("{program}run\n"));
+        frames(&mut cpu, 600);
+        let text = cpu.memory.screen_text().unwrap_or_default();
+        assert!(
+            cpu.memory.pasting.is_empty(),
+            "ten seconds: all of it taken"
+        );
+        assert!(
+            text.contains("LINE 99 OF A LONG PROGRAM\nLINE 100 OF A LONG PROGRAM\n\nREADY."),
+            "the screen:\n{text}"
+        );
     }
 
     #[test]
@@ -286,6 +307,7 @@ mod tests {
         assert_eq!(sprite_0(&cpu), (329, 209), "right 10, up 30");
         pointed(&mut cpu, 2, at(700.0, 70.0, false));
         assert_eq!(sprite_0(&cpu).0, 639, "past the edge: at it");
+        pointed(&mut cpu, 2, at(700.0, 70.0, true));
         cpu.memory.type_text("print mb\n");
         pointed(&mut cpu, 60, at(700.0, 70.0, true));
         let text = cpu.memory.screen_text().unwrap_or_default();

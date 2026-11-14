@@ -1,9 +1,10 @@
 //! The X16's keyboard, a PS/2 one, its keys as the SMC has them: IBM's key
 //! numbers, sent as a key goes down (again as it repeats), and with bit 7
 //! set as it's let go. The host's keys are each the one in its place, as
-//! x16emu has them (`number`). What's pasted is characters, not keys: each
-//! is the keys a US keyboard types it with, pressed and let go, Shift or
-//! Ctrl with it if it takes one (`codes`).
+//! x16emu has them (`number`). A character typed is the keys a US keyboard
+//! types it with, pressed and let go, Shift or Ctrl with it if it takes one
+//! (`codes`); one pasted, the PETSCII those keys come to (`petscii`), put
+//! in the KERNAL's keyboard buffer as x16emu does.
 
 use crate::host::display::{Key, Scancode};
 
@@ -15,6 +16,26 @@ const LEFT: u8 = 79;
 const RIGHT: u8 = 89;
 /// A key let go, its number's bit 7 set.
 const UP_BIT: u8 = 0x80;
+
+/// The PETSCII a character's keys come to, as the KERNAL has them, in
+/// its first character set and with the US keymap: lower case letters
+/// unshifted, `$41` on; upper case shifted, `$C1` on; the rest as their
+/// keys give them, Return 13.
+pub fn petscii(c: char) -> Option<u8> {
+    Some(match c {
+        '\n' | '\r' => 13,
+        'a'..='z' => c as u8 - 0x20,
+        'A'..='Z' => c as u8 + 0x80,
+        ' '..='@' | '[' | '\\' | ']' | '^' => c as u8,
+        '_' => 0xDD,
+        '`' => 0x5F,
+        '{' => 0xBA,
+        '|' => 0xA9,
+        '}' => 0xC0,
+        '~' => 0xFF,
+        _ => return None,
+    })
+}
 
 /// The key a character's on, and whether it's shifted there, on a US
 /// keyboard.

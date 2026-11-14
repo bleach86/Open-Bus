@@ -282,6 +282,7 @@ impl<B: Bus> CPU<B> {
     /// An instruction, and the interrupt after it, if one is due.
     fn step(&mut self) {
         let i_before = self.status.interrupt_disable;
+        self.memory.between_instructions(i_before);
 
         let opcode = self.fetch_byte();
 
