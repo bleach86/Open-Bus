@@ -1,7 +1,8 @@
 //! A notice over a machine's picture, of any size: a disk put in, a state
-//! saved. A black band across its foot, 12 lines high, the text centred in
+//! saved. A black band across its foot, 12 dots high, the text centred in
 //! it in white, in capitals, each dot as many wide as the picture has room
-//! for 40 characters at; as much of the text as fits. And a panel at its
+//! for 40 characters at, and as many lines tall as make it square on the
+//! picture shown at 4:3; as much of the text as fits. And a panel at its
 //! top left, some lines of text on the picture dimmed.
 
 use crate::host::font;
@@ -30,32 +31,35 @@ const LAMP_SHINE: u32 = 0xFFAA96;
 
 /// `text` over `picture`, `width` by `height`.
 pub fn draw(picture: &mut [u32], width: usize, height: usize, text: &str) {
-    let (scale, columns) = fit(width);
-    let text = characters(text, columns);
-    let top = height - BAND;
+    let fit = fit(width, height);
+    let text = characters(text, fit.columns);
+    let top = height.saturating_sub(BAND * fit.tall);
     picture[top * width..].fill(BLACK);
-    let left = (columns - text.len()) * CHARACTER * scale / 2;
-    write(picture, width, left, top + 2, scale, &text);
+    let left = (fit.columns - text.len()) * CHARACTER * fit.scale / 2;
+    write(picture, width, (left, top + 2 * fit.tall), fit, &text);
 }
 
 /// `lines` at the top left of `picture`, `width` by `height`, what's under
 /// them dimmed; as many of them as fit, and as much of each.
 pub fn panel(picture: &mut [u32], width: usize, height: usize, lines: &[String]) {
-    let (scale, columns) = fit(width);
+    let fit = fit(width, height);
+    let line_height = LINE * fit.tall;
     let lines: Vec<Vec<u8>> = lines
         .iter()
-        .take((height - 2) / LINE)
-        .map(|line| characters(line, columns.saturating_sub(1)))
+        .take(height.saturating_sub(2 * fit.tall) / line_height)
+        .map(|line| characters(line, fit.columns.saturating_sub(1)))
         .collect();
     let longest = lines.iter().map(Vec::len).max().unwrap_or(0);
-    let across = ((longest * CHARACTER + 2) * scale).min(width);
-    for row in picture.chunks_mut(width).take(lines.len() * LINE + 2) {
+    let across = ((longest * CHARACTER + 2) * fit.scale).min(width);
+    let down = lines.len() * line_height + 2 * fit.tall;
+    for row in picture.chunks_mut(width).take(down) {
         for dot in &mut row[..across] {
             *dot = (*dot >> DIM) & DIMMED;
         }
     }
     for (place, line) in lines.iter().enumerate() {
-        write(picture, width, scale, 1 + place * LINE, scale, line);
+        let at = (fit.scale, fit.tall + place * line_height);
+        write(picture, width, at, fit, line);
     }
 }
 
@@ -63,10 +67,10 @@ pub fn panel(picture: &mut [u32], width: usize, height: usize, lines: &[String])
 /// `height`: a small red lamp, its dots as wide as a notice's, on the
 /// picture dimmed.
 pub fn light(picture: &mut [u32], width: usize, height: usize) {
-    let (scale, _) = fit(width);
+    let Fit { scale, tall, .. } = fit(width, height);
     let across = LAMP.len() + 2 * LAMP_MARGIN;
     let left = width.saturating_sub(across * scale);
-    let top = height.saturating_sub(across);
+    let top = height.saturating_sub(across * tall);
     for row in picture.chunks_mut(width).skip(top) {
         for dot in &mut row[left..] {
             *dot = (*dot >> DIM) & DIMMED;
@@ -74,7 +78,6 @@ pub fn light(picture: &mut [u32], width: usize, height: usize) {
     }
     let lamp_left = left + LAMP_MARGIN * scale;
     for (row, dots) in LAMP.iter().enumerate() {
-        let line = (top + LAMP_MARGIN + row) * width;
         for (dot, kind) in dots.bytes().enumerate() {
             let colour = match kind {
                 b'#' => LAMP_LIT,
@@ -83,15 +86,32 @@ pub fn light(picture: &mut [u32], width: usize, height: usize) {
                 _ => continue,
             };
             let x = lamp_left + dot * scale;
-            picture[line + x..line + x + scale].fill(colour);
+            for line in 0..tall {
+                let line = (top + (LAMP_MARGIN + row) * tall + line) * width;
+                picture[line + x..line + x + scale].fill(colour);
+            }
         }
     }
 }
 
-/// How many pixels wide a dot is, and how many characters fit, in `width`.
-fn fit(width: usize) -> (usize, usize) {
+/// A dot's size on a picture: how many pixels wide, for 40 characters
+/// across; how many lines tall, for it to be square as the picture's shown,
+/// at 4:3; and how many characters fit across.
+#[derive(Clone, Copy)]
+struct Fit {
+    scale: usize,
+    tall: usize,
+    columns: usize,
+}
+
+fn fit(width: usize, height: usize) -> Fit {
     let scale = (width / (COLUMNS * CHARACTER)).max(1);
-    (scale, width / (CHARACTER * scale))
+    let tall = ((scale * height * 4 + width * 3 / 2) / (width * 3)).max(1);
+    Fit {
+        scale,
+        tall,
+        columns: width / (CHARACTER * scale),
+    }
 }
 
 /// `text` as the font has it, as much as `columns` holds.
@@ -103,15 +123,17 @@ fn characters(text: &str, columns: usize) -> Vec<u8> {
         .collect()
 }
 
-/// `text` written at `left`, `top`, its dots `scale` wide.
-fn write(picture: &mut [u32], width: usize, left: usize, top: usize, scale: usize, text: &[u8]) {
+/// `text` written at `(left, top)`, its dots as big as `fit` has them.
+fn write(picture: &mut [u32], width: usize, (left, top): (usize, usize), fit: Fit, text: &[u8]) {
     for (place, &char) in text.iter().enumerate() {
         for row in 0..8 {
             let dots = font::dots(char & 0x3F, row);
-            let line = (top + row) * width;
-            for dot in (0..CHARACTER).filter(|dot| (dots >> dot) & 1 != 0) {
-                let x = left + (place * CHARACTER + dot) * scale;
-                picture[line + x..line + x + scale].fill(WHITE);
+            for line in 0..fit.tall {
+                let line = (top + row * fit.tall + line) * width;
+                for dot in (0..CHARACTER).filter(|dot| (dots >> dot) & 1 != 0) {
+                    let x = left + (place * CHARACTER + dot) * fit.scale;
+                    picture[line + x..line + x + fit.scale].fill(WHITE);
+                }
             }
         }
     }

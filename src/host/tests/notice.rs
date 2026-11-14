@@ -93,4 +93,24 @@ mod tests {
             "not centred: {left} to {right}"
         );
     }
+
+    #[test]
+    fn a_lamps_round_on_a_picture_of_square_dots_and_on_a_tall_dots_one() {
+        // The lamp's lit dots, as a box: its width and height in pixels.
+        let lit = |width: usize, height: usize| {
+            let mut picture = vec![0u32; width * height];
+            light(&mut picture, width, height);
+            let at: Vec<(usize, usize)> = (0..width * height)
+                .filter(|&n| picture[n] == 0xFF3020)
+                .map(|n| (n % width, n / width))
+                .collect();
+            let across =
+                at.iter().map(|p| p.0).max().unwrap() - at.iter().map(|p| p.0).min().unwrap() + 1;
+            let down =
+                at.iter().map(|p| p.1).max().unwrap() - at.iter().map(|p| p.1).min().unwrap() + 1;
+            (across, down)
+        };
+        assert_eq!(lit(640, 480), (6, 6), "the X16's: 2 by 2 a dot");
+        assert_eq!(lit(560, 192), (6, 3), "the Apple's: 2 by 1, its dots tall");
+    }
 }
