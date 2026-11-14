@@ -432,4 +432,34 @@ mod tests {
             "a period of {period} samples"
         );
     }
+
+    #[test]
+    fn a_games_card_made_boots_into_its_program() {
+        let Some(rom) = booting().map(|_| x16::rom_file().unwrap()) else {
+            return;
+        };
+        // A game's folder: its program, `10 PRINT"CARD OK"`, and its data.
+        let folder = std::env::temp_dir().join(format!("cpu_emu_{}_x16_game", std::process::id()));
+        std::fs::create_dir_all(folder.join("data")).unwrap();
+        let mut program = vec![0x01, 0x08, 0x10, 0x08, 0x0A, 0x00, 0x99, b'"'];
+        program.extend(b"CARD OK\"\0\0\0");
+        std::fs::write(folder.join("Hello World.prg"), program).unwrap();
+        std::fs::write(folder.join("data/level one.bin"), [0, 0xA0, 1]).unwrap();
+        let card = folder.with_extension("img");
+        let _ = std::fs::remove_file(&card);
+        x16::make_card(&folder, &card).unwrap();
+        let mut cpu = x16::build(&rom.to_string_lossy(), card.to_str()).unwrap();
+        frames(&mut cpu, 400);
+        let text = cpu.memory.screen_text().unwrap_or_default();
+        assert!(text.contains("CARD OK\n\nREADY."), "the screen:\n{text}");
+        cpu.memory.type_text("dos\"$\"\n");
+        frames(&mut cpu, 100);
+        let text = cpu.memory.screen_text().unwrap_or_default();
+        assert!(
+            text.contains("\"HELLO WORLD.PRG\""),
+            "its long name:\n{text}"
+        );
+        std::fs::remove_dir_all(&folder).unwrap();
+        std::fs::remove_file(&card).unwrap();
+    }
 }

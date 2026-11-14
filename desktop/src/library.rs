@@ -545,13 +545,13 @@ pub const CHOICES: [(&str, &[&str]); 5] = [
 ];
 
 /// A game as it's kept, of what the page started, or would start: a NES's,
-/// a 2600's or a 7800's game; an Apple's disks, and the model, its ROMs and
+/// a 2600's, a 7800's or an X16's game; an Apple's disks, and the model, its ROMs and
 /// Mockingboards it was last started with, if it has been. By its files,
 /// that are what it is.
 pub fn game(machine: &Value) -> Option<(String, Value)> {
     let text = |field: &str| machine[field].as_str().map(str::to_string);
     match machine["kind"].as_str()? {
-        kind @ ("nes" | "atari2600" | "atari7800") => {
+        kind @ ("nes" | "atari2600" | "atari7800" | "x16") => {
             let game = text("game")?;
             Some((
                 format!("{kind}\n{game}"),
@@ -583,7 +583,7 @@ pub fn game(machine: &Value) -> Option<(String, Value)> {
 /// image, a Disk System's, a 2600's, a 7800's, or a zip of one.
 fn is_cartridge(path: &str) -> bool {
     let kind = path.rsplit('.').next().unwrap_or_default().to_lowercase();
-    ["nes", "fds", "a26", "a78", "bin", "zip"].contains(&kind.as_str())
+    ["nes", "fds", "a26", "a78", "bin", "zip", "prg"].contains(&kind.as_str())
 }
 
 /// A file as the page has one: its path, and its size.

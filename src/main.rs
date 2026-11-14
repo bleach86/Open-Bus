@@ -34,10 +34,13 @@
 /// GeckOS, IMAGE its boot image, loaded to the top of its memory, and DISK
 /// a disk's image, a FAT floppy's, say, written back as it's written:
 /// roms/skink/rom.bin and roms/skink/geckos.img, if they're not given.
-/// `cpu_emu x16 [ROM] [--sd=IMAGE] [--fullscreen]` for the Commander X16,
-/// ROM its rom.bin, roms/x16/'s if it's not given (or its release
-/// folder's there), and IMAGE its SD card's, written back as it's written:
-/// roms/x16/sdcard.img, if it's not given and it's there. With any,
+/// `cpu_emu x16 [ROM] [--game=GAME] [--sd=IMAGE] [--fullscreen]` for the
+/// Commander X16, ROM its rom.bin, roms/x16/'s if it's not given (or its
+/// release folder's there), and IMAGE its SD card's, written back as it's
+/// written: roms/x16/sdcard.img, if it's not given and it's there. GAME,
+/// a game's zip, folder or program, is played from a card of its own,
+/// IMAGE or beside it, as GAME.img: made, if it isn't there, to start it
+/// as the X16's turned on, and kept. With any,
 /// `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size, to be
 /// resized: as the desktop app has it, in place of its library.
 /// `--ram=zeros` or `--ram=random` for its RAM at power-on all 0s, or as
@@ -194,12 +197,27 @@ fn main() {
                 .cloned()
                 .or_else(|| machines::x16::rom_file().map(|rom| rom.to_string_lossy().into_owned()))
                 .expect("cpu_emu x16 ROM: no rom.bin in roms/x16/");
-            let sd_card = args[2..]
-                .iter()
-                .find_map(|arg| arg.strip_prefix("--sd=").map(str::to_string))
-                .or_else(|| {
+            let said = |name: &str| {
+                let prefix = format!("--{name}=");
+                args[2..]
+                    .iter()
+                    .find_map(|arg| arg.strip_prefix(&prefix).map(str::to_string))
+            };
+            let sd_card = match said("game") {
+                Some(game) => {
+                    let game = std::path::Path::new(&game);
+                    let card = said("sd").unwrap_or_else(|| {
+                        let plain = game.to_string_lossy();
+                        format!("{}.img", plain.trim_end_matches(['/', '\\']))
+                    });
+                    machines::x16::make_card(game, std::path::Path::new(&card))
+                        .unwrap_or_else(|e| panic!("{e}"));
+                    Some(card)
+                }
+                None => said("sd").or_else(|| {
                     machines::x16::sd_card_file().map(|image| image.to_string_lossy().into_owned())
-                });
+                }),
+            };
             let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
             machines::x16::run(&rom, sd_card.as_deref(), fullscreen);
         }

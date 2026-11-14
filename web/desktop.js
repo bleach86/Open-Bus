@@ -12,7 +12,7 @@ const baseName = (path) => slashes(path).split('/').pop();
 const extension = (path) => path.split('.').pop().toLowerCase();
 /// What's a game in a folder, and a disk.
 const DISKS = ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'];
-const GAMES = ['nes', 'fds', 'a26', 'a78', 'bin', 'zip', ...DISKS];
+const GAMES = ['nes', 'fds', 'a26', 'a78', 'bin', 'zip', 'prg', ...DISKS];
 
 /// Where each name's file is: the page has names, the disk paths.
 const where = new Map();
@@ -226,7 +226,7 @@ const pathed = (machine) => ({
 export async function keptGames() {
     const names = new Map([...where].map(([name, path]) => [path, name]));
     return (await invoke('kept_games')).flatMap(({ machine, ...kept }) => {
-        if (['nes', 'atari2600', 'atari7800'].includes(machine?.kind)) {
+        if (['nes', 'atari2600', 'atari7800', 'x16'].includes(machine?.kind)) {
             const game = names.get(machine.game);
             return game ? [{ ...kept, machine: { kind: machine.kind, game } }] : [];
         }

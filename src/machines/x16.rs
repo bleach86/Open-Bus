@@ -48,6 +48,7 @@
 
 #[cfg(test)]
 mod tests {
+    mod card;
     mod i2c;
     mod machine;
     mod sd_card;
@@ -55,6 +56,7 @@ mod tests {
     mod vera_audio;
 }
 
+pub mod card;
 pub mod i2c;
 pub mod keyboard;
 pub mod sd_card;
@@ -673,6 +675,155 @@ pub fn rom_file() -> Option<PathBuf> {
         .collect();
     releases.sort();
     releases.pop()
+}
+
+/// The files of the game at `path`, for its card: a zip's, a folder's
+/// (and its folders'), or a program's alone.
+pub fn game_files(path: &Path) -> Result<Vec<card::CardFile>, String> {
+    let shown = path.display();
+    if files::is_folder(path) {
+        let mut found = Vec::new();
+        let mut folders = vec![(path.to_path_buf(), String::new())];
+        while let Some((folder, prefix)) = folders.pop() {
+            for entry in files::list(&folder).map_err(|e| format!("{shown}: {e}"))? {
+                let name = entry
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned());
+                let Some(name) = name else { continue };
+                let inside = format!("{prefix}{name}");
+                if files::is_folder(&entry) {
+                    folders.push((entry, format!("{inside}/")));
+                } else {
+                    found.push((
+                        inside,
+                        files::read(&entry).map_err(|e| format!("{shown}: {e}"))?,
+                    ));
+                }
+            }
+        }
+        return Ok(found);
+    }
+    let bytes = files::read(path).map_err(|e| format!("{shown}: {e}"))?;
+    if bytes.starts_with(b"PK\x03\x04") {
+        return crate::host::zip::all_files(&bytes).map_err(|e| format!("{shown}: {e}"));
+    }
+    let name = path
+        .file_name()
+        .map_or(String::new(), |name| name.to_string_lossy().into_owned());
+    Ok(vec![(name, bytes)])
+}
+
+/// Other machines' files, by their endings: a folder holding any isn't a
+/// game's.
+const OTHERS: [&str; 12] = [
+    "nes", "fds", "a26", "a78", "zip", "dsk", "do", "po", "nib", "woz", "hdv", "2mg",
+];
+/// The most a game's folder holds, all of it going on its card.
+const GAME_FOLDER_MOST: u64 = 64 << 20;
+
+/// The game at `path`: a program's (a .PRG) its folder, if that's all a
+/// game's; else, and a zip's or a folder's, itself.
+pub fn game_of(path: &Path) -> PathBuf {
+    let program = !files::is_folder(path)
+        && path
+            .extension()
+            .is_some_and(|ending| ending.eq_ignore_ascii_case("prg"));
+    match path.parent().filter(|_| program) {
+        Some(folder) if is_game_folder(folder) => folder.to_path_buf(),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// Whether `folder`'s all a game's: nothing of another machine's in it or
+/// its folders, and 64M at most, as a folder of a program and its data is;
+/// not a folder of others' games a program's found among.
+fn is_game_folder(folder: &Path) -> bool {
+    let (mut size, mut folders) = (0, vec![folder.to_path_buf()]);
+    while let Some(at) = folders.pop() {
+        let Ok(entries) = files::list(&at) else {
+            return false;
+        };
+        for entry in entries {
+            if files::is_folder(&entry) {
+                folders.push(entry);
+                continue;
+            }
+            let ending = entry
+                .extension()
+                .map(|end| end.to_string_lossy().to_lowercase());
+            size += files::size(&entry).unwrap_or(0);
+            if ending.is_some_and(|end| OTHERS.contains(&end.as_str())) || size > GAME_FOLDER_MOST {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// What's known of the X16 game at `path`, its file's `bytes` (a zip; or a
+/// program, of its folder's game, or alone), as `cpu_emu facts` says it:
+/// its CRC, and as its board, its program; or why it's not a game.
+pub fn facts_of(path: &Path, bytes: &[u8]) -> String {
+    let crc = crate::host::zip::crc32(bytes);
+    let game = game_of(path);
+    let name = game
+        .file_stem()
+        .map_or(String::new(), |name| name.to_string_lossy().into_owned());
+    let files = if game != path {
+        game_files(&game)
+    } else if bytes.starts_with(b"PK\x03\x04") {
+        crate::host::zip::all_files(bytes)
+    } else {
+        let file = path
+            .file_name()
+            .map_or(String::new(), |name| name.to_string_lossy().into_owned());
+        Ok(vec![(file, bytes.to_vec())])
+    };
+    let game = files.and_then(|files| card::game(&name, files));
+    let (program, problem) = match game {
+        Ok(game) => (format!(" {}", game.program), String::new()),
+        Err(problem) => (String::new(), problem.replace(['\t', '\n'], " ")),
+    };
+    format!(
+        "{crc:08X}\tCOMMANDER X16{program}\t0\t0\t{problem}\t{}",
+        path.display()
+    )
+}
+
+/// Whether the zip `bytes` is an X16 game's: a program in it, as BASIC
+/// loads one.
+pub fn is_game_zip(bytes: &[u8]) -> bool {
+    let names = crate::host::zip::names(bytes).unwrap_or_default();
+    let maybe = |name: &String| {
+        let name = name.rsplit('/').next().unwrap_or(name);
+        !name.is_empty()
+            && name
+                .rsplit_once('.')
+                .is_none_or(|(_, end)| end.eq_ignore_ascii_case("prg"))
+    };
+    names.iter().any(maybe)
+        && crate::host::zip::all_files(bytes).is_ok_and(|files| {
+            files
+                .iter()
+                .any(|(path, bytes)| card::is_program(path, bytes))
+        })
+}
+
+/// The card at `card` for the game at `game` (a zip, a folder, or a
+/// program, `game_of`), made if it isn't there yet: its files, and
+/// AUTOBOOT.X16 to run it. Once made, it's kept, and what the game saves on
+/// it with it.
+pub fn make_card(game: &Path, card: &Path) -> Result<(), String> {
+    if files::exists(card) {
+        return Ok(());
+    }
+    let game = &game_of(game);
+    let name = game
+        .file_stem()
+        .map_or(String::new(), |name| name.to_string_lossy().into_owned());
+    let made = card::game(&name, game_files(game)?)?;
+    let image = card::card(&made.files, clock::now())?;
+    files::save(card, &image).map_err(|e| format!("{}: {e}", card.display()))
 }
 
 /// Its SD card's image, as it's looked for: roms/x16/sdcard.img, if it's

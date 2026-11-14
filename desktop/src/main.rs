@@ -175,11 +175,19 @@ fn allowed(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
 
 /// All the files under `folder`, with their sizes; not those in folders
 /// that aren't anyone's games: a hidden one, or a NAS's own, as @eaDir is.
+/// A folder that's an X16 game's, its program alone: the rest is its data.
 fn walk(folder: &Path, found: &mut Vec<Found>) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
     };
-    for entry in entries.flatten() {
+    let entries: Vec<_> = entries.flatten().collect();
+    let paths: Vec<PathBuf> = entries.iter().map(|entry| entry.path()).collect();
+    if let Some(program) = x16_program(&paths) {
+        let size = fs::metadata(&program).map_or(0, |data| data.len());
+        found.push((program.to_string_lossy().into_owned(), size));
+        return;
+    }
+    for entry in entries {
         let path = entry.path();
         if path.is_dir() {
             let name = entry.file_name();
@@ -192,6 +200,38 @@ fn walk(folder: &Path, found: &mut Vec<Found>) {
             found.push((path.to_string_lossy().into_owned(), size));
         }
     }
+}
+
+/// The program that makes a folder of `paths` an X16 game's, if one does:
+/// the first .PRG that loads where BASIC's do, $0801, with none of another
+/// machine's games beside it. Its game's the emulator's to say.
+fn x16_program(paths: &[PathBuf]) -> Option<PathBuf> {
+    const OTHERS: [&str; 12] = [
+        "nes", "fds", "a26", "a78", "zip", "dsk", "do", "po", "nib", "woz", "hdv", "2mg",
+    ];
+    let ending = |path: &Path| {
+        path.extension()
+            .map(|ending| ending.to_string_lossy().to_lowercase())
+    };
+    if paths
+        .iter()
+        .any(|path| ending(path).is_some_and(|end| OTHERS.contains(&end.as_str())))
+    {
+        return None;
+    }
+    let loads_at_0801 = |path: &&PathBuf| {
+        let mut start = [0u8; 2];
+        fs::File::open(path)
+            .and_then(|mut file| file.read_exact(&mut start))
+            .is_ok_and(|_| start == [0x01, 0x08])
+    };
+    let mut programs: Vec<&PathBuf> = paths
+        .iter()
+        .filter(|path| ending(path).as_deref() == Some("prg"))
+        .filter(loads_at_0801)
+        .collect();
+    programs.sort();
+    programs.first().map(|program| program.to_path_buf())
 }
 
 /// `folder` remembered.
@@ -215,8 +255,8 @@ fn library_settings(app: AppHandle) -> Result<Value, String> {
 /// The kinds of file the library has, a game's or a disk's: what's worth a
 /// watcher's noticing. Saves and states beside them change as games are
 /// played, and don't matter to it.
-const GAMES: [&str; 13] = [
-    "nes", "fds", "a26", "a78", "bin", "zip", "dsk", "do", "po", "nib", "woz", "hdv", "2mg",
+const GAMES: [&str; 14] = [
+    "nes", "fds", "a26", "a78", "bin", "zip", "prg", "dsk", "do", "po", "nib", "woz", "hdv", "2mg",
 ];
 
 /// The folders added, watched for games coming and going, and the watcher.
@@ -732,6 +772,20 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
             .chain(region)
             .collect());
     }
+    if text("kind")? == "x16" {
+        // Its ROM, as it's been sorted into the library; the game on a card
+        // of its own, in `x16 cards`, made the first time and kept, with
+        // what it saves.
+        let game = file(text("game")?)?;
+        let card = folder(app, "x16 cards")?.join(card_name(&game));
+        let rom = folder(app, "library")?.join("x16-rom.bin");
+        return Ok(vec![
+            "x16".to_string(),
+            rom.to_string_lossy().into_owned(),
+            format!("--game={game}"),
+            format!("--sd={}", card.to_string_lossy()),
+        ]);
+    }
     let library = folder(app, "library")?.to_string_lossy().into_owned();
     let mut line = match text("model")? {
         "apple2" => vec!["apple2".to_string(), file(text("roms")?)?],
@@ -746,6 +800,27 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
         machine["mockingboards"].as_u64().unwrap_or(1)
     ));
     Ok(line)
+}
+
+/// An X16 game's card's file, by its game's path: its name, and a hash of
+/// the whole (FNV-1a), for two of a name.
+fn card_name(game: &str) -> String {
+    let hash = game.bytes().fold(0xCBF2_9CE4_8422_2325u64, |hash, byte| {
+        (hash ^ byte as u64).wrapping_mul(0x0100_0000_01B3)
+    });
+    let name: String = Path::new(game)
+        .file_stem()
+        .map_or("game".into(), |name| name.to_string_lossy())
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || " -_".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("{name} {:08x}.img", hash as u32)
 }
 
 /// `--window=`, for the emulator to open where the library is.
@@ -806,7 +881,10 @@ fn choose_settings(app: AppHandle, machine: Value, settings: Value) -> Result<()
 fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), String> {
     let library = folder(&app, "library")?;
     let line = command_line(&app, &machine)?;
-    let first_file = line.get(1).cloned().unwrap_or_default();
+    let first_file = match machine["game"].as_str() {
+        Some(game) => game.to_string(),
+        None => line.get(1).cloned().unwrap_or_default(),
+    };
     let mut command = emulator_command()?;
     command
         .args(line)
@@ -1064,7 +1142,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::fitted;
+    use super::{card_name, fitted, walk};
+    use std::fs;
 
     /// 1280 by 800 at 125%, on a 1080p screen with a taskbar: too tall by
     /// its title bar and menu, as much taken off the page.
@@ -1100,5 +1179,51 @@ mod tests {
             fitted((800, 600), (800, 600), (1920, 100), (1600, 900)),
             ((800, 600), (2320, 250))
         );
+    }
+
+    #[test]
+    fn an_x16_games_card_is_named_by_it_and_hashed_by_its_whole_path() {
+        let one = card_name("/games/x16/Galax 16: Deluxe.zip");
+        assert!(
+            one.starts_with("Galax 16_ Deluxe ") && one.ends_with(".img"),
+            "{one}"
+        );
+        assert_eq!(
+            one,
+            card_name("/games/x16/Galax 16: Deluxe.zip"),
+            "the same each time"
+        );
+        assert_ne!(
+            one,
+            card_name("/other/Galax 16: Deluxe.zip"),
+            "two of a name"
+        );
+    }
+
+    #[test]
+    fn a_folder_of_an_x16_game_is_found_as_its_program_alone() {
+        let root = std::env::temp_dir().join(format!("open_bus_{}_walk", std::process::id()));
+        let (game, nes) = (root.join("x16-contra"), root.join("nes"));
+        fs::create_dir_all(game.join("data")).unwrap();
+        fs::create_dir_all(&nes).unwrap();
+        fs::write(game.join("CONTRA.PRG"), [0x01, 0x08, 1]).unwrap();
+        fs::write(game.join("NOTES.PRG"), b"text").unwrap();
+        fs::write(game.join("BANK-0-1.BIN"), [0, 0xA0]).unwrap();
+        fs::write(game.join("data/MAP.BIN"), [0, 0xA0]).unwrap();
+        // A program among a NES's games isn't its folder's game.
+        fs::write(nes.join("STRAY.PRG"), [0x01, 0x08]).unwrap();
+        fs::write(nes.join("Game.nes"), b"NES").unwrap();
+        let mut found = Vec::new();
+        walk(&root, &mut found);
+        let mut names: Vec<String> = found
+            .iter()
+            .map(|(path, _)| path[root.to_string_lossy().len() + 1..].to_string())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            ["nes/Game.nes", "nes/STRAY.PRG", "x16-contra/CONTRA.PRG"]
+        );
+        fs::remove_dir_all(&root).unwrap();
     }
 }

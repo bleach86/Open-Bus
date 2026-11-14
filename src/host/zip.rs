@@ -123,6 +123,16 @@ pub fn names(archive: &[u8]) -> Result<Vec<String>, String> {
         .collect())
 }
 
+/// Every file in the zip `archive`, by its name and bytes; its folders
+/// left out.
+pub fn all_files(archive: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let entries = entries(archive)?;
+    let files = entries.iter().filter(|entry| !entry.name.ends_with('/'));
+    files
+        .map(|entry| Ok((entry.name.clone(), read(archive, entry)?)))
+        .collect()
+}
+
 /// The files of the zip `archive` of at most `most` bytes, by their names
 /// and bytes; those it can't read left out.
 pub fn small_files(archive: &[u8], most: usize) -> Result<Vec<(String, Vec<u8>)>, String> {
@@ -147,4 +157,35 @@ pub fn crc32(bytes: &[u8]) -> u32 {
         }
     }
     !crc
+}
+
+/// A zip of `files`, stored, not deflated: for tests.
+#[cfg(test)]
+pub fn stored(files: &[(&str, &[u8])]) -> Vec<u8> {
+    let (mut body, mut central) = (Vec::new(), Vec::new());
+    for &(name, bytes) in files {
+        let local = body.len() as u32;
+        let size = (bytes.len() as u32).to_le_bytes();
+        let crc = crc32(bytes).to_le_bytes();
+        let name_len = (name.len() as u16).to_le_bytes();
+        let common = [&[0u8; 8][..], &crc, &size, &size, &name_len, &[0, 0]].concat();
+        body.extend([0x50, 0x4B, 3, 4, 20, 0]);
+        body.extend(&common);
+        body.extend(name.as_bytes());
+        body.extend(bytes);
+        central.extend([0x50, 0x4B, 1, 2, 20, 0, 20, 0]);
+        central.extend(&common);
+        central.extend([0u8; 10]);
+        central.extend(local.to_le_bytes());
+        central.extend(name.as_bytes());
+    }
+    let (at, length, count) = (body.len() as u32, central.len() as u32, files.len() as u16);
+    body.extend(central);
+    body.extend([0x50, 0x4B, 5, 6, 0, 0, 0, 0]);
+    body.extend(count.to_le_bytes());
+    body.extend(count.to_le_bytes());
+    body.extend(length.to_le_bytes());
+    body.extend(at.to_le_bytes());
+    body.extend([0, 0]);
+    body
 }

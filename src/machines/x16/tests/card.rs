@@ -1,0 +1,252 @@
+//! The X16's cards, made: AUTOBOOT.X16 as the X16 saves it; a game's
+//! files and program, found; a card read back as FAT32 has it, its long
+//! and short names, its folders and its files' clusters; and one booted,
+//! its program run (with its ROM, in roms/x16/). A zip of a program BASIC
+//! loads, an X16 game, as its facts say.
+
+#[cfg(test)]
+mod tests {
+    use crate::host::clock::DateTime;
+    use crate::host::zip::stored;
+    use crate::machines::facts::{System, facts_of, system_of};
+    use crate::machines::x16::card::{self, CardFile};
+    use std::path::Path;
+
+    const WHEN: DateTime = DateTime {
+        year: 2026,
+        month: 11,
+        day: 13,
+        weekday: 5,
+        hour: 19,
+        minute: 12,
+        second: 30,
+    };
+
+    #[test]
+    fn autoboot_is_a_line_of_basic_as_the_x16_saves_it() {
+        // `10 LOAD"GALAX16.PRG"`, SAVEd as AUTOBOOT.X16 by the X16 itself.
+        let saved = [
+            0x01, 0x08, 0x14, 0x08, 0x0A, 0x00, 0x93, 0x22, b'G', b'A', b'L', b'A', b'X', b'1',
+            b'6', b'.', b'P', b'R', b'G', 0x22, 0x00, 0x00, 0x00,
+        ];
+        assert_eq!(card::autoboot("galax16.prg"), saved);
+    }
+
+    fn file(path: &str, bytes: &[u8]) -> CardFile {
+        (path.to_string(), bytes.to_vec())
+    }
+
+    #[test]
+    fn a_games_program_is_its_named_one_that_loads_at_0801() {
+        let game = card::game(
+            "X16Robots-12-19-2024",
+            vec![
+                file("robots/", b""),
+                file("robots/ROBOTSMIDI.PRG", &[0x01, 0x08, 1]),
+                file("robots/ROBOTS.PRG", &[0x01, 0x08, 2]),
+                file("robots/A.PRG", &[0x01, 0x08, 3]),
+                file("robots/LEVEL-A", &[0x00, 0xA0, 4]),
+            ],
+        )
+        .unwrap();
+        assert_eq!(game.program, "ROBOTS.PRG", "in its name; then the shortest");
+        let paths: Vec<&str> = game.files.iter().map(|(path, _)| path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "ROBOTSMIDI.PRG",
+                "ROBOTS.PRG",
+                "A.PRG",
+                "LEVEL-A",
+                "AUTOBOOT.X16"
+            ],
+            "its one folder its files; AUTOBOOT.X16 added"
+        );
+        let own = card::game(
+            "x",
+            vec![file("AUTOBOOT.X16", b"its"), file("X.PRG", &[1, 8])],
+        );
+        assert_eq!(own.unwrap().files.len(), 2, "its own AUTOBOOT.X16 kept");
+        assert!(card::game("x", vec![file("DATA.BIN", &[0, 0xA0])]).is_err());
+    }
+
+    /// A card read as FAT32 has it: enough of it to check what's on it.
+    struct Reader<'a> {
+        card: &'a [u8],
+        data: usize,
+        fat: usize,
+    }
+
+    impl Reader<'_> {
+        fn new(card: &[u8]) -> Reader<'_> {
+            let u32_at = |at: usize| u32::from_le_bytes(card[at..at + 4].try_into().unwrap());
+            let u16_at = |at: usize| u16::from_le_bytes(card[at..at + 2].try_into().unwrap());
+            assert_eq!(card[510..512], [0x55, 0xAA], "the MBR's signature");
+            assert_eq!(card[450], 0x0C, "FAT32, by LBA");
+            let start = u32_at(454) as usize * 512;
+            let boot = &card[start..];
+            assert_eq!(&boot[82..90], b"FAT32   ");
+            assert_eq!(u16_at(start + 11), 512);
+            assert_eq!(u32_at(start + 44), 2, "the root at cluster 2");
+            let reserved = u16_at(start + 14) as usize;
+            let fat_size = u32_at(start + 36) as usize;
+            let fat = start + reserved * 512;
+            Reader {
+                card,
+                fat,
+                data: fat + boot[16] as usize * fat_size * 512,
+            }
+        }
+
+        /// A chain of clusters' bytes, from `first`.
+        fn chain(&self, first: u32) -> Vec<u8> {
+            let mut bytes = Vec::new();
+            let mut cluster = first;
+            while cluster < 0x0FFF_FFF8 {
+                let at = self.data + (cluster as usize - 2) * 512;
+                bytes.extend(&self.card[at..at + 512]);
+                let entry = self.fat + cluster as usize * 4;
+                cluster = u32::from_le_bytes(self.card[entry..entry + 4].try_into().unwrap());
+            }
+            bytes
+        }
+
+        /// A folder's entries: each one's long name (or short), short
+        /// name, attributes, first cluster and size.
+        fn folder(&self, cluster: u32) -> Vec<(String, String, u8, u32, u32)> {
+            let bytes = self.chain(cluster);
+            let mut found = Vec::new();
+            let mut long: Vec<(u8, Vec<u16>, u8)> = Vec::new();
+            for entry in bytes.chunks(32).take_while(|entry| entry[0] != 0) {
+                if entry[11] == 0x0F {
+                    let places = (1..11).step_by(2).chain((14..26).step_by(2));
+                    let chars = places
+                        .chain((28..32).step_by(2))
+                        .map(|at| u16::from_le_bytes([entry[at], entry[at + 1]]))
+                        .collect();
+                    long.push((entry[0] & 0x3F, chars, entry[13]));
+                    continue;
+                }
+                let short: String = String::from_utf8_lossy(&entry[..11]).into_owned();
+                let sum = entry[..11]
+                    .iter()
+                    .fold(0u8, |sum, &c| sum.rotate_right(1).wrapping_add(c));
+                long.sort_by_key(|(n, ..)| *n);
+                assert!(
+                    long.iter().all(|(.., check)| *check == sum),
+                    "{short}'s checksum"
+                );
+                let name = if long.is_empty() {
+                    let (base, ext) = short.split_at(8);
+                    let (base, ext) = (base.trim_end(), ext.trim_end());
+                    if ext.is_empty() {
+                        base.to_string()
+                    } else {
+                        format!("{base}.{ext}")
+                    }
+                } else {
+                    let chars: Vec<u16> = long
+                        .iter()
+                        .flat_map(|(_, chars, _)| chars.clone())
+                        .collect();
+                    let chars = chars.into_iter().take_while(|&c| c != 0 && c != 0xFFFF);
+                    String::from_utf16(&chars.collect::<Vec<_>>()).unwrap()
+                };
+                long.clear();
+                let cluster = u16::from_le_bytes([entry[26], entry[27]]) as u32
+                    | (u16::from_le_bytes([entry[20], entry[21]]) as u32) << 16;
+                let size = u32::from_le_bytes(entry[28..32].try_into().unwrap());
+                found.push((name, short, entry[11], cluster, size));
+            }
+            found
+        }
+    }
+
+    #[test]
+    fn a_card_is_fat32_its_names_long_and_short_its_files_whole() {
+        let big: Vec<u8> = (0..3000).map(|n| (n % 251) as u8).collect();
+        let files = vec![
+            file("HELLO.PRG", &[0x01, 0x08, 0, 0]),
+            file("BlueShips.bin", &big),
+            file("BLUESHIP.PAL", b"pal"),
+            file("blueships two.bin", b"two"),
+            file("EMPTY", b""),
+            file("maps/level one.map", b"level"),
+        ];
+        let image = card::card(&files, WHEN).unwrap();
+        assert_eq!(image.len(), 40 << 20, "40M, the least");
+        let card = Reader::new(&image);
+        let root = card.folder(2);
+        let names: Vec<(&str, &str)> = root
+            .iter()
+            .map(|(n, s, ..)| (n.as_str(), s.as_str()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("X16", "X16        "),
+                ("BLUESHIP.PAL", "BLUESHIPPAL"),
+                ("BlueShips.bin", "BLUESH~1BIN"),
+                ("EMPTY", "EMPTY      "),
+                ("HELLO.PRG", "HELLO   PRG"),
+                ("blueships two.bin", "BLUESH~2BIN"),
+                ("maps", "MAPS~1     "),
+            ]
+        );
+        let (.., cluster, size) = root[2];
+        assert_eq!(size, 3000);
+        assert_eq!(card.chain(cluster)[..3000], big[..], "across 6 clusters");
+        assert_eq!(root[3].3, 0, "empty: no cluster");
+        let maps = card.folder(root[6].3);
+        assert_eq!(maps[0].1, ".          ");
+        assert_eq!(
+            (maps[1].1.as_str(), maps[1].3),
+            ("..         ", 0),
+            "its parent the root"
+        );
+        assert_eq!(maps[2].0, "level one.map");
+        assert_eq!(&card.chain(maps[2].3)[..5], b"level");
+    }
+
+    #[test]
+    fn a_zip_of_a_program_basic_loads_is_an_x16_game_and_its_facts_say_so() {
+        let path = Path::new("Galaxy.zip");
+        let game = stored(&[
+            ("GALAXY.PRG", &[0x01, 0x08, 0x0B]),
+            ("SHIPS.BIN", &[0, 0xA0]),
+        ]);
+        assert_eq!(system_of(path, &game), System::X16);
+        let facts = facts_of(path, game);
+        assert!(
+            facts.ends_with("\tCOMMANDER X16 GALAXY.PRG\t0\t0\t\tGalaxy.zip"),
+            "{facts}"
+        );
+        // A 2600's zip, of a .bin; a .bin that loads at $0801 isn't a program.
+        let atari = stored(&[("Game.bin", &[0x01, 0x08, 0, 0])]);
+        assert_eq!(system_of(Path::new("Game.zip"), &atari), System::Atari2600);
+        let nes = stored(&[("Game.nes", b"NES\x1A")]);
+        assert_eq!(system_of(Path::new("Game.zip"), &nes), System::Nes);
+    }
+
+    #[test]
+    fn a_programs_game_is_its_folder_unless_others_games_are_in_it() {
+        use crate::machines::x16;
+        let root = std::env::temp_dir().join(format!("cpu_emu_{}_x16_folders", std::process::id()));
+        let contra = root.join("x16-contra");
+        std::fs::create_dir_all(contra.join("data")).unwrap();
+        std::fs::write(contra.join("CONTRA.PRG"), [0x01, 0x08, 1]).unwrap();
+        std::fs::write(contra.join("BANK-0-1.BIN"), [0, 0xA0]).unwrap();
+        std::fs::write(contra.join("data/MAP.BIN"), [0, 0xA0]).unwrap();
+        assert_eq!(x16::game_of(&contra.join("CONTRA.PRG")), contra);
+        let facts = facts_of(&contra.join("CONTRA.PRG"), vec![0x01, 0x08, 1]);
+        assert!(facts.contains("\tCOMMANDER X16 CONTRA.PRG\t"), "{facts}");
+        // A program among a NES's games: the program alone.
+        let nes = root.join("nes");
+        std::fs::create_dir_all(&nes).unwrap();
+        std::fs::write(nes.join("STRAY.PRG"), [0x01, 0x08, 2]).unwrap();
+        std::fs::write(nes.join("Game.nes"), b"NES\x1A").unwrap();
+        assert_eq!(x16::game_of(&nes.join("STRAY.PRG")), nes.join("STRAY.PRG"));
+        assert_eq!(x16::game_of(&contra), contra, "a folder, itself");
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+}

@@ -6,9 +6,9 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::host::zip::crc32;
+    use crate::host::zip::{crc32, stored};
     use crate::machines::apple2::rom_set::{
-        self, DISK_II_P5, DISK_II_P6, Is, PLUS_ROM, Rom, Sorted, rom,
+        self, DISK_II_P5, DISK_II_P6, Is, PLUS_ROM, Rom, Sorted, X16_ROM, rom,
     };
     use crate::machines::apple2::video::Monitor;
     use crate::machines::apple2::{self, Model, iie};
@@ -60,36 +60,6 @@ mod tests {
         );
         assert_eq!(std::fs::read(out.join("wanted.bin")).unwrap(), rom_bytes);
         std::fs::remove_dir_all(&out).unwrap();
-    }
-
-    /// A zip of `files`, stored, not deflated.
-    fn zip(files: &[(&str, &[u8])]) -> Vec<u8> {
-        let (mut body, mut central) = (Vec::new(), Vec::new());
-        for &(name, bytes) in files {
-            let local = body.len() as u32;
-            let size = (bytes.len() as u32).to_le_bytes();
-            let crc = crc32(bytes).to_le_bytes();
-            let name_len = (name.len() as u16).to_le_bytes();
-            let common = [&[0u8; 8][..], &crc, &size, &size, &name_len, &[0, 0]].concat();
-            body.extend([0x50, 0x4B, 3, 4, 20, 0]);
-            body.extend(&common);
-            body.extend(name.as_bytes());
-            body.extend(bytes);
-            central.extend([0x50, 0x4B, 1, 2, 20, 0, 20, 0]);
-            central.extend(&common);
-            central.extend([0u8; 10]);
-            central.extend(local.to_le_bytes());
-            central.extend(name.as_bytes());
-        }
-        let (at, length, count) = (body.len() as u32, central.len() as u32, files.len() as u16);
-        body.extend(central);
-        body.extend([0x50, 0x4B, 5, 6, 0, 0, 0, 0]);
-        body.extend(count.to_le_bytes());
-        body.extend(count.to_le_bytes());
-        body.extend(length.to_le_bytes());
-        body.extend(at.to_le_bytes());
-        body.extend([0, 0]);
-        body
     }
 
     fn known_of(pieces: &[(&[u8], Is)]) -> Vec<Rom> {
@@ -150,7 +120,7 @@ mod tests {
         let (cd, p5) = (made_up(3, 0x2000), made_up(9, 0x100));
         let known = known_of(&[(&cd, Is::Named(iie::ROMS[0])), (&p5, Is::Named(DISK_II_P5))]);
         let mut sorted = Sorted::new();
-        let set = zip(&[
+        let set = stored(&[
             ("342-0135-a.e8", &cd),
             ("readme.txt", b"hello"),
             ("341-0027.p5", &p5),
@@ -160,7 +130,7 @@ mod tests {
 
         // An NES game's zip: nothing in it, too big to be looked in.
         let mut sorted = Sorted::new();
-        let game = zip(&[("Some Game.nes", &vec![0xEA; 0x4_0000])]);
+        let game = stored(&[("Some Game.nes", &vec![0xEA; 0x4_0000])]);
         assert!(!sorted.add_of(&known, "Some Game.zip", &game));
         assert!(!sorted.add_of(&known, "not really a zip.zip", b"nonsense"));
     }
@@ -270,13 +240,13 @@ mod tests {
             "341-0020-00.f8",
         ];
         let set: Vec<(&str, &[u8])> = names.iter().copied().zip(chips).collect();
-        assert!(sorted.add("apple2p.zip", &zip(&set)));
+        assert!(sorted.add("apple2p.zip", &stored(&set)));
         assert_eq!(sorted.bytes(PLUS_ROM).unwrap(), plus);
 
         let mut sorted = Sorted::new();
         assert!(sorted.add(
             "apple2e.zip",
-            &zip(&[
+            &stored(&[
                 ("a", &old_cd),
                 ("b", &old_ef),
                 ("c", &old_video),
@@ -329,7 +299,7 @@ mod tests {
         let set = folder.join("apple2ee.zip");
         std::fs::write(
             &set,
-            zip(&[
+            stored(&[
                 ("a", &cd),
                 ("b", &ef),
                 ("c", &video),
@@ -367,5 +337,21 @@ mod tests {
         .unwrap();
         assert!(error.starts_with("no Apple IIe"), "{error}");
         std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn the_x16s_rom_is_known_by_its_banks_and_banner_alone_or_zipped() {
+        let mut rom = vec![0xFF; 0x8000];
+        rom[0x6000..0x600D].copy_from_slice(b"COMMANDER X16");
+        let mut sorted = Sorted::new();
+        assert!(sorted.add("rom.bin", &rom));
+        assert_eq!(sorted.bytes(X16_ROM), Some(rom.clone()));
+        let mut sorted = Sorted::new();
+        assert!(sorted.add("Release.R49.ROM.Image.zip", &stored(&[("rom.bin", &rom)])));
+        assert_eq!(sorted.names(), [X16_ROM]);
+        // Not whole banks; no banner.
+        let mut sorted = Sorted::new();
+        assert!(!sorted.add("rom.bin", &rom[..0x7FFF]));
+        assert!(!sorted.add("game.bin", &vec![0xFF; 0x8000]));
     }
 }

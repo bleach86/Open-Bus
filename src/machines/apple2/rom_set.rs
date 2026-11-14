@@ -6,6 +6,10 @@
 //!
 //! They come out under the one name each, as the machines look for them:
 //! `Sorted::bytes`. The ROMs themselves aren't here, only their checksums.
+//! Other machines' are found here too: the NES Disk System's BIOS, the
+//! 7800's High Score Cartridge's, and the Commander X16's, known by what's
+//! in it, its releases' all being different: 16K banks, 32K to 512K of
+//! them, BASIC's banner, COMMANDER X16, in one.
 
 use super::iie;
 use crate::host::files;
@@ -15,16 +19,27 @@ use crate::machines::atari7800::high_score::ROM as HIGH_SCORE_ROM;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
-/// The II+'s whole ROM, by the name it's given.
+/// The II+'s whole ROM, by the name it's given; the X16's.
 pub const PLUS_ROM: &str = "Apple2_Plus.rom";
+pub const X16_ROM: &str = "x16-rom.bin";
 /// The Disk II's two.
 pub const DISK_II_P5: &str = "disk2-p5-341-0027.bin";
 pub const DISK_II_P6: &str = "disk2-p6-341-0028.bin";
 
 /// The most a file's looked in; a zip's, and the most of what's in one:
-/// past them, a disk or a game.
+/// past them, a disk or a game. A .bin's, or what's in a zip, as big as
+/// the X16's.
 const MOST: usize = 0x1_0000;
 const MOST_ZIP: usize = 0x40_0000;
+const MOST_X16: usize = 0x8_0000;
+
+/// Whether `bytes` are the X16's ROM.
+fn is_x16_rom(bytes: &[u8]) -> bool {
+    const BANK: usize = 0x4000;
+    bytes.len().is_multiple_of(BANK)
+        && (2 * BANK..=MOST_X16).contains(&bytes.len())
+        && bytes.windows(13).any(|words| words == b"COMMANDER X16")
+}
 
 /// A ROM known: its CRC-32, its size, and what it is.
 #[derive(Clone, Copy)]
@@ -89,7 +104,7 @@ impl Sorted {
 
     pub fn add_of(&mut self, known: &[Rom], name: &str, bytes: &[u8]) -> bool {
         if name.to_lowercase().ends_with(".zip") {
-            let Ok(members) = zip::small_files(bytes, MOST) else {
+            let Ok(members) = zip::small_files(bytes, MOST_X16) else {
                 return false;
             };
             return members.iter().fold(false, |found, (_, member)| {
@@ -103,6 +118,10 @@ impl Sorted {
     /// biggest first: the IIe has Applesoft too, so a piece of a ROM of its
     /// is the same as a II+'s chip, which that isn't.
     fn look_in(&mut self, known: &[Rom], bytes: &[u8]) -> bool {
+        if is_x16_rom(bytes) {
+            self.found(Is::Named(X16_ROM), bytes);
+            return true;
+        }
         if bytes.len() > MOST {
             return false;
         }
@@ -168,11 +187,14 @@ impl Sorted {
 
 /// The file at `path`, unless it's too big to be ROMs.
 fn small_file(path: &Path) -> Option<Vec<u8>> {
-    let most = if path
-        .extension()
-        .is_some_and(|kind| kind.eq_ignore_ascii_case("zip"))
-    {
+    let is = |ending: &str| {
+        path.extension()
+            .is_some_and(|kind| kind.eq_ignore_ascii_case(ending))
+    };
+    let most = if is("zip") {
         MOST_ZIP
+    } else if is("bin") {
+        MOST_X16
     } else {
         MOST
     };

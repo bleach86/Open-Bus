@@ -6,9 +6,11 @@
 //! and its path, a tab between each, as `cpu_emu facts` says it.
 //!
 //! Whose it is, by its file: a 7800's an .a78, a 2600's an .a26, or a zip of
-//! one; a .bin either, as its bytes say; the rest, a NES's.
+//! one; a .bin either, as its bytes say; a program the Commander X16's
+//! BASIC loads (a .PRG that loads at $0801), or a zip of one, an X16's; the
+//! rest, a NES's.
 
-use crate::machines::{atari2600, atari7800, nes};
+use crate::machines::{atari2600, atari7800, nes, x16};
 use std::path::Path;
 
 /// The machines whose games a library has.
@@ -17,6 +19,7 @@ pub enum System {
     Nes,
     Atari2600,
     Atari7800,
+    X16,
 }
 
 /// Whose game a file's `name` says it is, if it says: a 7800's, or a 2600's
@@ -36,6 +39,10 @@ fn named(name: &str) -> Option<System> {
 pub fn system_of(path: &Path, bytes: &[u8]) -> System {
     let name = path.to_string_lossy();
     let zipped = name.to_lowercase().ends_with(".zip");
+    let program = name.to_lowercase().ends_with(".prg") && bytes.starts_with(&[0x01, 0x08]);
+    if program || zipped && x16::is_game_zip(bytes) {
+        return System::X16;
+    }
     let names = if zipped {
         crate::host::zip::names(bytes).unwrap_or_default()
     } else {
@@ -60,6 +67,7 @@ pub fn facts_of(path: &Path, bytes: Vec<u8>) -> String {
         System::Nes => nes::facts_of(path, nes::image_of(path, bytes)),
         System::Atari2600 => atari2600::facts_of(path, atari2600::image_of(path, bytes)),
         System::Atari7800 => atari7800::facts_of(path, atari7800::image_of(path, bytes)),
+        System::X16 => x16::facts_of(path, &bytes),
     }
 }
 

@@ -57,19 +57,25 @@ const CHANGE_DISK_KEY = 9;
 const FDS_BIOS = 'disksys.rom';
 /// The 7800's High Score Cartridge's ROM, and its RAM as it's kept.
 const HIGH_SCORE_ROM = 'highscre.bin';
+/// The Commander X16's ROM, as it's sorted into the library.
+const X16_ROM = 'x16-rom.bin';
 const kind = (name) => name.split('.').pop().toLowerCase();
 /// A game's file: a .bin a 2600's or a 7800's, unless it's an Apple's ROM.
-const isGame = (name) => ['nes', 'fds', 'a26', 'a78', 'bin', 'zip'].includes(kind(name)) && !isRom(name);
+const isGame = (name) => ['nes', 'fds', 'a26', 'a78', 'bin', 'zip', 'prg'].includes(kind(name)) && !isRom(name);
 const isDisk = (name) => ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'].includes(kind(name));
 /// The consoles whose games are on the shelf of games, each its own tab; and
 /// which a game's is: as the emulator's said of it, else as its file says, a
-/// zip a NES's till it's said.
-const CONSOLES = { nes: 'NES', atari2600: 'Atari 2600', atari7800: 'Atari 7800' };
+/// zip a NES's till it's said. The X16's games are zips of its programs.
+const CONSOLES = { nes: 'NES', atari2600: 'Atari 2600', atari7800: 'Atari 7800', x16: 'Commander X16' };
+const X16_BOARD = 'COMMANDER X16';
 const isConsole = (shelf) => shelf in CONSOLES;
 /// The Ataris, by their boards' names and their files'.
 const ATARIS = { atari2600: ['ATARI 2600', 'a26'], atari7800: ['ATARI 7800', 'a78'] };
 function systemOf(name) {
     const board = factsOf.get(name)?.mapper;
+    if (board?.startsWith(X16_BOARD)) {
+        return 'x16';
+    }
     const atari = Object.entries(ATARIS).find(([, [named, ending]]) =>
         board ? board.startsWith(named) : kind(name) === ending,
     );
@@ -79,6 +85,9 @@ function systemOf(name) {
 /// bytes as `read` has them: a Disk System's a NES's.
 async function machineSaid(name, read) {
     const [, board = ''] = game_facts(name, await read()).split('\t');
+    if (board.startsWith(X16_BOARD)) {
+        return 'x16';
+    }
     return Object.keys(ATARIS).find((atari) => board.startsWith(ATARIS[atari][0])) ?? 'nes';
 }
 /// Whether there's anything to play; and the shelf to show of it first, a
@@ -95,16 +104,19 @@ const isOurs = (name) => ['srm', 'state', 'resume'].includes(kind(name));
 const isRom = (name) =>
     kind(name) === 'rom' ||
     name === HIGH_SCORE_ROM ||
+    name === X16_ROM ||
     DISK_II_ROMS.includes(name) ||
     Object.values(IIE_ROMS).flat().includes(name);
 const isUsable = (name) => isGame(name) || isDisk(name) || isOurs(name) || isRom(name);
-/// The most a file can be and hold a ROM, a zip's and any other's; and what
-/// isn't worth looking in.
+/// The most a file can be and hold a ROM, a zip's, a .bin's (the X16's is
+/// up to 512K) and any other's; and what isn't worth looking in.
 const MOST_ZIP = 0x400000;
+const MOST_BIN = 0x80000;
 const MOST = 0x10000;
 const notRoms = /\.(png|jpe?g|gif|mp4|xml|txt|nfo|pdf|srm|state|nes|fds)$/i;
 const baseName = (path) => path.split(/[/\\]/).pop();
-const mayHoldRoms = (file) => !notRoms.test(file.name) && file.size <= (kind(file.name) === 'zip' ? MOST_ZIP : MOST);
+const mostOf = (name) => ({ zip: MOST_ZIP, bin: MOST_BIN })[kind(name)] ?? MOST;
+const mayHoldRoms = (file) => !notRoms.test(file.name) && file.size <= mostOf(file.name);
 
 let files = [];
 /// The disks ticked, in the order they were: the first is in drive 1.
@@ -309,8 +321,8 @@ async function loadArt() {
 }
 
 /// Which console's games a cover found by title is of, by its `machine`: an
-/// Atari's apart, the NES's and the Disk System's together.
-const coverSystem = (machine) => (machine in ATARIS ? machine : 'nes');
+/// Atari's or the X16's apart, the NES's and the Disk System's together.
+const coverSystem = (machine) => (machine in ATARIS || machine === 'x16' ? machine : 'nes');
 
 /// Which shelf's showing; and of the consoles', which the shelf of games
 /// has, the last shown.
@@ -389,11 +401,12 @@ async function refresh() {
     fillKept(wanted);
     showRoms();
     showSorts();
+    // Not the X16's: libretro has no set of its games.
     learnDetails(
         files.filter(isGame).flatMap((name) => {
             const facts = factsOf.get(name);
             const set = facts?.mapper.startsWith('MAPPER 20 ') ? 'fds' : systemOf(name);
-            return facts?.crc ? [{ name, crc: facts.crc, set }] : [];
+            return facts?.crc && set !== 'x16' ? [{ name, crc: facts.crc, set }] : [];
         }),
         refresh,
     );
@@ -559,7 +572,10 @@ function nesArt(name) {
 
 /// A game's board, in words: a NES's mapper, an Atari's cartridge.
 const boardOf = (facts) =>
-    facts?.mapper.replace(/^MAPPER (\d+) /, 'Mapper $1, ').replace(/^ATARI (2600|7800) /, 'Cartridge ');
+    facts?.mapper
+        .replace(/^MAPPER (\d+) /, 'Mapper $1, ')
+        .replace(/^ATARI (2600|7800) /, 'Cartridge ')
+        .replace(/^COMMANDER X16 /, 'Program ');
 
 /// A game's title, by what's known of it, else its file.
 const titleOf = (name) => art.get(nesArt(name))?.title ?? plainTitle(name);
@@ -829,6 +845,8 @@ async function playGame(machine) {
     }
     if (native) {
         playNatively(machine);
+    } else if (machine.kind === 'x16') {
+        say('The Commander X16 plays in the desktop app, for now.', true);
     } else if (machine.kind === 'atari7800') {
         const chosen = await keeper.gameSettings(machine);
         rewind(page('rewind').checked);
@@ -2366,6 +2384,10 @@ page('apple').onclick = () => {
 function playNatively(machine) {
     if (machine.game && kind(machine.game) === 'fds' && !files.includes(FDS_BIOS)) {
         say(`Disk System games need the BIOS, ${FDS_BIOS}: add it in Settings.`, true);
+        return;
+    }
+    if (machine.kind === 'x16' && !files.includes(X16_ROM)) {
+        say("X16 games need the X16's ROM, a release's rom.bin or its zip: add it in Settings.", true);
         return;
     }
     const fullscreen = machine.kind !== 'controls' && (page('start-fullscreen').checked || page('tv-layout').checked);
