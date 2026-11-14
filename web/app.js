@@ -867,19 +867,81 @@ function x16Tile() {
     return item;
 }
 
+/// The X16's ROM, asked for, it not being here: in the app, its release
+/// downloaded; in a browser, which GitHub won't let download it, its zip
+/// downloaded by hand and chosen. Whether it's here now.
+function getX16Rom() {
+    const dialog = page('x16-rom-dialog');
+    const status = page('x16-rom-status');
+    const buttons = [page('x16-rom-fetch'), page('x16-rom-choose'), page('x16-rom-zip')];
+    status.textContent = '';
+    page('x16-rom-fetch').hidden = !native;
+    page('x16-rom-by-hand').hidden = page('x16-rom-link').hidden = page('x16-rom-choose').hidden = !!native;
+    const working = (doing) => {
+        status.textContent = doing;
+        for (const button of buttons) {
+            button.disabled = !!doing;
+        }
+    };
+    working('');
+    return new Promise((resolve) => {
+        const done = (got) => {
+            dialog.onclose = null;
+            dialog.close();
+            resolve(got);
+        };
+        dialog.onclose = () => resolve(false);
+        page('x16-rom-cancel').onclick = () => done(false);
+        const got = async () => {
+            await refresh();
+            if (files.includes(X16_ROM)) {
+                say('');
+                done(true);
+            } else {
+                working('');
+                status.textContent = "That wasn't the X16's ROM: choose the release's zip, or the rom.bin in it.";
+            }
+        };
+        page('x16-rom-fetch').onclick = async () => {
+            working('Downloading…');
+            try {
+                await native.fetchX16Rom();
+            } catch (problem) {
+                working('');
+                status.textContent = `Couldn't get it: ${problem}`;
+                return;
+            }
+            await got();
+        };
+        page('x16-rom-zip').onchange = async (event) => {
+            const chosen = [...event.target.files];
+            event.target.value = '';
+            if (chosen.length) {
+                working('Adding it…');
+                await add(chosen);
+                await got();
+            }
+        };
+        dialog.showModal();
+        page(native ? 'x16-rom-fetch' : 'x16-rom-link').focus();
+    });
+}
+
 /// A game started: in the desktop app, on the native emulator; here, a NES
 /// or 2600 game with what's chosen of it, an Apple's disks as they were.
 async function playGame(machine) {
     if (!native) {
         drive_light(page('drive-light').checked);
     }
+    if (machine.kind === 'x16' && !files.includes(X16_ROM)) {
+        if (await getX16Rom()) {
+            playGame(machine);
+        }
+        return;
+    }
     if (native) {
         playNatively(machine);
     } else if (machine.kind === 'x16') {
-        if (!files.includes(X16_ROM)) {
-            say("X16 games need the X16's ROM, a release's rom.bin or its zip: add it in Settings.", true);
-            return;
-        }
         const card = x16Card(machine.game);
         const x16 = () => Emulator.x16(X16_ROM, machine.game ?? '', card, localSeconds());
         start(x16, 'x16', [machine.game, card].filter(Boolean), machine);
@@ -2422,10 +2484,6 @@ function playNatively(machine) {
         say(`Disk System games need the BIOS, ${FDS_BIOS}: add it in Settings.`, true);
         return;
     }
-    if (machine.kind === 'x16' && !files.includes(X16_ROM)) {
-        say("X16 games need the X16's ROM, a release's rom.bin or its zip: add it in Settings.", true);
-        return;
-    }
     const fullscreen = machine.kind !== 'controls' && (page('start-fullscreen').checked || page('tv-layout').checked);
     const fast = page('performance-mode').checked;
     const ram = page('power-on-ram').value;
@@ -2569,7 +2627,9 @@ async function fillSettings() {
                 ? 'Found: plugged in for every game'
                 : 'Not added: it keeps high scores, for the games that know of it',
         ),
-        row('Commander X16 ROM', x16),
+        has(X16_ROM)
+            ? row('Commander X16 ROM', x16)
+            : row('Commander X16 ROM', x16, 'Get it', async () => (await getX16Rom()) && fillSettings()),
     );
     if (native) {
         fillFolders();

@@ -436,6 +436,37 @@
       </p>
     </main>
     <div id="pad-hints" class="pad-hints" hidden></div>
+    <dialog id="x16-rom-dialog" aria-labelledby="x16-rom-title">
+      <h2 id="x16-rom-title">The X16's ROM isn't here</h2>
+      <p>
+        The Commander X16 needs its ROM, its KERNAL, BASIC and DOS. The X16
+        Community releases it on GitHub, free: release R49, a zip of about 1 MB.
+      </p>
+      <p id="x16-rom-by-hand" class="quiet">
+        Download it, then choose the zip, and the game starts.
+      </p>
+      <p id="x16-rom-status" class="quiet" role="status"></p>
+      <p class="row-actions">
+        <button id="x16-rom-cancel">Not now</button>
+        <button id="x16-rom-fetch" class="primary">Download it</button>
+        <a
+          id="x16-rom-link"
+          class="button"
+          target="_blank"
+          rel="noopener"
+          href="https://github.com/X16Community/x16-rom/releases/download/r49/Release.R49.ROM.Image.zip"
+          >Download from GitHub</a
+        >
+        <label id="x16-rom-choose" class="button primary"
+          >Choose the zip<input
+            id="x16-rom-zip"
+            class="unseen"
+            type="file"
+            accept=".zip,.bin"
+        /></label>
+      </p>
+    </dialog>
+
     <dialog id="controls-dialog" aria-labelledby="controls-title">
       <h2 id="controls-title">Controls</h2>
       <div class="dialog-tabs">

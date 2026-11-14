@@ -266,6 +266,14 @@ export async function sortRoms(paths) {
     return sorted;
 }
 
+/// The X16's ROM, its release downloaded and sorted into the library, as
+/// `sortRoms` has it.
+export async function fetchX16Rom() {
+    const sorted = await invoke('fetch_x16_rom');
+    change('library', sorted.kept);
+    return sorted;
+}
+
 /// `told` of what the gamepads hold for moving around the library, by name,
 /// each time that changes; and whose the first player's pad is, `maker`:
 /// xbox, playstation or nintendo.

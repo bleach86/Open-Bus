@@ -1655,6 +1655,7 @@ html:not(.native) .for-desktop,
 
 /* The controls' dialog, and a game's details. */
 #controls-dialog,
+#x16-rom-dialog,
 #game-settings {
   width: min(30rem, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
@@ -1668,10 +1669,12 @@ html:not(.native) .for-desktop,
   box-shadow: 0 10px 40px #000c;
 }
 #controls-dialog::backdrop,
+#x16-rom-dialog::backdrop,
 #game-settings::backdrop {
   background: #05010dc0;
 }
 #controls-dialog h2,
+#x16-rom-dialog h2,
 #game-settings h2 {
   margin: 0 0 0.6rem;
   font:
@@ -1693,6 +1696,13 @@ html:not(.native) .for-desktop,
 }
 #game-settings .choices label[hidden] {
   display: none;
+}
+#x16-rom-link {
+  text-decoration: none;
+}
+#x16-rom-dialog .row-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 #game-settings-about {
   margin: 0;

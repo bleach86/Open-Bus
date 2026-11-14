@@ -27,10 +27,12 @@ use library::{Found, Library, Section, entry};
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{self, Child, Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -947,7 +949,13 @@ fn sort_roms(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
     let wanted = paths
         .iter()
         .filter(|path| !path.contains('\n') && allowed(&app, path).is_ok());
-    let list: String = wanted.map(|path| format!("{path}\n")).collect();
+    sort_into_library(&app, wanted.map(|path| format!("{path}\n")).collect())
+}
+
+/// The ROMs in the files `list`ed, a path a line, sorted into `library`,
+/// as `sort_roms` has it.
+fn sort_into_library(app: &AppHandle, list: String) -> Result<Value, String> {
+    let app = app.clone();
     let mut command = emulator_command()?;
     let library = folder(&app, "library")?;
     let mut sorter = command
@@ -992,6 +1000,46 @@ fn sort_roms(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
         .map(as_entry)
         .collect();
     Ok(json!({ "held": of("held "), "roms": of("rom "), "chips": chips, "kept": kept }))
+}
+
+/// The X16's ROM as its makers release it: R49's zip, on GitHub, and its
+/// SHA-256, for anything else that comes to be turned away.
+const X16_ROM_ZIP: &str =
+    "https://github.com/X16Community/x16-rom/releases/download/r49/Release.R49.ROM.Image.zip";
+const X16_ROM_SHA256: &str = "95b4e3566fa44f23dda9c8295b18a5fa9ea297e5db49dc978ae241e6114e39aa";
+/// Longer than that, and it's not coming.
+const DOWNLOAD_TIME: Duration = Duration::from_secs(120);
+
+/// The X16's ROM, asked for: its release downloaded, checked and sorted
+/// into the library, as `sort_roms` has it.
+#[tauri::command(async)]
+fn fetch_x16_rom(app: AppHandle) -> Result<Value, String> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(DOWNLOAD_TIME))
+        .build()
+        .into();
+    let zip = agent
+        .get(X16_ROM_ZIP)
+        .call()
+        .and_then(|mut response| response.body_mut().read_to_vec())
+        .map_err(|e| format!("the download failed: {e}"))?;
+    if !is_x16_rom_zip(&zip) {
+        return Err("what came wasn't the release's zip".to_string());
+    }
+    let path = env::temp_dir().join(format!("open-bus-x16-rom-{}.zip", process::id()));
+    write(&path, &zip)?;
+    let sorted = sort_into_library(&app, format!("{}\n", path.to_string_lossy()));
+    let _ = fs::remove_file(&path);
+    sorted
+}
+
+/// Whether `bytes` are R49's zip, as its hash says.
+fn is_x16_rom_zip(bytes: &[u8]) -> bool {
+    let hash: String = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    hash == X16_ROM_SHA256
 }
 
 /// Where a window of `outer` size goes, framed `outer - inner`, in the part of
@@ -1135,6 +1183,7 @@ fn main() {
             remove_folder,
             restore_hidden,
             sort_roms,
+            fetch_x16_rom,
             fullscreen,
             quit,
             add_folder_files,
@@ -1150,7 +1199,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{card_name, fitted, walk};
+    use super::{X16_ROM_SHA256, card_name, fitted, is_x16_rom_zip, walk};
     use std::fs;
 
     /// 1280 by 800 at 125%, on a 1080p screen with a taskbar: too tall by
@@ -1233,5 +1282,12 @@ mod tests {
             ["nes/Game.nes", "nes/STRAY.PRG", "x16-contra/CONTRA.PRG"]
         );
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn only_the_x16_releases_own_zip_is_taken() {
+        assert!(!is_x16_rom_zip(b""));
+        assert!(!is_x16_rom_zip(b"PK\x03\x04 something else"));
+        assert_eq!(X16_ROM_SHA256.len(), 64);
     }
 }
