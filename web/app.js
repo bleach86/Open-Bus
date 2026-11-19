@@ -2710,24 +2710,28 @@ async function addFolder(folder) {
     // Said at once: a network share's folders take a while to look through.
     say(`Looking through ${folder}…`);
     const found = await native.folderFiles(folder);
+    // Its games shown as soon as they're found; the system ROMs among its
+    // files, and its covers, made out after, while they're there to play,
+    // each of those files having to be read, and a share's slow to.
+    await native.addFolderFiles(found);
+    await refresh();
+    if (!page('settings').hidden) {
+        showShelf(gamesShelf());
+    }
+    const count = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
+    const added = () => `Added ${count(native.gamesIn(folder), 'game')} from ${folder}.`;
+    say(`${added()} Looking for covers and system ROMs…`);
     const romFiles = found.map(({ path, size }) => ({ path, size, name: baseName(path) })).filter(mayHoldRoms);
     const { held, roms } = await native.sortRoms(romFiles.map(({ path }) => path));
     for (const path of held) {
         await native.hide(path); // a ROM, not a game
     }
-    await native.addFolderFiles(found.filter(({ path }) => !held.includes(path)));
     const media = found.map(({ path }) => native.laterFile(path)).filter(({ name }) => isMedia(name));
-    const made = await takeArt(media, art, (at, total) => say(`Making covers: ${at} of ${total}…`));
+    const made = await takeArt(media, art, (at, total) => say(`${added()} Making covers: ${at} of ${total}…`));
     await loadArt();
     await refresh();
-    const count = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
     const also = (number, what) => (number ? ` ${count(number, what)}.` : '');
-    say(
-        `Added ${count(native.gamesIn(folder), 'game')} from ${folder}.${also(roms.length, 'system ROM')}${also(made, 'cover')}`,
-    );
-    if (!page('settings').hidden) {
-        showShelf(gamesShelf());
-    }
+    say(`${added()}${also(roms.length, 'system ROM')}${also(made, 'cover')}`);
 }
 
 /// Folders and files dropped on the window, or a folder picked.

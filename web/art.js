@@ -8,8 +8,9 @@ import { keepArt } from './files.js';
 
 /// How wide a cover's kept.
 const WIDTH = 300;
-/// How many are made between keeping them.
+/// How many are made between keeping them; and how many at once.
 const KEPT_AT_ONCE = 40;
+const MADE_AT_ONCE = 4;
 
 const isImage = (name) => /\.(png|jpe?g|webp)$/i.test(name);
 const isGamelist = (name) => /^gamelist\.xml$/i.test(name);
@@ -124,21 +125,28 @@ export async function takeArt(files, art, told) {
     let done = 0;
     let made = 0;
     let unkept = new Map();
-    for (const [key, { file }] of best) {
-        told(++done, best.size);
-        try {
-            const game = { ...art.get(key), cover: await shrink(file.load ? await file.load() : file) };
-            art.set(key, game);
-            unkept.set(key, game);
-            made++;
-        } catch {
-            // Not a picture after all.
+    // A few at once: a network share's slow to answer each, not to send it.
+    const waiting = [...best];
+    const making = async () => {
+        while (waiting.length) {
+            const [key, { file }] = waiting.shift();
+            told(++done, best.size);
+            try {
+                const game = { ...art.get(key), cover: await shrink(file.load ? await file.load() : file) };
+                art.set(key, game);
+                unkept.set(key, game);
+                made++;
+            } catch {
+                // Not a picture after all.
+            }
+            if (unkept.size >= KEPT_AT_ONCE) {
+                const keeping = unkept;
+                unkept = new Map();
+                await keepArt(keeping);
+            }
         }
-        if (unkept.size === KEPT_AT_ONCE) {
-            await keepArt(unkept);
-            unkept = new Map();
-        }
-    }
+    };
+    await Promise.all(Array.from({ length: MADE_AT_ONCE }, making));
     await keepArt(unkept);
     return made;
 }

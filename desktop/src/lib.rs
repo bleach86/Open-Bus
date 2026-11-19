@@ -163,6 +163,21 @@ fn keep_file(app: AppHandle, request: Request<'_>) -> Result<String, String> {
     Ok(path)
 }
 
+/// Where the page may go, as they really are: the folders added, and
+/// `library`.
+fn places(app: &AppHandle) -> Result<Vec<PathBuf>, String> {
+    let mut places: Vec<PathBuf> = library(app)
+        .folders()?
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
+    places.push(folder(app, "library")?);
+    Ok(places
+        .into_iter()
+        .filter_map(|place| fs::canonicalize(place).ok())
+        .collect())
+}
+
 /// Files dropped on the window, that the page may read.
 #[derive(Default)]
 struct Dropped(Mutex<Vec<PathBuf>>);
@@ -180,14 +195,8 @@ fn as_entry((path, size): &Found) -> Value {
 /// `path`, if it's somewhere the page may go: `library`, or a folder added.
 fn allowed(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
     let real = fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
-    let mut places = library(app)
-        .folders()?
-        .into_iter()
-        .map(PathBuf::from)
-        .collect::<Vec<_>>();
-    places.push(folder(app, "library")?);
-    let inside =
-        |place: &PathBuf| fs::canonicalize(place).is_ok_and(|place| real.starts_with(place));
+    let inside = |place: &PathBuf| real.starts_with(place);
+    let places = places(app)?;
     let dropped = app
         .state::<Dropped>()
         .0
@@ -433,10 +442,24 @@ fn look_over_network(app: AppHandle) {
 /// the rest: the folder isn't looked through again for them.
 #[tauri::command(async)]
 fn add_folder_files(app: AppHandle, entries: Vec<Value>) -> Result<Vec<Value>, String> {
+    // Only kept, not read: each by its path, plainly in a place the page may
+    // go, not each looked up as `allowed` has it, thousands of them on a
+    // network share. What's read later's looked up then.
+    let places = places(&app)?;
+    let plainly_in = |path: &str| {
+        let path = Path::new(path);
+        let plain = path.components().all(|part| {
+            matches!(
+                part,
+                Component::Prefix(_) | Component::RootDir | Component::Normal(_)
+            )
+        });
+        plain && path.is_absolute() && places.iter().any(|place| path.starts_with(place))
+    };
     let allowed_entries = entries
         .iter()
         .filter_map(entry)
-        .filter(|(path, _)| allowed(&app, path).is_ok())
+        .filter(|(path, _)| plainly_in(path))
         .collect();
     let added = library(&app).add(Section::Folders, allowed_entries)?;
     learn_facts(&app);
