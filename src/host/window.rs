@@ -26,6 +26,7 @@ use crate::host::display::{
     CHANNELS, COPY_KEY, Display, Gamepad, Joystick, Key, PASTE_KEY, Pointer, SAMPLE_RATE, Scancode,
 };
 use crate::host::pads::{self, Pads};
+use crate::host::sound::Stretch;
 use sdl2::EventPump;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::clipboard::ClipboardUtil;
@@ -66,6 +67,16 @@ pub struct Window {
     /// taken.
     function_keys: VecDeque<u8>,
     audio: Option<AudioQueue<f32>>,
+    /// The sound on its way to the queue, stretched or squeezed to keep
+    /// as much in it as it's to have; how much it's had lately; and what's
+    /// to go in it.
+    stretch: Stretch<CHANNELS>,
+    queued: f32,
+    played: Vec<f32>,
+    /// Whether pictures are shown in step with the display's refresh, and
+    /// the seconds spent waiting for it, not yet asked for.
+    in_step: bool,
+    waited: f64,
     /// The players' gamepads.
     pads: Pads,
     /// The keypad's keys held, and the Alt keys.
@@ -121,6 +132,11 @@ const POINTER_SHOWN: Duration = Duration::from_secs(2);
 /// sound can't fall behind the picture.
 const AUDIO_CUSHION: f32 = 0.05;
 const AUDIO_MOST: f32 = 0.1;
+/// The most the sound's stretched or squeezed, to keep the cushion: a
+/// share of its speed, 2%, as the queue's empty or at its most. A
+/// machine kept in step with a display's refresh a little slower or
+/// quicker than its own makes its sound that much slower or quicker.
+const MOST_STRETCH: f32 = 0.02;
 
 /// A title bar's height, about: a window's frame isn't known till it's
 /// open.
@@ -263,6 +279,11 @@ impl Window {
             keys: VecDeque::new(),
             function_keys: VecDeque::new(),
             audio,
+            stretch: Stretch::default(),
+            queued: AUDIO_CUSHION,
+            played: Vec::new(),
+            in_step: false,
+            waited: 0.0,
             pads,
             keypad_held: HashSet::new(),
             alt_held: [false; 2],
@@ -809,7 +830,13 @@ impl Display for Window {
         self.canvas
             .copy(&self.texture, None, None)
             .expect("the frame");
-        self.canvas.present();
+        if self.in_step {
+            let waiting = Instant::now();
+            self.canvas.present();
+            self.waited += waiting.elapsed().as_secs_f64();
+        } else {
+            self.canvas.present();
+        }
         self.take_events();
     }
 
@@ -830,11 +857,40 @@ impl Display for Window {
     }
 
     fn play(&mut self, samples: &[f32]) {
-        if let Some(queue) = &self.audio {
-            let queued = queue.size() as f32 / (4.0 * CHANNELS as f32 * SAMPLE_RATE as f32);
-            if queued < AUDIO_MOST {
-                let _ = queue.queue_audio(samples);
-            }
+        let Some(queue) = &self.audio else {
+            return;
+        };
+        let queued = queue.size() as f32 / (4.0 * CHANNELS as f32 * SAMPLE_RATE as f32);
+        if queued >= AUDIO_MOST {
+            return;
+        }
+        // Squeezed while there's more than the cushion, stretched while
+        // there's less: by how much lately, the queue going by in the
+        // device's blocks.
+        self.queued += (queued - self.queued) * 0.1;
+        let off = (self.queued - AUDIO_CUSHION) / AUDIO_CUSHION;
+        let step = 1.0 + (off * MOST_STRETCH).clamp(-MOST_STRETCH, MOST_STRETCH);
+        self.played.clear();
+        self.stretch.run(samples, step as f64, &mut self.played);
+        let _ = queue.queue_audio(&self.played);
+    }
+
+    fn refresh_rate(&self) -> Option<f64> {
+        let window = self.canvas.window();
+        let display = window.display_index().ok()?;
+        let mode = window.subsystem().current_display_mode(display).ok()?;
+        (mode.refresh_rate > 0).then_some(mode.refresh_rate as f64)
+    }
+
+    fn waited(&mut self) -> f64 {
+        std::mem::take(&mut self.waited)
+    }
+
+    fn keep_in_step(&mut self, on: bool) {
+        self.in_step = on;
+        // SAFETY: the renderer's SDL's own, live as long as the canvas.
+        unsafe {
+            sdl2::sys::SDL_RenderSetVSync(self.canvas.raw(), on as i32);
         }
     }
 

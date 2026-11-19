@@ -129,6 +129,19 @@ const FRAMES_A_SECOND: u32 = 60;
 /// it can: half a frame.
 const LATE: Duration = Duration::from_millis(8);
 
+/// How near a display's refresh rate a machine's own frame rate is for its
+/// frames to be kept in step with the refresh, a frame to each, not by its
+/// clock: a frame a second or so either way. An NES's 60.1 a second, on a
+/// TV's 59.94, would otherwise have a frame dropped every 6 seconds, and
+/// stutter around it, which shows as the picture scrolls. Its speed's that
+/// much slower or quicker, and its sound, which nothing can tell.
+const IN_STEP: f64 = 1.5;
+/// How many more frames than the refresh's, in step, for the display to be
+/// found not to be waiting for it, as a minimised window's may not: kept by
+/// the clock again then, for a while.
+const NOT_WAITING: f64 = 1.25;
+const NOT_IN_STEP_FOR: Duration = Duration::from_secs(5);
+
 /// How many times its own speed it goes, fast-forwarded, as Mesen's 300%:
 /// a picture shown of each so many, and no sound, which would only stutter.
 const FAST: u64 = 3;
@@ -143,6 +156,9 @@ pub static REWIND: AtomicBool = AtomicBool::new(true);
 /// it's turned off, as `--no-drive-light` does; lit LIGHT_FRAMES at least,
 /// a block read in a moment seen.
 pub static DRIVE_LIGHT: AtomicBool = AtomicBool::new(true);
+/// Frames kept in step with the display's refresh where they can be, as
+/// IN_STEP has it, unless it's turned off, as `--no-vsync` does.
+pub static VSYNC: AtomicBool = AtomicBool::new(true);
 const LIGHT_FRAMES: u32 = 6;
 const REWIND_EVERY: u32 = 2;
 const REWIND_SECONDS: u32 = 30;
@@ -179,6 +195,8 @@ pub struct Host<M: Machine> {
     /// Behind its clock, and whether the last frame's picture was left out;
     /// the frames fast-forwarded so far, while it's held.
     late: bool,
+    /// The display's refresh rate, while frames are kept in step with it.
+    in_step: Option<f64>,
     left_out: bool,
     fast: u64,
     /// The frames run, for turbo's pressing and letting go.
@@ -221,6 +239,7 @@ impl<M: Machine> Host<M> {
             stats: Stats::new(),
             changing: None,
             late: false,
+            in_step: None,
             left_out: false,
             fast: 0,
             frames: 0,
@@ -558,6 +577,21 @@ impl<M: Machine> Host<M> {
         Some(lines)
     }
 
+    /// The display's refresh rate, if its frames are to be kept in step with
+    /// it: if it's near enough the machine's own frame rate, as measured,
+    /// and the display's not lately been found not to be waiting for it.
+    fn in_step_with(&self, not_waiting: Option<Instant>) -> Option<f64> {
+        if !VSYNC.load(Ordering::Relaxed)
+            || not_waiting.is_some_and(|at| at.elapsed() < NOT_IN_STEP_FOR)
+        {
+            return None;
+        }
+        let refresh = self.display.refresh_rate()?;
+        let cycles = self.stats.cycles_per_frame;
+        let rate = self.cpu.clock_hz as f64 / cycles as f64;
+        (cycles > 0 && (rate - refresh).abs() < IN_STEP).then_some(refresh)
+    }
+
     /// What chooses and goes back in a menu, as they're bound, for the foot
     /// of one: the gamepad's, as the controls name them.
     fn menu_hint(&mut self) -> String {
@@ -692,7 +726,8 @@ impl<M: Machine> Host<M> {
         self.resetting = self.resetting.saturating_sub(1);
         self.cpu.memory.keep_saved(false);
         let now = clock::seconds();
-        self.stats.frame(now, cycles, now - began);
+        let waited = self.display.waited();
+        self.stats.frame(now, cycles, now - began - waited);
         if self.display.closed() {
             self.cpu.memory.keep_saved(true);
             files::all_saved();
@@ -751,11 +786,35 @@ impl<M: Machine> Host<M> {
         if resuming {
             self.resume();
         }
-        let start = Instant::now();
+        // Kept by its clock from here, or in step with the display's
+        // refresh, as it's found it can be: frames shown since, and when
+        // the display was found not to be waiting.
+        let (mut start, mut base, mut shown) = (Instant::now(), self.cycles, 0);
+        let mut not_waiting: Option<Instant> = None;
         while self.frame() {
-            let due_ns = self.cycles as u128 * 1_000_000_000 / self.cpu.clock_hz as u128;
-            let due = Duration::from_nanos(due_ns as u64);
+            let refresh = self.in_step_with(not_waiting);
+            if refresh.is_some() != self.in_step.is_some() {
+                self.display.keep_in_step(refresh.is_some());
+                (start, base, shown) = (Instant::now(), self.cycles, 0);
+                self.in_step = refresh;
+                self.late = false;
+                continue;
+            }
             let elapsed = start.elapsed();
+            if let Some(refresh) = refresh {
+                shown += 1;
+                if self.fast > 0 {
+                    (start, shown) = (Instant::now(), 0);
+                } else if elapsed > Duration::from_secs(1) {
+                    if shown as f64 / elapsed.as_secs_f64() > refresh * NOT_WAITING {
+                        not_waiting = Some(Instant::now());
+                    }
+                    (start, shown) = (Instant::now(), 0);
+                }
+                continue;
+            }
+            let due_ns = (self.cycles - base) as u128 * 1_000_000_000 / self.cpu.clock_hz as u128;
+            let due = Duration::from_nanos(due_ns as u64);
             if due > elapsed {
                 sleep(due - elapsed);
             }
@@ -802,6 +861,10 @@ impl<M: Machine> Host<M> {
     fn debug_lines(&self) -> Vec<String> {
         let cpu = &self.cpu;
         let mut lines = self.stats.lines(cpu.clock_hz);
+        lines.push(match self.in_step {
+            Some(refresh) => format!("VSYNC ON {refresh:.0} HZ"),
+            None => "VSYNC OFF".to_string(),
+        });
         lines.push(format!(
             "PC {:04X} A{:02X} X{:02X} Y{:02X} S{:02X} P{:02X}",
             cpu.pc,

@@ -168,6 +168,22 @@ pub trait Display {
     /// Sound to play: frames at SAMPLE_RATE, each a left sample then a
     /// right, -1 to 1, following on from the last.
     fn play(&mut self, _samples: &[f32]) {}
+
+    /// The display's refresh rate, a second, if pictures can be shown in
+    /// step with it.
+    fn refresh_rate(&self) -> Option<f64> {
+        None
+    }
+
+    /// Pictures shown in step with the display's refresh, each waiting for
+    /// it, or not.
+    fn keep_in_step(&mut self, _on: bool) {}
+
+    /// The seconds spent waiting for the display's refresh since last asked:
+    /// time the host's idle, not working.
+    fn waited(&mut self) -> f64 {
+        0.0
+    }
 }
 
 /// A joystick as the host has it: its stick, -1 to 1 each way, right and

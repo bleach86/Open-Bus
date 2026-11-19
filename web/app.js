@@ -2674,8 +2674,9 @@ function playNatively(machine) {
     const resume = machine.kind !== 'controls' && page('quick-resume').checked;
     const rewind = page('rewind').checked;
     const driveLight = page('drive-light').checked;
+    const vsync = page('vsync').checked;
     native
-        .play({ ...machine, fullscreen, fast, ram, resume, rewind, driveLight })
+        .play({ ...machine, fullscreen, fast, ram, resume, rewind, driveLight, vsync })
         .catch((problem) => say(String(problem), true));
 }
 native?.whenPads((pressed, maker) => {
@@ -3064,6 +3065,8 @@ if (native) {
     page('quick-resume').onchange = ({ target }) => localStorage.setItem('resume', target.checked ? 'yes' : 'no');
     page('performance-mode').onchange = ({ target }) =>
         localStorage.setItem('performance', target.checked ? 'yes' : 'no');
+    page('vsync').checked = localStorage.getItem('vsync') !== 'no';
+    page('vsync').onchange = ({ target }) => localStorage.setItem('vsync', target.checked ? 'yes' : 'no');
 }
 // The Settings of both: what's to be read once a game's started.
 page('change-controls').onclick = native ? () => playNatively({ kind: 'controls' }) : openControls;

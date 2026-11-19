@@ -1114,6 +1114,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
                 resumed(&app, &machine).then_some("--resume"),
                 (machine["rewind"] == false).then_some("--no-rewind"),
                 (machine["driveLight"] == false).then_some("--no-drive-light"),
+                (machine["vsync"] == false).then_some("--no-vsync"),
             ]
             .into_iter()
             .flatten()

@@ -51,6 +51,8 @@
 //! `--no-rewind` for no rewinding: a console's last 30 seconds aren't kept
 //! to go back to, held, as they are otherwise. `--no-drive-light` for no
 //! light at the corner of the picture while a disk drive's busy.
+//! `--no-vsync` for frames kept by the machine's clock alone, never in step
+//! with the display's refresh.
 //! `--launched` says that a launcher started it, as EmulationStation might,
 //! for Select and Start held together to go back to. `--resume` keeps its
 //! state as it's put away, beside it, and goes on from that next time.
@@ -93,6 +95,9 @@ pub fn run(args: Vec<String>) {
     }
     if args.iter().any(|arg| arg == "--no-drive-light") {
         crate::host::run::DRIVE_LIGHT.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+    if args.iter().any(|arg| arg == "--no-vsync") {
+        crate::host::run::VSYNC.store(false, std::sync::atomic::Ordering::Relaxed);
     }
     if args.iter().any(|arg| arg == "--launched") {
         crate::host::window::LAUNCHED.store(true, std::sync::atomic::Ordering::Relaxed);

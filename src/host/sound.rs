@@ -122,3 +122,50 @@ impl HighPass {
         self.last_out
     }
 }
+
+/// Sound stretched or squeezed a little as it goes, to keep the host's
+/// queue of it where it's wanted: frames of `N` channels' samples, each
+/// played one a share between two of them.
+pub struct Stretch<const N: usize> {
+    /// Where the next played frame is, from the last frame taken, in
+    /// frames.
+    at: f64,
+    last: [f32; N],
+}
+
+impl<const N: usize> Default for Stretch<N> {
+    fn default() -> Self {
+        Stretch {
+            at: 0.0,
+            last: [0.0; N],
+        }
+    }
+}
+
+impl<const N: usize> Stretch<N> {
+    /// `samples`, frames of N, onto `played`, `step` of them to each frame
+    /// played: more than 1 squeezes them, less stretches them. At 1, they're
+    /// as they were, a frame later.
+    pub fn run(&mut self, samples: &[f32], step: f64, played: &mut Vec<f32>) {
+        let frames = samples.len() / N;
+        let frame = |at: usize| -> [f32; N] {
+            if at == 0 {
+                self.last
+            } else {
+                std::array::from_fn(|channel| samples[(at - 1) * N + channel])
+            }
+        };
+        while self.at < frames as f64 {
+            let (whole, share) = (self.at as usize, self.at.fract() as f32);
+            let (from, to) = (frame(whole), frame(whole + 1));
+            played.extend(
+                (0..N).map(|channel| from[channel] + (to[channel] - from[channel]) * share),
+            );
+            self.at += step;
+        }
+        if frames > 0 {
+            self.at -= frames as f64;
+            self.last = frame(frames);
+        }
+    }
+}
