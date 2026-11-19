@@ -28,9 +28,11 @@ pub enum Action {
     Library,
     FastForward,
     Rewind,
+    MenuAccept,
+    MenuBack,
 }
 
-pub const ACTIONS: [Action; 13] = [
+pub const ACTIONS: [Action; 15] = [
     Action::Up,
     Action::Down,
     Action::Left,
@@ -44,7 +46,16 @@ pub const ACTIONS: [Action; 13] = [
     Action::Library,
     Action::FastForward,
     Action::Rewind,
+    Action::MenuAccept,
+    Action::MenuBack,
 ];
+
+/// Whether it's a menu's, choosing or going back in the library, the menu
+/// over a game, these controls: as a MiSTer has them, its own, apart from a
+/// game's, a button bound to both.
+pub fn is_menus(action: Action) -> bool {
+    matches!(action, Action::MenuAccept | Action::MenuBack)
+}
 
 /// Each player's: the console's buttons, and turbo. The rest are the first
 /// player's only.
@@ -66,6 +77,8 @@ pub fn word(action: Action) -> &'static str {
         Action::Library => "library",
         Action::FastForward => "fast",
         Action::Rewind => "rewind",
+        Action::MenuAccept => "menu-accept",
+        Action::MenuBack => "menu-back",
     }
 }
 
@@ -75,6 +88,8 @@ pub fn name(action: Action) -> String {
         Action::FastForward => "FAST FORWARD".to_string(),
         Action::TurboA => "TURBO A".to_string(),
         Action::TurboB => "TURBO B".to_string(),
+        Action::MenuAccept => "MENU ACCEPT".to_string(),
+        Action::MenuBack => "MENU BACK".to_string(),
         _ => word(action).to_uppercase(),
     }
 }
@@ -140,7 +155,9 @@ pub struct Controls {
 
 impl Default for Controls {
     /// As the console's own: the first player's on the keyboard too, and
-    /// the Guide button for the library.
+    /// the Guide button for the library; the menus', as an Xbox pad's are,
+    /// A at the bottom to choose and B on the right to go back, whatever
+    /// the pad (the keyboard's Return and Escape always).
     fn default() -> Controls {
         let mut bindings = Vec::new();
         for player in 0..2 {
@@ -154,6 +171,10 @@ impl Default for Controls {
         // A TV remote's OK button, the middle of its arrows: A, to choose.
         #[cfg(target_os = "android")]
         bindings.push((0, Action::A, "key:Select".to_string()));
+        #[cfg(target_os = "android")]
+        bindings.push((0, Action::MenuAccept, "key:Select".to_string()));
+        bindings.push((0, Action::MenuAccept, "pad:a".to_string()));
+        bindings.push((0, Action::MenuBack, "pad:b".to_string()));
         bindings.push((0, Action::Library, "pad:guide".to_string()));
         bindings.push((0, Action::FastForward, "pad:righttrigger".to_string()));
         bindings.push((0, Action::Rewind, "pad:lefttrigger".to_string()));
@@ -180,13 +201,15 @@ impl Controls {
 
     /// `source` bound to `action` for `player`: in place of the same kind
     /// bound to it before, a key's of a key, a button's of a button, a stick
-    /// staying; and no longer anything else of that player's.
+    /// staying; and no longer anything else of that player's, but for the
+    /// menus', a game's and a menu's each having it.
     pub fn bind(&mut self, player: usize, action: Action, source: &str) {
         let kind = |source: &str| source.split(':').next().unwrap_or("").to_string();
         let new_kind = kind(source);
         self.bindings.retain(|(who, what, old)| {
             let same_slot = *what == action && kind(old) == new_kind && !is_stick(old);
-            *who != player || (old != source && !same_slot)
+            let taken = old == source && is_menus(*what) == is_menus(action);
+            *who != player || (!taken && !same_slot)
         });
         self.bindings.push((player, action, source.to_string()));
     }
@@ -243,9 +266,9 @@ impl Controls {
             .bindings
             .into_iter()
             .filter(|(player, action, source)| {
-                let elsewhere = bindings
-                    .iter()
-                    .any(|(who, _, was)| who == player && was == source);
+                let elsewhere = bindings.iter().any(|(who, what, was)| {
+                    who == player && was == source && is_menus(*what) == is_menus(*action)
+                });
                 !has(&bindings, *player, *action) && !elsewhere
             })
             .collect();

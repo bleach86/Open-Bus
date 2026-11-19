@@ -14,7 +14,7 @@
 
 use crate::cpu::CPU;
 use crate::host::clock;
-use crate::host::controls::{ACTIONS, Action, BUTTONS, Controls, is_stick, name, said};
+use crate::host::controls::{ACTIONS, Action, BUTTONS, Controls, is_stick, name};
 use crate::host::display::{COPY_KEY, Display, Gamepad, Key, PASTE_KEY, Scancode};
 use crate::host::files;
 use crate::host::machine::{Input, Machine};
@@ -323,6 +323,20 @@ impl<M: Machine> Host<M> {
                 }
                 continue;
             }
+            // Choosing and going back as the menus' are bound, as they are
+            // now; and by the keyboard, always.
+            let mut bound = |action| {
+                self.display
+                    .controls()
+                    .is_some_and(|controls| controls.of(0, action).contains(&source.as_str()))
+            };
+            let (accept, back) = (
+                source == "key:Return" || bound(Action::MenuAccept),
+                source == CANCEL || bound(Action::MenuBack),
+            );
+            let Some(changing) = &mut self.changing else {
+                break;
+            };
             match source.as_str() {
                 "key:Up" | "pad:dpup" | "pad:lefty-" => {
                     changing.at = (changing.at + entries.len() - 1) % entries.len()
@@ -330,12 +344,12 @@ impl<M: Machine> Host<M> {
                 "key:Down" | "pad:dpdown" | "pad:lefty+" => {
                     changing.at = (changing.at + 1) % entries.len()
                 }
-                "key:Return" | "pad:a" => match entries[changing.at] {
+                _ if accept => match entries[changing.at] {
                     Entry::Done => done = Some(true),
                     Entry::Cancel => done = Some(false),
                     entry => self.choose_entry(entry),
                 },
-                CANCEL | "pad:b" => done = Some(false),
+                _ if back => done = Some(false),
                 _ => {}
             }
             if done.is_some() {
@@ -383,7 +397,7 @@ impl<M: Machine> Host<M> {
             changing.waiting,
             changing.entries(),
         );
-        let controls = self.display.controls()?;
+        let controls = self.display.controls()?.clone();
         let mut lines = vec![format!("PLAYER {} CONTROLS", player + 1)];
         for (place, &entry) in entries.iter().enumerate() {
             let marker = if place == at { ">" } else { " " };
@@ -393,7 +407,7 @@ impl<M: Machine> Host<M> {
                         .of(player, action)
                         .iter()
                         .filter(|source| !is_stick(source))
-                        .map(|source| said(source))
+                        .map(|source| self.display.said(source))
                         .collect();
                     format!("{marker}{:8}{}", name(action), bound.join(", "))
                 }
@@ -406,7 +420,7 @@ impl<M: Machine> Host<M> {
         lines.push(String::new());
         lines.push(match (waiting, entries[at]) {
             (true, Entry::Bind(action)) => format!("PRESS FOR {}, ESC TO STOP", name(action)),
-            _ => "A: CHOOSE  B: CANCEL".to_string(),
+            _ => self.menu_hint().replace("BACK", "CANCEL"),
         });
         Some(lines)
     }
@@ -470,8 +484,8 @@ impl<M: Machine> Host<M> {
             newly(gamepad.down, menu.before.down),
         );
         let (mut choose, mut back) = (
-            newly(gamepad.a, menu.before.a),
-            newly(gamepad.b, menu.before.b),
+            newly(gamepad.accept, menu.before.accept),
+            newly(gamepad.back, menu.before.back),
         );
         menu.before = gamepad;
         // Keys let go meanwhile, let go for the machine too.
@@ -529,7 +543,7 @@ impl<M: Machine> Host<M> {
     }
 
     /// The menu's lines, with the one chosen marked.
-    fn menu_lines(&self) -> Option<Vec<String>> {
+    fn menu_lines(&mut self) -> Option<Vec<String>> {
         let menu = self.menu.as_ref()?;
         let mut lines = vec!["PAUSED".to_string()];
         lines.extend(menu.items.iter().enumerate().map(|(place, item)| {
@@ -540,8 +554,28 @@ impl<M: Machine> Host<M> {
             )
         }));
         lines.push(String::new());
-        lines.push("A: CHOOSE  B: BACK".to_string());
+        lines.push(self.menu_hint());
         Some(lines)
+    }
+
+    /// What chooses and goes back in a menu, as they're bound, for the foot
+    /// of one: the gamepad's, as the controls name them.
+    fn menu_hint(&mut self) -> String {
+        let mut named = |action, or: &str| {
+            let source = self.display.controls().and_then(|controls| {
+                controls
+                    .of(0, action)
+                    .into_iter()
+                    .find(|source| source.starts_with("pad:"))
+                    .map(str::to_string)
+            });
+            source.map_or(or.to_string(), |source| self.display.said(&source))
+        };
+        format!(
+            "{}: CHOOSE  {}: BACK",
+            named(Action::MenuAccept, "A"),
+            named(Action::MenuBack, "B")
+        )
     }
 
     /// A frame: false once the window's closed, the machine put away.

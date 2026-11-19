@@ -21,7 +21,7 @@
 //! Ctrl+Insert, the screen copied to it, for a machine with a keyboard.
 //! Closed, it tells the machine, to turn itself off.
 
-use crate::host::controls::{Action, Controls};
+use crate::host::controls::{Action, Controls, said};
 use crate::host::display::{
     CHANNELS, COPY_KEY, Display, Gamepad, Joystick, Key, PASTE_KEY, Pointer, SAMPLE_RATE, Scancode,
 };
@@ -325,6 +325,8 @@ impl Window {
             start: held(Action::Start),
             turbo_a: held(Action::TurboA),
             turbo_b: held(Action::TurboB),
+            accept: held(Action::MenuAccept),
+            back: held(Action::MenuBack),
         }
     }
 
@@ -884,6 +886,13 @@ impl Display for Window {
 
     fn controls(&mut self) -> Option<&mut Controls> {
         Some(&mut self.controls)
+    }
+
+    fn said(&self, source: &str) -> String {
+        let face = source
+            .strip_prefix("pad:")
+            .and_then(|button| self.pads.label(button));
+        face.map_or_else(|| said(source), |label| format!("PAD {label}"))
     }
 
     fn hint(&self) -> Option<&'static str> {

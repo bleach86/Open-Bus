@@ -1,4 +1,4 @@
-use crate::host::controls::Controls;
+use crate::host::controls::{Controls, said};
 
 /// The host's sound: frames a second, for every machine; each frame its
 /// channels' samples, left then right.
@@ -136,6 +136,12 @@ pub trait Display {
         None
     }
 
+    /// What's said of a binding on the screen: a gamepad's face buttons, by
+    /// what's printed on them, if it knows the pad.
+    fn said(&self, source: &str) -> String {
+        said(source)
+    }
+
     /// What's to be said of it as a game starts, if anything is.
     fn hint(&self) -> Option<&'static str> {
         None
@@ -221,6 +227,10 @@ pub struct Gamepad {
     pub start: bool,
     pub turbo_a: bool,
     pub turbo_b: bool,
+    /// The menus' choosing and going back, as they're bound: the first
+    /// player's, for the menu over a game.
+    pub accept: bool,
+    pub back: bool,
 }
 
 impl Gamepad {

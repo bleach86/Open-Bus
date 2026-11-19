@@ -25,7 +25,7 @@ const SETTLE: Duration = Duration::from_millis(150);
 
 /// What the library moves by, as it's bound (Select a game's star), and its
 /// shoulders and triggers. Its A and B, confirming and going back, aren't
-/// the game's: they're where the pad's maker has them, `Pad::convention`.
+/// the game's: they're the menus', as they're bound.
 const LIBRARY: [Action; 6] = [
     Action::Up,
     Action::Down,
@@ -100,17 +100,6 @@ impl Pad {
             "xbox"
         }
     }
-
-    /// Its buttons for confirming and going back, by where they are, as its
-    /// maker has them: Nintendo's A on the right and B at the bottom; the
-    /// others', A or ✕ at the bottom and B or ○ on the right.
-    fn convention(&self) -> (&'static str, &'static str) {
-        if self.maker() == "nintendo" {
-            ("b", "a")
-        } else {
-            ("a", "b")
-        }
-    }
 }
 
 /// The players' gamepads. On Android, each a player's only once it's used:
@@ -145,6 +134,21 @@ impl Pads {
     /// The first there is.
     pub fn first(&self) -> Option<&Pad> {
         self.places.iter().flatten().next()
+    }
+
+    /// What the first pad's maker prints on a face button, as it's named by
+    /// where it is (as an Xbox pad's are): on a Nintendo pad, A and B the
+    /// other way about, and X and Y; a PlayStation pad's shapes, in words.
+    pub fn label(&self, button: &str) -> Option<&'static str> {
+        let faces = match self.first().map_or("xbox", Pad::maker) {
+            "nintendo" => ["B", "A", "Y", "X"],
+            "playstation" => ["CROSS", "CIRCLE", "SQUARE", "TRIANGLE"],
+            _ => ["A", "B", "X", "Y"],
+        };
+        let at = ["a", "b", "x", "y"]
+            .iter()
+            .position(|&face| face == button)?;
+        Some(faces[at])
     }
 
     /// Whether `button`'s held by `player`.
@@ -278,15 +282,14 @@ impl Pads {
                     .strip_prefix("pad:")
                     .is_some_and(|button| self.holds(player, button))
             };
-            if let Some(pad) = &self.places[player] {
-                let (confirm, back) = pad.convention();
-                words.extend(
-                    [(confirm, "a"), (back, "b")]
-                        .into_iter()
-                        .filter(|&(button, _)| pad.held.contains(button))
-                        .map(|(_, word)| word),
-                );
-            }
+            // Choosing and going back as the first player's menus' are
+            // bound, on either pad.
+            words.extend(
+                [(Action::MenuAccept, "a"), (Action::MenuBack, "b")]
+                    .into_iter()
+                    .filter(|&(action, _)| controls.holds(0, action, held))
+                    .map(|(_, word)| word),
+            );
             words.extend(
                 LIBRARY
                     .iter()

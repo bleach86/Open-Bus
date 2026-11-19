@@ -437,6 +437,8 @@ mod tests {
         b: false,
         turbo_a: false,
         turbo_b: false,
+        accept: false,
+        back: false,
     };
     const NONE: Gamepad = Gamepad {
         select: false,
@@ -449,6 +451,8 @@ mod tests {
         b: false,
         turbo_a: false,
         turbo_b: false,
+        accept: false,
+        back: false,
     };
 
     #[test]
@@ -462,8 +466,8 @@ mod tests {
         frames_with(&mut host, &seen, NONE, 3);
         assert_eq!(host.cpu.clock, paused, "the game went on under the menu");
         assert!(seen.borrow().pictures >= 10, "nothing shown while it's up");
-        // B goes back to it.
-        frames_with(&mut host, &seen, Gamepad { b: true, ..NONE }, 1);
+        // Menu back goes back to it.
+        frames_with(&mut host, &seen, Gamepad { back: true, ..NONE }, 1);
         frames_with(&mut host, &seen, NONE, 2);
         assert!(host.cpu.clock > paused, "still paused");
     }
@@ -512,7 +516,10 @@ mod tests {
         seen.borrow_mut().function_keys.push(1);
         frames_with(&mut host, &seen, NONE, 2);
         let down = Gamepad { down: true, ..NONE };
-        let choose = Gamepad { a: true, ..NONE };
+        let choose = Gamepad {
+            accept: true,
+            ..NONE
+        };
         // Resume, then Save state.
         for pad in [down, NONE, choose, NONE] {
             frames_with(&mut host, &seen, pad, 1);

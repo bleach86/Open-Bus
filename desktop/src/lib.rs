@@ -740,7 +740,7 @@ fn start_pads(app: &AppHandle) {
     if cfg!(mobile) {
         return;
     }
-    let Ok(mut command) = emulator_command() else {
+    let Ok(mut command) = emulator_command(app) else {
         return;
     };
     command
@@ -781,15 +781,44 @@ fn stop_pads(app: &AppHandle) {
 }
 
 /// The emulator to run, without a console flashing up behind it, on Windows.
-fn emulator_command() -> Result<Command, String> {
+fn emulator_command(app: &AppHandle) -> Result<Command, String> {
     #[cfg_attr(not(windows), allow(unused_mut))]
     let mut command = Command::new(emulator()?);
     #[cfg(windows)]
     std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
-    // On Android, SDL beside it, among the app's libraries.
+    // On Android, SDL beside it, among the app's libraries; and its
+    // settings where the game screen has them, the app's files, as Android
+    // has no home.
     #[cfg(target_os = "android")]
-    command.env("LD_LIBRARY_PATH", android::libraries()?);
+    {
+        command.env("LD_LIBRARY_PATH", android::libraries()?);
+        let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        command.env("XDG_CONFIG_HOME", data.join("files"));
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = app;
     Ok(command)
+}
+
+/// The menus' choosing and going back, as the emulator has them bound for
+/// the first player, by its names for them: `{ accept, back }`, a list
+/// each. For the library to choose and go back by, on Android, where it
+/// has the gamepads itself; and to name them, anywhere.
+#[tauri::command(async)]
+fn menu_buttons(app: AppHandle) -> Result<Value, String> {
+    let said = emulator_command(&app)?
+        .arg("bound")
+        .output()
+        .map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&said.stdout);
+    let of = |word: &str| {
+        let start = format!("1 {word} ");
+        text.lines()
+            .filter_map(|line| line.strip_prefix(&start))
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    Ok(json!({ "accept": of("menu-accept"), "back": of("menu-back") }))
 }
 
 /// Whether the emulator's learning what's known of the games, and whether
@@ -845,7 +874,7 @@ fn learn_unknown(app: &AppHandle) -> Result<bool, String> {
         .filter(|path| !path.contains('\n'))
         .map(|path| format!("{path}\n"))
         .collect();
-    let mut learner = emulator_command()?
+    let mut learner = emulator_command(app)?
         .arg("facts")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1041,8 +1070,9 @@ fn choose_settings(app: AppHandle, machine: Value, settings: Value) -> Result<()
     library(&app).choose(&machine, &settings)
 }
 
-/// A game played, the window away until it's over.
-#[tauri::command]
+/// A game played, the window away until it's over. Not on the main thread:
+/// on Android, starting the game screen's done there, and waited for.
+#[tauri::command(async)]
 fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), String> {
     let library = folder(&app, "library")?;
     let line = command_line(&app, &machine)?;
@@ -1071,7 +1101,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
     #[cfg(desktop)]
     {
         line.push(window_place(&window)?);
-        let mut command = emulator_command()?;
+        let mut command = emulator_command(&app)?;
         command
             .args(line)
             .current_dir(&library)
@@ -1170,7 +1200,7 @@ fn sort_roms(app: AppHandle, paths: Vec<String>) -> Result<Value, String> {
 /// as `sort_roms` has it.
 fn sort_into_library(app: &AppHandle, list: String) -> Result<Value, String> {
     let app = app.clone();
-    let mut command = emulator_command()?;
+    let mut command = emulator_command(&app)?;
     let library = folder(&app, "library")?;
     let mut sorter = command
         .arg("roms")
@@ -1435,6 +1465,7 @@ pub fn run() {
             storage_access,
             ask_storage_access,
             add_folder,
+            menu_buttons,
             take_dropped,
             folder_files,
             play,

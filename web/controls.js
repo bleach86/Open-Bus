@@ -19,7 +19,13 @@ export const ACTIONS = [
     'library',
     'fast',
     'rewind',
+    'menuAccept',
+    'menuBack',
 ];
+
+/// Whether it's a menu's, choosing or going back in the library, the menu
+/// over a game: its own, apart from a game's, a button bound to both.
+export const isMenus = (action) => action === 'menuAccept' || action === 'menuBack';
 /// The console's own and turbo, a bit each for the emulator: the rest are
 /// the page's.
 export const BUTTONS = ACTIONS.slice(0, 10);
@@ -62,6 +68,10 @@ function player(first) {
         bound.select.push('key:ShiftRight', 'key:Tab');
         bound.fast.push('key:Backquote', 'pad:rightTrigger');
         bound.rewind.push('key:Backspace', 'pad:leftTrigger');
+        // As an Xbox pad's: A at the bottom to choose, B on the right to go
+        // back, whatever the pad.
+        bound.menuAccept.push('pad:a');
+        bound.menuBack.push('pad:east');
     }
     return bound;
 }
@@ -81,8 +91,10 @@ export function load(storage = localStorage) {
             return defaults();
         }
         defaults().forEach((ours, who) => {
-            const used = Object.values(kept[who]).flat();
             for (const action of ACTIONS.filter((action) => !kept[who][action])) {
+                const used = Object.entries(kept[who])
+                    .filter(([other]) => isMenus(other) === isMenus(action))
+                    .flatMap(([, sources]) => sources);
                 kept[who][action] = ours[action].filter((source) => !used.includes(source));
             }
         });
@@ -97,11 +109,13 @@ export const save = (controls, storage = localStorage) => storage.setItem(STORED
 const kindOf = (source) => source.split(':')[0];
 
 /// `source` bound to `action` for `who`: in place of the same kind bound to
-/// it before, and no longer anything else of theirs.
+/// it before, and no longer anything else of theirs, but for the menus', a
+/// game's and a menu's each having it.
 export function bind(controls, who, action, source) {
     for (const [other, sources] of Object.entries(controls[who])) {
+        const taken = (old) => old === source && isMenus(other) === isMenus(action);
         controls[who][other] = sources.filter(
-            (old) => old !== source && !(other === action && kindOf(old) === kindOf(source)),
+            (old) => !taken(old) && !(other === action && kindOf(old) === kindOf(source)),
         );
     }
     controls[who][action].push(source);

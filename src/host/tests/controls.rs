@@ -177,6 +177,55 @@ mod tests {
     }
 
     #[test]
+    fn the_menus_choose_at_the_bottom_and_go_back_on_the_right_whatever_the_pad() {
+        let controls = Controls::default();
+        assert!(controls.of(0, Action::MenuAccept).contains(&"pad:a"));
+        assert!(controls.of(0, Action::MenuBack).contains(&"pad:b"));
+        assert!(
+            controls.of(1, Action::MenuAccept).is_empty(),
+            "the first player's"
+        );
+    }
+
+    #[test]
+    fn a_menus_button_and_a_games_are_bound_apart() {
+        let mut controls = Controls::default();
+        controls.bind(0, Action::MenuAccept, "pad:x");
+        assert!(
+            controls.of(0, Action::B).contains(&"pad:x"),
+            "the game's B keeps the west button"
+        );
+        assert_eq!(controls.of(0, Action::MenuAccept), ["pad:x"]);
+        controls.bind(0, Action::TurboA, "pad:x");
+        assert_eq!(
+            controls.of(0, Action::MenuAccept),
+            ["pad:x"],
+            "nor does a game's take it from a menu's"
+        );
+        assert!(!controls.of(0, Action::B).contains(&"pad:x"));
+        controls.bind(0, Action::MenuBack, "pad:x");
+        assert!(
+            controls.of(0, Action::MenuAccept).is_empty(),
+            "but a menu's takes it from a menu's"
+        );
+    }
+
+    #[test]
+    fn a_file_from_before_the_menus_has_them_though_their_buttons_are_a_games() {
+        let mut kept = Controls::default();
+        kept.bind(0, Action::A, "pad:y");
+        let old: String = kept
+            .text()
+            .lines()
+            .filter(|line| !line.contains("menu-"))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let controls = Controls::parse(&old);
+        assert!(controls.of(0, Action::MenuAccept).contains(&"pad:a"));
+        assert!(controls.of(0, Action::MenuBack).contains(&"pad:b"));
+    }
+
+    #[test]
     fn bindings_are_said_for_people() {
         assert_eq!(said("key:Right Shift"), "RIGHT SHIFT");
         assert_eq!(said("pad:a"), "PAD A", "not to be taken for a key");

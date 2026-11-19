@@ -457,6 +457,8 @@ impl Emulator {
                 start: held(7),
                 turbo_a: held(8),
                 turbo_b: held(9),
+                accept: held(10),
+                back: held(11),
             }
         };
         let page = &mut self.page.borrow_mut();

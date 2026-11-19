@@ -227,6 +227,10 @@ function sendable(bytes) {
 /// `mockingboards`.
 export const play = (machine) => invoke('play', { machine: pathed(machine) });
 
+/// The menus' choosing and going back, as the emulator has them bound:
+/// `{ accept, back }`, by its names for the buttons.
+export const menuButtons = () => invoke('menu_buttons');
+
 /// A machine as the page has one, by names, as the app has it, by paths.
 const pathed = (machine) => ({
     ...machine,

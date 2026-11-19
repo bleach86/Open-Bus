@@ -61,6 +61,8 @@
 //! has it in a game; they're for all of these.
 //! `cpu_emu pads` for no window, and what the gamepads hold told on standard
 //! output until standard input closes: the desktop app's library's.
+//! `cpu_emu bound` for the controls as they're bound, as they're kept, a
+//! line each: for the app's library to choose and go back by the menus'.
 //! `cpu_emu roms FOLDER` for the Apple's ROMs in the files named on standard
 //! input written into FOLDER, under the names they're looked for by.
 //! `cpu_emu facts` for what's known of each NES game named on standard
@@ -99,6 +101,7 @@ pub fn run(args: Vec<String>) {
     match args.get(1).map(String::as_str) {
         Some("controls") => machines::nes::controls(),
         Some("pads") => crate::host::pads::report(),
+        Some("bound") => print!("{}", crate::host::controls::Controls::load().text()),
         Some("facts") => machines::facts::report(),
         Some("roms") => {
             let out = args.get(2).expect("cpu_emu roms FOLDER");

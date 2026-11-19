@@ -207,7 +207,13 @@ function showControlHelp() {
 }
 
 /// What the dialog calls those whose names aren't words.
-const LABELS = { turboA: 'Turbo A', turboB: 'Turbo B', fast: 'Fast forward' };
+const LABELS = {
+    turboA: 'Turbo A',
+    turboB: 'Turbo B',
+    fast: 'Fast forward',
+    menuAccept: 'Menu accept',
+    menuBack: 'Menu back',
+};
 
 /// The dialog's rows, as they're bound now.
 function fillControls() {
@@ -1312,11 +1318,11 @@ function navigationPressed() {
         for (const action of ['up', 'down', 'left', 'right', 'select', 'start']) {
             pressed[action] ||= steered[action] || boundHeld(0, action, pad, state);
         }
-        // Confirming and going back where the pad's maker has them, not as
-        // the game's A and B are bound: Nintendo's A on the right.
-        const nintendo = makerOf(pad) === 'nintendo';
-        pressed.a ||= nintendo ? state.east : state.a;
-        pressed.b ||= nintendo ? state.a : state.east;
+        // Choosing and going back as the menus' are bound, not the game's A
+        // and B: an Xbox pad's, the bottom and the right, unless they've
+        // been changed.
+        pressed.a ||= menuHeld('menuAccept', pad, state);
+        pressed.b ||= menuHeld('menuBack', pad, state);
         pressed.previous ||= shoulders(pad, 4);
         pressed.next ||= shoulders(pad, 5);
         pressed.pageup ||= shoulders(pad, 6);
@@ -1341,21 +1347,83 @@ function makerOf(pad) {
     return /057e|nintendo|pro controller|joy-con/i.test(id) ? 'nintendo' : 'xbox';
 }
 
+/// The menus' choosing and going back, as they're bound: the page's own,
+/// in a browser; in the app, the emulator's, as its controls have them, by
+/// the page's names for its buttons.
+let menuFromApp = null;
+const menuSources = (action) => menuFromApp?.[action] ?? controlsBound[0][action];
+
+/// The emulator's names for a gamepad's buttons, as the page names them:
+/// by where they are, as an Xbox pad's are labelled.
+const FROM_EMULATOR = {
+    a: 'a',
+    b: 'east',
+    x: 'b',
+    y: 'north',
+    back: 'select',
+    start: 'start',
+    dpup: 'padUp',
+    dpdown: 'padDown',
+    dpleft: 'padLeft',
+    dpright: 'padRight',
+    lefttrigger: 'leftTrigger',
+    righttrigger: 'rightTrigger',
+    leftshoulder: 'btn4',
+    rightshoulder: 'btn5',
+    leftstick: 'btn10',
+    rightstick: 'btn11',
+    guide: 'btn16',
+};
+
+/// The menus' buttons from the app, as its controls have them now.
+async function learnMenus() {
+    const told = await native?.menuButtons().catch(() => null);
+    if (!told) {
+        return;
+    }
+    const ours = (sources) =>
+        sources.flatMap((source) => {
+            const name = FROM_EMULATOR[source.replace(/^pad:/, '')];
+            return source.startsWith('pad:') && name ? [`pad:${name}`] : [];
+        });
+    menuFromApp = { menuAccept: ours(told.accept), menuBack: ours(told.back) };
+    showPadHints();
+}
+learnMenus();
+
+/// Whether a gamepad holds what's bound to a menu's `action`.
+const menuHeld = (action, pad, state) =>
+    menuSources(action).some((source) => source.startsWith('pad:') && bindings.padHeld(source, pad, state));
+
+/// What a pad's face buttons are labelled, by its maker, where they are.
+const FACES = {
+    xbox: { a: 'A', east: 'B', b: 'X', north: 'Y' },
+    playstation: { a: '✕', east: '○', b: '□', north: '△' },
+    nintendo: { a: 'B', east: 'A', b: 'Y', north: 'X' },
+};
+
 /// The library's buttons on the pad in use, by its maker's labels: those
-/// that confirm and go back where its maker has them, Nintendo's A on the
-/// right and B at the bottom, the others' at the bottom and on the right;
-/// and its Select and Start, shoulders and triggers.
+/// that choose and go back, as the menus' are bound; and its Select and
+/// Start, shoulders and triggers.
 function padNames() {
-    const pad = native ? null : padsNow()[0];
-    const maker = native ? padMaker : makerOf(pad);
+    // The page's own pad, but in the desktop app, which says whose it is.
+    const told = native?.tellsPads;
+    const pad = told ? null : padsNow()[0];
+    const maker = told ? padMaker : makerOf(pad);
+    const named = (action, or) => {
+        const source = menuSources(action).find((source) => source.startsWith('pad:'));
+        const name = source?.slice('pad:'.length);
+        return FACES[maker][name] ?? (source ? bindings.said(source).replace(/^Pad /, '') : or);
+    };
+    const [confirm, back] = [named('menuAccept', FACES[maker].a), named('menuBack', FACES[maker].east)];
     if (maker === 'playstation') {
         const select = /dualsense|0ce6/i.test(pad?.id ?? '') ? 'Create' : 'Share';
-        return { confirm: '✕', back: '○', select, start: 'Options', shoulders: 'L1 R1', triggers: 'L2 R2' };
+        return { confirm, back, select, start: 'Options', shoulders: 'L1 R1', triggers: 'L2 R2' };
     }
     if (maker === 'nintendo') {
-        return { confirm: 'A', back: 'B', select: '−', start: '+', shoulders: 'L R', triggers: 'ZL ZR' };
+        return { confirm, back, select: '−', start: '+', shoulders: 'L R', triggers: 'ZL ZR' };
     }
-    return { confirm: 'A', back: 'B', select: 'Select', start: 'Start', shoulders: 'LB RB', triggers: 'LT RT' };
+    return { confirm, back, select: 'Select', start: 'Start', shoulders: 'LB RB', triggers: 'LT RT' };
 }
 
 /// What the gamepad's buttons do here: on a game, a disk, the strip of
@@ -2596,6 +2664,8 @@ function tvLayout(on) {
 }
 
 native?.whenGameEnds((problem) => {
+    // Its controls perhaps changed in the game.
+    learnMenus();
     if (page('tv-layout').checked) {
         native.fullscreen(true);
     }
@@ -2997,6 +3067,11 @@ function showScene() {
         canvas = document.createElement('canvas');
         scene.append(canvas);
     }
+    // A window with no size yet, as Android's is opened behind its screen
+    // saver: drawn once it has one, as it's resized.
+    if (!innerWidth || !innerHeight) {
+        return;
+    }
     const scale = Math.max(1, Math.round(innerHeight / 240));
     canvas.width = Math.ceil(innerWidth / scale);
     canvas.height = Math.ceil(innerHeight / scale);
@@ -3218,9 +3293,12 @@ function padBits(who, pad, state, touched = {}) {
         left: state.stickX < -0.5,
         right: state.stickX > 0.5,
     };
-    return bindings.BUTTONS.map(
+    const buttons = bindings.BUTTONS.map(
         (action) => touched[action] || steered[action] || boundHeld(who, action, pad, state),
-    ).reduce((bits, on, bit) => bits | (on ? 1 << bit : 0), 0);
+    );
+    // And the first player's, the menus', for the menu over a game.
+    const menus = who === 0 ? ['menuAccept', 'menuBack'].map((action) => boundHeld(0, action, pad, state)) : [];
+    return [...buttons, ...menus].reduce((bits, on, bit) => bits | (on ? 1 << bit : 0), 0);
 }
 
 function controls() {
