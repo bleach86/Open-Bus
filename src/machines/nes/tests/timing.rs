@@ -188,6 +188,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_files_name_says_which_console_its_for_if_it_says() {
+        for (name, famicom) in [
+            ("Fire Emblem (J).zip", Some(true)),
+            ("Banana (Japan).zip", Some(true)),
+            ("Super Mario Bros. (World).zip", Some(false)),
+            ("Karnov (USA).zip", Some(false)),
+            ("Game (Japan, USA).zip", Some(false)),
+            ("Game (Europe).zip", Some(false)),
+            ("Game (JU).nes", Some(false)),
+            ("Homebrew.nes", None),
+            ("Game (Rev A).zip", None),
+        ] {
+            assert_eq!(region::famicoms(name), famicom, "{name}");
+        }
+    }
+
     /// A write to a PPU register, and a read, a CPU cycle each, as the CPU's
     /// are: PPUADDR's second write takes a dot or so to arrive.
     fn put(nes: &mut Nes, addr: u16, value: u8) {

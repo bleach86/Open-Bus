@@ -64,6 +64,20 @@ fn tags(name: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Whether a file's `name` says it's a Famicom's game, if it says: Japan
+/// alone, it is; another country, with Japan or not, it's the NES's, one
+/// ROM of both being on its cartridge as much as the Famicom's.
+pub fn famicoms(name: &str) -> Option<bool> {
+    if japans_alone(name) {
+        return Some(true);
+    }
+    let abroad = |tag: &&str| !matches!(*tag, "Japan" | "J");
+    tags(name)
+        .iter()
+        .any(|tag| abroad(tag) && (NTSC_TAGS.contains(tag) || PAL_TAGS.contains(tag)))
+        .then_some(false)
+}
+
 /// Whether a file's `name` says Japan alone, no other country with it: a
 /// Famicom's game.
 pub fn japans_alone(name: &str) -> bool {

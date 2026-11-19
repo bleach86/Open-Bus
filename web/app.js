@@ -3162,16 +3162,20 @@ if (native) {
         }
     });
     page('quit-app').hidden = false;
-    // On Android, the games' folders perhaps not to be written to.
+    // On Android, the games' folders perhaps not to be written to; and all
+    // of it fullscreen, and big enough for a TV, already.
     if (native.android) {
         page('saves-where').textContent = 'and saves are kept in the app.';
+        for (const setting of ['start-fullscreen', 'tv-layout']) {
+            page(setting).closest('.setting').hidden = true;
+        }
     }
     page('start-fullscreen').checked = localStorage.getItem('fullscreen') === 'yes';
     page('start-fullscreen').onchange = ({ target }) =>
         localStorage.setItem('fullscreen', target.checked ? 'yes' : 'no');
     page('performance-mode').checked = localStorage.getItem('performance') === 'yes';
     page('quick-resume').checked = localStorage.getItem('resume') === 'yes';
-    page('tv-layout').checked = localStorage.getItem('tv') === 'yes';
+    page('tv-layout').checked = !native.android && localStorage.getItem('tv') === 'yes';
     page('tv-layout').onchange = ({ target }) => {
         localStorage.setItem('tv', target.checked ? 'yes' : 'no');
         tvLayout(target.checked);

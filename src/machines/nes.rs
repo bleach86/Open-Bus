@@ -818,7 +818,7 @@ pub fn facts_of(path: &Path, image: Result<Vec<u8>, String>) -> String {
         let name = path
             .file_name()
             .map_or(String::new(), |name| name.to_string_lossy().into_owned());
-        let famicom = cartridge.famicom || region::japans_alone(&name);
+        let famicom = region::famicoms(&name).unwrap_or(cartridge.famicom);
         Ok([
             format!("{:08X}", crc32(&image[16 + trainer..])),
             cartridge.mapper_name(),
@@ -870,10 +870,12 @@ pub fn build(rom: &str, overscan: usize, chosen: Chosen) -> Result<CPU<Nes>, Str
         .or(cartridge.region)
         .or(named)
         .unwrap_or_default();
-    let japans = path
+    // As it's chosen; or as its name says, over the database, which says
+    // Famicom of a ROM that was on both.
+    let named = path
         .file_name()
-        .is_some_and(|name| region::japans_alone(&name.to_string_lossy()));
-    let famicom = chosen.famicom.unwrap_or(cartridge.famicom || japans);
+        .and_then(|name| region::famicoms(&name.to_string_lossy()));
+    let famicom = chosen.famicom.or(named).unwrap_or(cartridge.famicom);
     cartridge.zapper = chosen.zapper.unwrap_or(cartridge.zapper);
     let mut nes = Nes::of(cartridge, region);
     if famicom {

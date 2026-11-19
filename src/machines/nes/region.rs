@@ -12,7 +12,7 @@
 //! game of both, "(USA, Europe)", is one ROM for them, and runs as NTSC.
 //! One whose name says Japan alone, "(J)" or "(Japan)", is a Famicom's.
 
-pub use crate::machines::region::{Region, japans_alone};
+pub use crate::machines::region::{Region, famicoms, japans_alone};
 
 /// The CPU's clock, a PAL crystal's 26,601,712 Hz, a sixteenth.
 pub const PAL_CLOCK_HZ: u32 = 1_662_607;
