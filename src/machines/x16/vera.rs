@@ -264,8 +264,10 @@ pub struct Vera {
     /// ended, for the line drawn now.
     layers_before: [[u8; 7]; 2],
     vscale_before: u8,
-    /// The line of the picture shown, 16.16, as VSCALE steps it.
+    /// The line of the picture shown, 16.16, as VSCALE steps it; and
+    /// whether it's begun this frame (or field), at VSTART.
     picture_line: u32,
+    started: bool,
     /// The sprites' collisions this frame, bits 7 to 4.
     collisions: u8,
     frame_ended: bool,
@@ -308,6 +310,7 @@ impl Vera {
             layers_before: [[0; 7]; 2],
             vscale_before: 0,
             picture_line: 0,
+            started: false,
             collisions: 0,
             frame_ended: false,
             picture: vec![0; WIDTH * HEIGHT],
@@ -344,6 +347,7 @@ impl Vera {
             self.palette[n * 2..n * 2 + 2].copy_from_slice(&colour.to_le_bytes());
         }
         (self.line, self.cycles, self.picture_line) = (0, 0, 0);
+        self.started = false;
         self.collisions = 0;
     }
 
@@ -899,22 +903,32 @@ impl Vera {
 
     /// Line `y`, as it ends: the picture's line it shows, stepped on as
     /// VSCALE says, and drawn, as line `row`, if it's one of the picture's.
-    /// `interlaced`, a field's, every other line: the first, 0 or 1, as
-    /// far down as its line is, and two lines' steps a line.
+    /// As VERA's composer has it (its Verilog's, not x16emu's since R49):
+    /// the picture's line 0 on the first line at or past VSTART; then a
+    /// step each line after one in VSTART to VSTOP, to the picture's line
+    /// 480. `interlaced`, a field's, every other line: two lines' steps a
+    /// line, and its first half a line on, a field and VSTART odd and even.
     fn scan(&mut self, y: u16, row: u16, interlaced: bool) {
         let [_, _, _, _, _, _, vstart, vstop] = self.composer;
         let (vstart, vstop) = ((vstart as u16) << 1, (vstop as u16) << 1);
         let vscale = self.vscale_before as u32;
-        if interlaced {
-            if y >> 1 == 0 {
-                self.picture_line = y as u32 * (vscale << 9);
-            } else if (vstart..vstop).contains(&(y & !1)) {
-                self.picture_line += vscale << 10;
-            }
-        } else if y == 0 {
-            self.picture_line = 0;
-        } else if (vstart..vstop).contains(&y) {
-            self.picture_line += vscale << 9;
+        let (first, before, step) = if interlaced {
+            (y < 2, y.wrapping_sub(2), vscale << 10)
+        } else {
+            (y == 0, y.wrapping_sub(1), vscale << 9)
+        };
+        if first {
+            self.started = false;
+        }
+        if !self.started && y >= vstart {
+            self.started = true;
+            let odd = interlaced && (y ^ vstart) & 1 != 0;
+            self.picture_line = if odd { vscale << 9 } else { 0 };
+        } else if self.started
+            && (vstart..vstop).contains(&before)
+            && self.picture_line >> 16 < HEIGHT as u32
+        {
+            self.picture_line += step;
         }
         if y as usize >= HEIGHT {
             return;

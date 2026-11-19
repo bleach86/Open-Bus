@@ -1,6 +1,7 @@
 //! VERA: its ports' addresses, stepping and fetching; its palette, and
 //! RESET; its lines' time, SCANLINE, and its interrupts, VGA's and NTSC's
-//! and RGB's fields, each drawing half the lines; a text layer and
+//! and RGB's fields, each drawing half the lines; the picture's first line
+//! on the first past the top border; a text layer and
 //! a tile layer drawn, scaled; sprites, over and under the layers, their
 //! collisions and their renderer's time; its SPI port, no card on it.
 
@@ -235,6 +236,32 @@ mod tests {
         poke(vera, 0x0000, &[0x01, 0x61]);
         poke(vera, 0x1008, &[0x80]);
         vera.write(DC_VIDEO, 0x21);
+    }
+
+    #[test]
+    fn the_pictures_line_0_is_on_the_first_line_past_the_top_border() {
+        let mut vera = Vera::new();
+        text(&mut vera);
+        // DC_VSTART 20: the border down to line 40; DC_VSTOP 200, from 400.
+        vera.write(CTRL, 0x02);
+        vera.write(0x0B, 20);
+        vera.write(0x0C, 200);
+        vera.write(CTRL, 0x00);
+        lines(&mut vera, LINES as u32 * 2);
+        let first = |vera: &Vera, y: usize| vera.picture[y * WIDTH];
+        assert_eq!(first(&vera, 39), 0x000000, "the border, colour 0");
+        assert_eq!(
+            first(&vera, 40),
+            0xFFFFFF,
+            "line 0: its first dot, as VERA's composer has it"
+        );
+        assert_eq!(first(&vera, 41), 0x0000AA, "line 1");
+        assert_eq!(first(&vera, 400), 0x000000, "the border again");
+        // Twice as tall: lines 0, 0, 1, 1.
+        vera.write(0x0B, 64);
+        lines(&mut vera, LINES as u32 * 2);
+        let rows = [40, 41, 42].map(|y| first(&vera, y));
+        assert_eq!(rows, [0xFFFFFF, 0xFFFFFF, 0x0000AA]);
     }
 
     #[test]
