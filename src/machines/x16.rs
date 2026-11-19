@@ -178,6 +178,14 @@ pub struct X16 {
     /// The YM2151's clock, in 8ths of a microsecond: its next tick due as
     /// this passes the CPU's.
     ym_clock: u32,
+    /// The cycles gone by since VERA, the YM2151, the RTC and the sound
+    /// were brought up to date, and those until one of them's next due
+    /// to do something: run all at once, as they come due, or as the CPU
+    /// reaches them, not a cycle at a time.
+    #[serde(skip)]
+    gone: u32,
+    #[serde(skip)]
+    until: u32,
     nmi: u8,
     /// VPB low, a vector being read: from ROM bank 0, whatever `$01` says.
     #[serde(skip)]
@@ -211,10 +219,15 @@ pub struct X16 {
     rom_crc: u32,
     #[serde(skip)]
     samples: Vec<f32>,
-    /// Its sound sampled a cycle at a time, once it's on; the limiter's
-    /// gain on it.
+    /// Its sound sampled, once it's on: VERA's and the YM's as they've
+    /// sounded, and for how many cycles, sampled as they change, a held
+    /// level taken all at once; the limiter's gain on it.
     #[serde(skip)]
     sampler: Option<Sampler<2>>,
+    #[serde(skip)]
+    sounding: ((i32, i32), (i16, i16)),
+    #[serde(skip)]
+    sounded: u32,
     #[serde(skip)]
     limiter: f32,
 }
@@ -250,6 +263,8 @@ impl X16 {
             clock: false,
             ym: Ym2151::new(),
             ym_clock: 0,
+            gone: 0,
+            until: 0,
             nmi: 0,
             vector_pull: false,
             resetting: false,
@@ -266,6 +281,8 @@ impl X16 {
             rom_crc: crc32(rom),
             samples: Vec::new(),
             sampler: None,
+            sounding: ((0, 0), (0, 0)),
+            sounded: 0,
             limiter: 1.0,
         };
         x16.i2c.rtc.set(clock::now());
@@ -275,6 +292,7 @@ impl X16 {
 
     /// What's on RESET: the bank registers, the VIAs, VERA, I2C's lines.
     fn reset_devices(&mut self) {
+        self.catch_up();
         (self.ram[0], self.ram[1]) = (0, 0);
         for via in &mut self.vias {
             via.reset();
@@ -283,17 +301,21 @@ impl X16 {
         self.ym = Ym2151::new();
         self.port_a_changed();
         self.port_b_changed();
+        self.count();
     }
 
     /// VIA 1's port A as it's set: I2C's lines as the CPU has them, and
     /// SDA as a device does; the SNES controllers latched or clocked, and
     /// their data.
     fn port_a_changed(&mut self) {
+        // The RTC's time as it is, before it's asked, or set.
+        self.catch_up();
         let via = &self.vias[0];
         // A pin's high unless it's an output set low: pulled up, let go.
         let high = |pin: u8| via.ddra & pin == 0 || via.ora & pin != 0;
         let (scl, sda, latch, clock) = (high(SCL), high(SDA), high(LATCH), high(CLOCK));
         self.i2c.lines(scl, sda);
+        self.count();
         if latch {
             for (pad, gamepad) in self.pads.iter_mut().zip(self.gamepads) {
                 pad.shifting = Snes::buttons(gamepad);
@@ -334,36 +356,84 @@ impl X16 {
         self.stolen += SLOW;
     }
 
-    /// A cycle of all that's clocked with the CPU.
+    /// A cycle of all that's clocked with the CPU: the VIAs', whose
+    /// timers are read as they count; the rest's, as they're due.
     fn cycle(&mut self) {
         for via in &mut self.vias {
             via.tick();
         }
-        self.vera.tick();
-        self.i2c.tick();
         self.nmi = self.nmi.saturating_sub(1);
-        self.ym_clock += YM_CLOCK_HZ;
-        if self.ym_clock >= CLOCK_HZ {
-            self.ym_clock -= CLOCK_HZ;
-            self.ym.tick();
+        self.gone += 1;
+        if self.gone >= self.until {
+            self.catch_up();
         }
-        if let Some(sampler) = &mut self.sampler {
-            // As x16emu mixes them: VERA's twice, the YM's once, of 16 bits.
-            let (vera, ym) = (self.vera.sound(), self.ym.output());
-            let level = |vera: i32, ym: i16| (vera * 2 + ym as i32) as f32 / 32768.0;
-            let levels = [level(vera.0, ym.0), level(vera.1, ym.1)];
-            if let Some(sample) = sampler.cycle(levels) {
-                // x16emu's limiter: the gain cut to fit at once, then up by
-                // a 65,536th of full a sample.
-                let peak = sample[0].abs().max(sample[1].abs());
-                if peak > 1.0 {
-                    self.limiter = self.limiter.min(1.0 / peak);
+    }
+
+    /// VERA, the YM2151, the RTC and the sound brought up to date, run the
+    /// cycles gone by: no more than until the first's due, as they're
+    /// counted down to it, so as it is each cycle at a time. And those
+    /// until the next is due counted. To be done as any's reached, before
+    /// it's read or written; and the count made again after (`count`).
+    fn catch_up(&mut self) {
+        let gone = std::mem::take(&mut self.gone);
+        if gone > 0 {
+            if self.sampler.is_some() {
+                // The sound as it was, but for the last cycle.
+                self.sounded += gone - 1;
+            }
+            self.vera.run(gone);
+            self.i2c.run(gone);
+            let ym_clock = self.ym_clock as u64 + gone as u64 * YM_CLOCK_HZ as u64;
+            self.ym_clock = (ym_clock % CLOCK_HZ as u64) as u32;
+            let ym_ticks = (ym_clock / CLOCK_HZ as u64) as u32;
+            if ym_ticks > 0 {
+                self.ym.run(ym_ticks);
+            }
+            if self.sampler.is_some() {
+                let sounding = (self.vera.sound(), self.ym.output());
+                if sounding != self.sounding {
+                    self.sample();
+                    self.sounding = sounding;
                 }
-                let gain = self.limiter * VOLUME;
-                self.samples.extend(sample.map(|level| level * gain));
-                self.limiter = (self.limiter + 1.0 / 65536.0).min(1.0);
+                self.sounded += 1;
             }
         }
+        self.count();
+    }
+
+    /// The cycles until VERA, the YM2151 or the RTC is next due, counted.
+    fn count(&mut self) {
+        // The YM2151's ticks to its next, as the CPU's cycles.
+        let ym_due = (self.ym.due() as u64 * CLOCK_HZ as u64 - self.ym_clock as u64)
+            .div_ceil(YM_CLOCK_HZ as u64);
+        self.until = self
+            .vera
+            .due()
+            .min(self.i2c.due())
+            .min(ym_due.min(u32::MAX as u64) as u32);
+    }
+
+    /// The sound as it's sounded since it last changed, sampled.
+    fn sample(&mut self) {
+        let Some(sampler) = &mut self.sampler else {
+            return;
+        };
+        // As x16emu mixes them: VERA's twice, the YM's once, of 16 bits.
+        let (vera, ym) = self.sounding;
+        let level = |vera: i32, ym: i16| (vera * 2 + ym as i32) as f32 / 32768.0;
+        let levels = [level(vera.0, ym.0), level(vera.1, ym.1)];
+        let (limiter, samples) = (&mut self.limiter, &mut self.samples);
+        sampler.hold(levels, std::mem::take(&mut self.sounded), |sample| {
+            // x16emu's limiter: the gain cut to fit at once, then up by a
+            // 65,536th of full a sample.
+            let peak = sample[0].abs().max(sample[1].abs());
+            if peak > 1.0 {
+                *limiter = limiter.min(1.0 / peak);
+            }
+            let gain = *limiter * VOLUME;
+            samples.extend(sample.map(|level| level * gain));
+            *limiter = (*limiter + 1.0 / 65536.0).min(1.0);
+        });
     }
 
     /// Its clock's RAM kept in the file at `path`: read from it, if it's
@@ -446,9 +516,15 @@ impl Bus for X16 {
             0x0000..=0x9EFF => self.ram[addr as usize],
             0x9F00..=0x9F0F => self.vias[0].read(addr as u8),
             0x9F10..=0x9F1F => self.vias[1].read(addr as u8),
-            0x9F20..=0x9F3F => self.vera.read(addr as u8),
+            0x9F20..=0x9F3F => {
+                self.catch_up();
+                let value = self.vera.read(addr as u8);
+                self.count();
+                value
+            }
             0x9F40..=0x9F5F => {
                 self.slow();
+                self.catch_up();
                 // The YM2151's status; its other address, nothing.
                 if addr & 1 != 0 {
                     self.ym.status()
@@ -485,14 +561,20 @@ impl Bus for X16 {
                 }
             }
             0x9F10..=0x9F1F => self.vias[1].write(addr as u8, value),
-            0x9F20..=0x9F3F => self.vera.write(addr as u8, value),
+            0x9F20..=0x9F3F => {
+                self.catch_up();
+                self.vera.write(addr as u8, value);
+                self.count();
+            }
             0x9F40..=0x9F5F => {
                 self.slow();
+                self.catch_up();
                 if addr & 1 == 0 {
                     self.ym.write_address(value);
                 } else {
                     self.ym.write_data(value);
                 }
+                self.count();
             }
             0x9F60..=0x9F9F => {}
             0x9FA0..=0x9FFF => self.slow(),
@@ -562,8 +644,15 @@ impl Bus for X16 {
         std::mem::take(&mut self.stolen)
     }
 
+    /// At a frame's end: its sound sampled as far as it's sounded; VERA's
+    /// clocks up to date, as they're kept in a saved state.
     fn hand_back(&mut self) -> bool {
-        self.vera.frame_ended()
+        let ended = self.vera.frame_ended();
+        if ended {
+            self.catch_up();
+            self.sample();
+        }
+        ended
     }
 }
 
@@ -582,7 +671,9 @@ impl Machine for X16 {
             .to_string()
     }
 
+    /// Its sound sampled from now: the cycles before, run, not counted.
     fn sound_on(&mut self) {
+        self.catch_up();
         self.sampler = Some(Sampler::new(CLOCK_HZ));
     }
 
@@ -707,6 +798,7 @@ impl Machine for X16 {
         self.rom_crc = running.rom_crc;
         self.samples = take(&mut running.samples);
         self.sampler = running.sampler.take();
+        (self.sounding, self.sounded) = (running.sounding, running.sounded);
         self.limiter = running.limiter;
     }
 }

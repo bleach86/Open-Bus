@@ -34,12 +34,37 @@ impl<const N: usize> Sampler<N> {
         if self.phase < self.clock_hz {
             return None;
         }
+        Some(self.end())
+    }
+
+    /// `cycles` cycles of the same values, as many as `cycle` would take
+    /// them: each sample they end given to `sample`, in turn.
+    pub fn hold(&mut self, values: [f32; N], mut cycles: u32, mut sample: impl FnMut([f32; N])) {
+        while cycles > 0 {
+            // As far as the sample's last cycle, at most.
+            let taken = (self.clock_hz - self.phase)
+                .div_ceil(SAMPLE_RATE)
+                .min(cycles);
+            for (sum, value) in self.sums.iter_mut().zip(values) {
+                *sum += value * taken as f32;
+            }
+            self.cycles += taken;
+            self.phase += SAMPLE_RATE * taken;
+            cycles -= taken;
+            if self.phase >= self.clock_hz {
+                sample(self.end());
+            }
+        }
+    }
+
+    /// The sample ended: its averages; the next begun.
+    fn end(&mut self) -> [f32; N] {
         self.phase -= self.clock_hz;
         let cycles = self.cycles as f32;
         let averages = self.sums.map(|sum| sum / cycles);
         self.sums = [0.0; N];
         self.cycles = 0;
-        Some(averages)
+        averages
     }
 }
 

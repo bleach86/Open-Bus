@@ -540,6 +540,30 @@ impl Ym2151 {
 
     /// A clock of its own: its timers and busy counted, and each 64th, a
     /// sample.
+    /// Its clocks until it's next due to do something: a sample, or a
+    /// timer's running out.
+    pub fn due(&self) -> u32 {
+        self.timers
+            .iter()
+            .flatten()
+            .fold(CLOCKS_A_SAMPLE - self.clock, |due, &left| {
+                due.min(left.max(1))
+            })
+    }
+
+    /// `clocks` of its clock, no more than it's `due`: those before the
+    /// last only counted, as nothing's due on them.
+    pub fn run(&mut self, clocks: u32) {
+        debug_assert!(clocks >= 1 && clocks <= self.due());
+        let counted = clocks - 1;
+        self.busy = self.busy.saturating_sub(counted);
+        for left in self.timers.iter_mut().flatten() {
+            *left -= counted;
+        }
+        self.clock += counted;
+        self.tick();
+    }
+
     pub fn tick(&mut self) {
         self.busy = self.busy.saturating_sub(1);
         for n in 0..2 {

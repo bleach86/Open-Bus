@@ -793,10 +793,12 @@ impl Display for Window {
     fn show(&mut self, pixels: &[u32], width: usize, height: usize) {
         self.texture
             .with_lock(None, |buffer, pitch| {
-                for y in 0..height {
-                    for x in 0..width {
-                        let at = y * pitch + x * 4;
-                        buffer[at..at + 4].copy_from_slice(&pixels[y * width + x].to_ne_bytes());
+                for (row, line) in buffer
+                    .chunks_mut(pitch)
+                    .zip(pixels.chunks(width).take(height))
+                {
+                    for (bytes, pixel) in row.as_chunks_mut::<4>().0.iter_mut().zip(line) {
+                        *bytes = pixel.to_ne_bytes();
                     }
                 }
             })

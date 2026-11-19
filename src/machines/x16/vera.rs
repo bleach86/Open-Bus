@@ -133,9 +133,11 @@ impl Spi {
         }
     }
 
-    fn tick(&mut self) {
+    /// `cycles` CPU cycles: the byte exchanged with the card as its time's
+    /// up.
+    fn run(&mut self, cycles: u32) {
         if self.busy > 0 {
-            self.busy -= 1;
+            self.busy = self.busy.saturating_sub(cycles);
             if self.busy == 0 {
                 self.received = self.card.exchange(self.sending);
             }
@@ -273,6 +275,13 @@ pub struct Vera {
     frame_ended: bool,
     #[serde(skip)]
     pub picture: Vec<u32>,
+    /// The palette's colours as they're shown, for DC_VIDEO's output and
+    /// chroma bits as `shown_for` has them: kept, the palette changing
+    /// rarely; made again as it does, none when they're to be made.
+    #[serde(skip)]
+    shown: Vec<u32>,
+    #[serde(skip)]
+    shown_for: u8,
     /// The frame's picture left out, for time.
     #[serde(skip)]
     pub leave_out: bool,
@@ -314,6 +323,8 @@ impl Vera {
             collisions: 0,
             frame_ended: false,
             picture: vec![0; WIDTH * HEIGHT],
+            shown: Vec::new(),
+            shown_for: 0,
             leave_out: false,
         };
         vera.reset();
@@ -346,6 +357,7 @@ impl Vera {
         for (n, colour) in DEFAULT_PALETTE.iter().enumerate() {
             self.palette[n * 2..n * 2 + 2].copy_from_slice(&colour.to_le_bytes());
         }
+        self.shown.clear();
         (self.line, self.cycles, self.picture_line) = (0, 0, 0);
         self.started = false;
         self.collisions = 0;
@@ -375,6 +387,7 @@ impl Vera {
             self.psg.write(at - PSG, value);
         } else if (PALETTE..SPRITES).contains(&at) {
             self.palette[at - PALETTE] = value;
+            self.shown.clear();
         }
     }
 
@@ -807,7 +820,7 @@ impl Vera {
 
     /// Whether it's holding the IRQ line: an interrupt it has that's on.
     pub fn irq(&self) -> bool {
-        (self.isr | self.aflow()) & self.ien != 0
+        self.isr & self.ien != 0 || self.ien & AFLOW != 0 && self.pcm.low()
     }
 
     /// Whether a frame's ended since it was last asked.
@@ -815,8 +828,6 @@ impl Vera {
         std::mem::take(&mut self.frame_ended)
     }
 
-    /// A CPU cycle: its SPI's; and a line, as one ends: drawn, the next
-    /// begun, and its interrupts.
     /// AFLOW, as the PCM's FIFO has it.
     fn aflow(&self) -> u8 {
         if self.pcm.low() { AFLOW } else { 0 }
@@ -828,25 +839,47 @@ impl Vera {
         self.sound
     }
 
+    /// A CPU cycle.
     pub fn tick(&mut self) {
-        self.spi.tick();
-        self.sample_clock += CLOCKS_A_CYCLE;
+        self.run(1);
+    }
+
+    /// The CPU cycles until it's next due to do something of its own: its
+    /// sound's next sample, or a line's end.
+    pub fn due(&self) -> u32 {
+        let cycles_for = |clocks: u32| clocks.div_ceil(CLOCKS_A_CYCLE);
+        cycles_for(SAMPLE_CYCLES - self.sample_clock)
+            .min(cycles_for(self.line_length().saturating_sub(self.cycles)))
+            .max(1)
+    }
+
+    /// `cycles` CPU cycles, no more than it's `due`: its SPI's; and as
+    /// it's due on the last, its sound's next sample, or a line's end:
+    /// drawn, the next begun, and its interrupts. Those before are only
+    /// counted, as nothing's due on them.
+    pub fn run(&mut self, cycles: u32) {
+        debug_assert!(cycles >= 1 && cycles <= self.due());
+        self.spi.run(cycles);
+        self.sample_clock += cycles * CLOCKS_A_CYCLE;
         if self.sample_clock >= SAMPLE_CYCLES {
             self.sample_clock -= SAMPLE_CYCLES;
             let (psg, pcm) = (self.psg.sample(), self.pcm.sample());
             self.sound = (psg.0 as i32 + pcm.0 as i32, psg.1 as i32 + pcm.1 as i32);
         }
-        self.cycles += CLOCKS_A_CYCLE;
-        let length = if self.tv() { HALF_LINE } else { VGA_LINE };
-        if self.cycles < length {
-            return;
+        self.cycles += cycles * CLOCKS_A_CYCLE;
+        if self.cycles >= self.line_length() {
+            self.cycles -= self.line_length();
+            if self.tv() {
+                self.half_line();
+            } else {
+                self.vga_line();
+            }
         }
-        self.cycles -= length;
-        if self.tv() {
-            self.half_line();
-        } else {
-            self.vga_line();
-        }
+    }
+
+    /// A line's time, or in NTSC or RGB a half-line's, in 8ths of a dot.
+    fn line_length(&self) -> u32 {
+        if self.tv() { HALF_LINE } else { VGA_LINE }
     }
 
     /// A VGA line ended: drawn, and the next begun.
@@ -968,39 +1001,55 @@ impl Vera {
         vstop: usize,
     ) {
         let [video, hscale, _, border, hstart, hstop, ..] = self.composer;
-        let mut layers = [[0u8; WIDTH]; 2];
-        for (n, line) in layers.iter_mut().enumerate() {
-            if video & (0x10 << n) != 0 {
-                self.layer_line(n, picture_y, line);
-            }
-        }
         let mut indexes = [border; WIDTH];
-        if (vstart..vstop).contains(&y) {
-            let (hstart, hstop) = (
-                ((hstart as usize) << 2).min(WIDTH),
-                ((hstop as usize) << 2).min(WIDTH),
-            );
-            let mut x_fp = 0u32;
-            for index in indexes.iter_mut().take(hstop).skip(hstart) {
-                let x = (x_fp >> 16) as usize;
-                *index = if x < WIDTH {
-                    let (sprite, l0, l1) = (sprites[x], layers[0][x], layers[1][x]);
-                    // Bottom to top: the sprite at Z 1, layer 0, the
-                    // sprite at Z 2, layer 1, the sprite at Z 3.
-                    let order = match depths[x] {
-                        3 => [sprite, l1, l0],
-                        2 => [l1, sprite, l0],
-                        1 => [l1, l0, sprite],
-                        _ => [l1, l0, 0],
+        let (hstart, hstop) = (
+            ((hstart as usize) << 2).min(WIDTH),
+            ((hstop as usize) << 2).min(WIDTH),
+        );
+        if (vstart..vstop).contains(&y) && hstart < hstop {
+            // The layers' dots as far across as they're shown, HSCALE
+            // stepping across them: only those.
+            let across = ((((hstop - hstart - 1) * hscale as usize) >> 7) + 1).min(WIDTH);
+            let mut layers = [[0u8; WIDTH]; 2];
+            for (n, line) in layers.iter_mut().enumerate() {
+                if video & (0x10 << n) != 0 {
+                    self.layer_line(n, picture_y, &mut line[..across]);
+                }
+            }
+            // Composed, into layer 0's: bottom to top, the sprite at Z 1,
+            // layer 0, the sprite at Z 2, layer 1, the sprite at Z 3; the
+            // top one that isn't clear. With no sprite there, the layers.
+            let [composed, top] = &mut layers;
+            let (composed, top) = (&mut composed[..across], &top[..across]);
+            let above = |top: u8, under: u8| if top != 0 { top } else { under };
+            if depths[..across].iter().any(|&depth| depth != 0) {
+                for (x, dot) in composed.iter_mut().enumerate() {
+                    let (sprite, l0, l1) = (sprites[x], *dot, top[x]);
+                    *dot = match depths[x] {
+                        3 => above(sprite, above(l1, l0)),
+                        2 => above(l1, above(sprite, l0)),
+                        1 => above(l1, above(l0, sprite)),
+                        _ => above(l1, l0),
                     };
-                    order.into_iter().find(|&c| c != 0).unwrap_or(0)
-                } else {
-                    0
-                };
+                }
+            } else {
+                for (dot, &l1) in composed.iter_mut().zip(top) {
+                    *dot = above(l1, *dot);
+                }
+            }
+            // Across the picture, HSCALE stepping across them.
+            let mut x_fp = 0u32;
+            for index in &mut indexes[hstart..hstop] {
+                let x = (x_fp >> 16) as usize;
+                *index = if x < across { composed[x] } else { 0 };
                 x_fp += (hscale as u32) << 9;
             }
         }
-        let colours = self.colours(video);
+        if self.shown.is_empty() || self.shown_for != video & 7 {
+            self.shown = self.colours(video).to_vec();
+            self.shown_for = video & 7;
+        }
+        let colours = &self.shown;
         let line = &mut self.picture[y * WIDTH..(y + 1) * WIDTH];
         for (pixel, &index) in line.iter_mut().zip(indexes.iter()) {
             *pixel = colours[index as usize];
@@ -1103,7 +1152,7 @@ impl Vera {
     /// Layer `n`'s line `y` of the picture, its colour indexes, 0 where
     /// it's clear: its registers as they were as the line before ended,
     /// but its vertical scroll as it is (and a bitmap's palette offset).
-    fn layer_line(&self, n: usize, y: u32, line: &mut [u8; WIDTH]) {
+    fn layer_line(&self, n: usize, y: u32, line: &mut [u8]) {
         let layer = Layer::of(&self.layers_before[n]);
         if layer.bitmap {
             self.bitmap_line(&layer, self.layers[n][4] & 0x0F, y, line);
@@ -1117,41 +1166,106 @@ impl Vera {
         let (tile_width_max, tile_height_max) =
             ((1 << layer.tile_width) - 1, (1 << layer.tile_height) - 1);
         let tile_size = layer.tile_width + layer.tile_height + layer.depth - 3;
-        let bits = 1 << layer.depth;
-        let in_byte = (8 >> layer.depth) - 1;
-        for (x, colour) in line.iter_mut().enumerate() {
+        // A tile's dots at a time, its map entry looked up once: as far as
+        // its right edge, or the line's.
+        let mut x = 0;
+        while x < line.len() {
             let at_x = (x as u32 + layer.hscroll) & width_max;
             let map = layer.map_base + ((row + (at_x >> layer.tile_width)) << 1) as usize;
             let (entry, attributes) = (self.peek(map), self.peek(map + 1));
-            let (mut xx, mut yy) = (at_x & tile_width_max, at_y & tile_height_max);
+            let first = at_x & tile_width_max;
+            let run = ((tile_width_max - first + 1) as usize).min(line.len() - x);
+            let dots = &mut line[x..x + run];
+            x += run;
+            let mut yy = at_y & tile_height_max;
             if layer.depth == 0 {
                 let tile = (entry as usize) << tile_size;
                 let row_bytes = (yy << layer.tile_width) >> 3;
-                let dots = self.peek(layer.tile_base + tile + (row_bytes + (xx >> 3)) as usize);
-                let on = dots >> (7 - (xx & 7)) & 1 != 0;
                 let (fg, bg) = if layer.t256c {
                     (attributes, 0)
                 } else {
                     (attributes & 0x0F, attributes >> 4)
                 };
-                *colour = if on { fg } else { bg };
+                // A byte's 8 dots at a time.
+                let at = layer.tile_base + tile + row_bytes as usize;
+                let (mut xx, mut rest) = (first, dots);
+                while !rest.is_empty() {
+                    let byte = self.peek(at + (xx >> 3) as usize);
+                    let (colours, after) =
+                        rest.split_at_mut(((8 - (xx & 7)) as usize).min(rest.len()));
+                    for colour in colours {
+                        *colour = if byte >> (7 - (xx & 7)) & 1 != 0 {
+                            fg
+                        } else {
+                            bg
+                        };
+                        xx += 1;
+                    }
+                    rest = after;
+                }
                 continue;
             }
-            if attributes & 0x04 != 0 {
-                xx ^= tile_width_max;
-            }
+            let flip = if attributes & 0x04 != 0 {
+                tile_width_max
+            } else {
+                0
+            };
             if attributes & 0x08 != 0 {
                 yy ^= tile_height_max;
             }
             let tile = ((entry as usize) | ((attributes & 3) as usize) << 8) << tile_size;
             let row_bytes = yy << (layer.tile_width + layer.depth - 3);
-            let byte = self
-                .peek(layer.tile_base + tile + (row_bytes + ((xx << layer.depth) >> 3)) as usize);
+            let at = layer.tile_base + tile + row_bytes as usize;
+            let offset = attributes & 0xF0;
+            self.dots(layer.depth, at, first, flip, offset, layer.t256c, dots);
+        }
+    }
+
+    /// Dots of `depth` bits from video RAM at `at`, the `first` on, each
+    /// one's place across flipped by `flip`'s bits, into `dots`: their
+    /// colour indexes, those of 1 to 15 moved up by `offset` (and with
+    /// `t256c` into the palette's top half).
+    #[allow(clippy::too_many_arguments)]
+    fn dots(
+        &self,
+        depth: u32,
+        at: usize,
+        first: u32,
+        flip: u32,
+        offset: u8,
+        t256c: bool,
+        dots: &mut [u8],
+    ) {
+        match depth {
+            0 => self.dots_of::<0>(at, first, flip, offset, t256c, dots),
+            1 => self.dots_of::<1>(at, first, flip, offset, t256c, dots),
+            2 => self.dots_of::<2>(at, first, flip, offset, t256c, dots),
+            _ => self.dots_of::<3>(at, first, flip, offset, t256c, dots),
+        }
+    }
+
+    /// `dots`, for each depth its own: what's worked out from it, worked
+    /// out as it's compiled.
+    fn dots_of<const DEPTH: u32>(
+        &self,
+        at: usize,
+        first: u32,
+        flip: u32,
+        offset: u8,
+        t256c: bool,
+        dots: &mut [u8],
+    ) {
+        let bits = 1 << DEPTH;
+        let in_byte = (8 >> DEPTH) - 1;
+        let mask = ((1u16 << bits) - 1) as u8;
+        for (xx, colour) in (first..).zip(dots) {
+            let xx = xx ^ flip;
+            let byte = self.peek(at + ((xx << DEPTH) >> 3) as usize);
             let shift = 8 - bits - (xx & in_byte) * bits;
-            let mut index = byte >> shift & ((1u16 << bits) - 1) as u8;
+            let mut index = byte >> shift & mask;
             if (1..16).contains(&index) {
-                index += attributes & 0xF0;
-                if layer.t256c {
+                index += offset;
+                if t256c {
                     index |= 0x80;
                 }
             }
@@ -1161,23 +1275,13 @@ impl Vera {
 
     /// A bitmap layer's line `y`: 320 dots across or 640, `offset` its
     /// palette offset.
-    fn bitmap_line(&self, layer: &Layer, offset: u8, y: u32, line: &mut [u8; WIDTH]) {
+    fn bitmap_line(&self, layer: &Layer, offset: u8, y: u32, line: &mut [u8]) {
         let width = if layer.tile_width == 4 { 640 } else { 320 };
-        let bits = 1 << layer.depth;
-        let in_byte = (8 >> layer.depth) - 1;
-        let row = (y % HEIGHT as u32 * width * bits) >> 3;
-        for (x, colour) in line.iter_mut().enumerate() {
-            let xx = x as u32 % width;
-            let byte = self.peek(layer.tile_base + (row + ((xx * bits) >> 3)) as usize);
-            let shift = 8 - bits - ((xx & in_byte) << layer.depth);
-            let mut index = byte >> shift & ((1u16 << bits) - 1) as u8;
-            if (1..16).contains(&index) {
-                index += offset << 4;
-                if layer.t256c {
-                    index |= 0x80;
-                }
-            }
-            *colour = index;
+        let row = (y % HEIGHT as u32 * width) << layer.depth >> 3;
+        let at = layer.tile_base + row as usize;
+        // Across, and from its left again past its right.
+        for dots in line.chunks_mut(width as usize) {
+            self.dots(layer.depth, at, 0, 0, offset << 4, layer.t256c, dots);
         }
     }
 

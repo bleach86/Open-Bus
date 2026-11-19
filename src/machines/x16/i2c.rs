@@ -210,6 +210,16 @@ impl I2c {
     pub fn tick(&mut self) {
         self.rtc.tick();
     }
+
+    /// `cycles` CPU cycles, no more than it's `due`.
+    pub fn run(&mut self, cycles: u32) {
+        self.rtc.run(cycles);
+    }
+
+    /// The CPU cycles until the RTC's next second, if it's running.
+    pub fn due(&self) -> u32 {
+        self.rtc.due()
+    }
 }
 
 impl Default for I2c {
@@ -518,6 +528,23 @@ impl Rtc {
             _ => {}
         }
         self.step();
+    }
+
+    /// `cycles` CPU cycles, no more than it's `due`: those before the
+    /// last only counted, as no second ends on them.
+    fn run(&mut self, cycles: u32) {
+        if self.running {
+            self.cycles += cycles - 1;
+            self.tick();
+        }
+    }
+
+    fn due(&self) -> u32 {
+        if self.running {
+            CPU_HZ - self.cycles
+        } else {
+            u32::MAX
+        }
     }
 
     /// A CPU cycle: a second on, as one's gone by, if it's running.

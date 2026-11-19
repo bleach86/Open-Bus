@@ -1,6 +1,7 @@
 use crate::cpu::Variant;
+use std::sync::OnceLock;
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Opcode {
     ADCImmediate,
     ADCZeroPage,
@@ -269,9 +270,26 @@ pub enum Opcode {
 }
 
 impl Opcode {
+    /// The opcode a byte is on `variant`: from a table of each variant's,
+    /// made the first time, as it's looked up for every instruction.
+    pub fn decode(byte: u8, variant: Variant) -> Opcode {
+        const VARIANTS: [Variant; 5] = [
+            Variant::Nmos6502,
+            Variant::Synertek65C02,
+            Variant::Rockwell65C02,
+            Variant::Wdc65C02,
+            Variant::Ricoh2A03,
+        ];
+        static TABLES: OnceLock<[[Opcode; 256]; 5]> = OnceLock::new();
+        let tables = TABLES.get_or_init(|| {
+            VARIANTS.map(|variant| std::array::from_fn(|byte| Opcode::of(byte as u8, variant)))
+        });
+        tables[variant as usize][byte as usize]
+    }
+
     /// The opcode a byte is on `variant`: the 6502's (the 2A03's the
     /// same), or a 65C02's.
-    pub fn decode(byte: u8, variant: Variant) -> Opcode {
+    fn of(byte: u8, variant: Variant) -> Opcode {
         match variant {
             Variant::Nmos6502 | Variant::Ricoh2A03 => Opcode::from_byte(byte),
             _ => Opcode::from_byte_65c02(byte, variant),
