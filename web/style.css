@@ -1497,25 +1497,176 @@ body.dropping::after {
   }
 }
 
-/* Settings. */
-.settings h2 {
+/* Settings: its sections down the side, and one at a time beside them, its
+   settings a row each, on a card of its own over the scene. */
+.settings:not([hidden]) {
+  display: grid;
+  grid-template-columns: 10.5rem minmax(0, 44rem);
+  gap: 1.25rem;
+  align-items: start;
+}
+.sections {
+  position: sticky;
+  top: 1.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.sections button {
+  padding: 0.5rem 0.7rem;
+  color: var(--quiet);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  font:
+    500 0.92rem/1.3 system-ui,
+    sans-serif;
+  text-align: left;
+}
+.sections button:hover {
+  color: var(--text);
+  box-shadow: none;
+}
+.sections button.on {
+  color: #fff;
+  background: #ffffff1f;
+}
+.pane {
+  padding: 1.1rem 1.25rem 1.25rem;
+  background: linear-gradient(#ffffff0d, #ffffff05), #0d0221d9;
+  -webkit-backdrop-filter: blur(12px) saturate(1.3);
+  backdrop-filter: blur(12px) saturate(1.3);
+  border: 1px solid #ffffff17;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px #00000066;
+}
+.pane h2 {
+  margin: 0 0 0.6rem;
+  font: 700 1.1rem/1.3 var(--display);
+  letter-spacing: 0.03em;
+  color: var(--text);
+}
+.pane h3 {
   margin: 1.4rem 0 0.3rem;
   font:
-    600 0.95rem/1.3 system-ui,
+    600 0.92rem/1.3 system-ui,
     sans-serif;
   color: var(--text);
 }
-.settings > h2:first-child {
-  margin-top: 0;
+.pane .about {
+  margin: 0 0 0.5rem;
+  color: var(--quiet);
+  font-size: 0.88rem;
+  line-height: 1.45;
 }
-.check {
-  display: inline-flex;
-  align-items: center;
+.actions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
+  margin: 0.75rem 0 0;
+}
+.actions + .about {
+  margin-top: 0.75rem;
+}
+/* A setting: what it is, and a line on it, its switch or choice at the
+   right; all of it to click, or move to. */
+.setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  margin: 0 -0.6rem;
+  padding: 0.7rem 0.6rem;
+  border-radius: 8px;
   cursor: pointer;
 }
-.check input {
-  accent-color: var(--pink);
+.setting + .setting {
+  box-shadow: inset 0 1px #ffffff12;
+}
+.setting:hover {
+  background: #ffffff0d;
+}
+.setting-text {
+  min-width: 0;
+  font-size: 0.95rem;
+}
+.setting-text small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--quiet);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+.setting select {
+  flex: none;
+  max-width: 55%;
+}
+/* A tick box as a switch. */
+.switch {
+  flex: none;
+  position: relative;
+  width: 2.5rem;
+  height: 1.4rem;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: #ffffff2e;
+  border-radius: 1rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 0.18rem;
+  left: 0.18rem;
+  width: 1.04rem;
+  height: 1.04rem;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px #0006;
+  transition: transform 0.15s;
+}
+.switch:checked {
+  background: var(--sunset);
+}
+.switch:checked::after {
+  transform: translateX(1.1rem);
+}
+@media (prefers-reduced-motion: reduce) {
+  .switch,
+  .switch::after {
+    transition: none;
+  }
+}
+/* Moved to by a gamepad, lit as the sidebar's shelves are. */
+body.pointer-gone .setting.pad-focus small {
+  color: #3d2a5c;
+}
+body.pointer-gone .setting.pad-focus .switch:not(:checked) {
+  background: #14062f40;
+}
+.pane .rows li {
+  padding: 0.6rem 0;
+}
+/* A phone's: its sections along the top, scrolled across. */
+@media (max-width: 39.99rem) {
+  .settings:not([hidden]) {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
+  }
+  .sections {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .sections button {
+    flex: none;
+  }
+  .pane {
+    padding: 0.9rem 1rem 1rem;
+  }
 }
 .rows {
   margin: 0.5rem 0;

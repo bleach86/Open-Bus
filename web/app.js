@@ -365,6 +365,7 @@ function showShelf(name) {
     page('tools').hidden = name === 'settings';
     if (name === 'settings') {
         fillSettings();
+        scroller.scrollTo(0, 0);
     }
     placeShelf();
     for (const tab of document.querySelectorAll('.tabs button[data-tab]')) {
@@ -1458,7 +1459,8 @@ function padNames() {
 /// letters, anything else moved to, or in a game's details.
 function padHints() {
     const { confirm: A, back: B, select, start, shoulders, triggers } = padNames();
-    const press = [A, padFocus instanceof HTMLSelectElement ? 'Change' : 'Press'];
+    const changes = padFocus instanceof HTMLSelectElement || padFocus?.matches('.setting');
+    const press = [A, changes ? 'Change' : 'Press'];
     if (settingsOpen()) {
         return [press, [B, 'Close']];
     }
@@ -1480,7 +1482,8 @@ function padHints() {
         ];
     }
     if (padFocus) {
-        return [press, ...(gamesShowing() ? [[B, 'Back to the games']] : []), shelves];
+        const back = gamesShowing() ? 'Back to the games' : padFocus.closest('#settings') && 'Back';
+        return [press, ...(back ? [[B, back]] : []), shelves];
     }
     return [shelves];
 }
@@ -1590,14 +1593,15 @@ function focusable() {
             '.shelf:not([hidden]) button',
             '.shelf:not([hidden]) select',
             '.shelf:not([hidden]) summary',
-            '.shelf:not([hidden]) label.check',
+            '.shelf:not([hidden]) label.setting',
+            '.shelf:not([hidden]) label.button',
             '#disks .tile label',
         ].join(),
     );
     return [...all].filter(
         (element) =>
             !element.closest('#games') &&
-            !element.matches('.remove, .star') &&
+            !element.matches('.remove, .star, .setting select') &&
             !element.disabled &&
             (element.checkVisibility?.({ visibilityProperty: true, checkVisibilityCSS: true }) ??
                 element.getClientRects().length > 0),
@@ -1643,6 +1647,10 @@ function focusOn(element) {
     }
     if (element.closest('#letters')) {
         jumpToLetter(element.dataset.letter);
+    }
+    // A section of Settings moved to, shown: what's moved to is what's there.
+    if (element.closest('#sections') && !element.classList.contains('on')) {
+        element.click();
     }
     showSelected();
     if (pinned(element)) {
@@ -1706,6 +1714,9 @@ function move(way) {
     if (way === 'left' && padFocus?.closest('#letters')) {
         return backToShelf();
     }
+    if (padFocus && !page('settings').hidden) {
+        return moveInSettings(way);
+    }
     // Right off the sidebar, onto the shelf it shows: its games, or what's
     // on it, not the toolbar over it.
     if (way === 'right' && padFocus?.closest('#sidebar')) {
@@ -1736,6 +1747,94 @@ function move(way) {
     }
 }
 
+/// A move in Settings: right off the sidebar onto its sections, along them
+/// each showing its own, right again onto that one's settings, and left
+/// back the way it came; up and down only along each, never off it, nor
+/// onto the toolbar over them.
+function moveInSettings(way) {
+    const sections = [...page('sections').querySelectorAll('button')];
+    const section = sections.find((button) => button.classList.contains('on'));
+    const settings = focusable().filter((option) => option.closest('.pane'));
+    // A phone's sections go across, over its settings.
+    const across = getComputedStyle(page('sections')).flexDirection === 'row';
+    const [back, on, into] = across ? ['left', 'right', 'down'] : ['up', 'down', 'right'];
+    if (padFocus.closest('#sidebar')) {
+        const shelves = focusable().filter((option) => option.closest('#sidebar'));
+        const next = way === 'right' ? section : nearest(padFocus, way, shelves);
+        return next && focusOn(next);
+    }
+    if (padFocus.closest('#sections')) {
+        if (way === back || way === on) {
+            const next = sections[sections.indexOf(padFocus) + (way === back ? -1 : 1)];
+            return next && focusOn(next);
+        }
+        if (way === into) {
+            const first = rowsOf(settings)[0]?.[0];
+            return first && focusOn(first);
+        }
+        const tab = document.querySelector('#sidebar button.on');
+        return way === 'left' && tab?.checkVisibility() && focusOn(tab);
+    }
+    // A section's own, a row at a time, down the page as it reads; along
+    // a row, its buttons side by side.
+    const rows = rowsOf(settings);
+    const at = rows.findIndex((row) => row.includes(padFocus));
+    // From anywhere else, as the toolbar over a phone's: its first.
+    if (at < 0) {
+        return focusOn(rows[0]?.[0] ?? section);
+    }
+    const centre = (element) => {
+        const { left, right } = element.getBoundingClientRect();
+        return (left + right) / 2;
+    };
+    if (way === 'up' || way === 'down') {
+        const row = rows[at + (way === 'up' ? -1 : 1)];
+        if (!row) {
+            if (way === 'up') {
+                scroller.scrollTo(0, 0);
+                return across && focusOn(section);
+            }
+            return;
+        }
+        const x = centre(padFocus);
+        focusOn(row.reduce((best, item) => (Math.abs(centre(item) - x) < Math.abs(centre(best) - x) ? item : best)));
+        // The first row: the section's top, its heading, with it.
+        if (at + (way === 'up' ? -1 : 1) === 0) {
+            scroller.scrollTo(0, 0);
+        }
+        return;
+    }
+    const along = rows[at];
+    const next = along[along.indexOf(padFocus) + (way === 'left' ? -1 : 1)];
+    if (next) {
+        return focusOn(next);
+    }
+    if (way === 'left') {
+        return focusOn(section);
+    }
+}
+
+/// `elements` in rows, as they're laid out: those side by side together,
+/// the rows from the top, each from the left.
+function rowsOf(elements) {
+    const rows = [];
+    const placed = elements
+        .map((element) => [element, element.getBoundingClientRect()])
+        .sort(([, a], [, b]) => a.top - b.top || a.left - b.left);
+    for (const [element, box] of placed) {
+        const last = rows.at(-1);
+        // Side by side: overlapping, top to bottom, by most of the shorter.
+        const overlap = last && Math.min(box.bottom, last.bottom) - Math.max(box.top, last.top);
+        if (last && overlap > Math.min(box.height, last.bottom - last.top) / 2) {
+            last.items.push(element);
+            last.bottom = Math.max(last.bottom, box.bottom);
+        } else {
+            rows.push({ items: [element], top: box.top, bottom: box.bottom });
+        }
+    }
+    return rows.map((row) => row.items.sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left));
+}
+
 /// Select pressed: the selected game's star, a favourite or not.
 function starSelected() {
     const tile = padFocus ? padFocus.closest('.tile') : gamesShowing() && tiles.get(selectedGame);
@@ -1745,9 +1844,13 @@ function starSelected() {
 /// A press of confirm: the selected game started; or what's moved to
 /// pressed, a disk ticked, a choice on to its next option.
 function confirmSelected() {
-    if (padFocus instanceof HTMLSelectElement) {
-        padFocus.selectedIndex = (padFocus.selectedIndex + 1) % padFocus.options.length;
-        padFocus.dispatchEvent(new Event('change'));
+    const choice =
+        padFocus instanceof HTMLSelectElement
+            ? padFocus
+            : padFocus?.matches('.setting') && padFocus.querySelector('select');
+    if (choice) {
+        choice.selectedIndex = (choice.selectedIndex + 1) % choice.options.length;
+        choice.dispatchEvent(new Event('change'));
     } else if (padFocus?.closest('#letters')) {
         backToShelf(); // there already: back on the shelf, at its first
     } else if (padFocus) {
@@ -1831,7 +1934,10 @@ function takeUp() {
         selectTile(tile);
         return true;
     }
-    const other = focusable().find((element) => !pinned(element) && !element.closest('#sidebar') && inView(element));
+    // In Settings, its section that's showing.
+    const section = !page('settings').hidden && page('sections').querySelector('button.on');
+    const other =
+        section || focusable().find((element) => !pinned(element) && !element.closest('#sidebar') && inView(element));
     if (other) {
         padFocus = other;
         showSelected();
@@ -1928,6 +2034,16 @@ function goBack() {
         backToShelf();
         return true;
     }
+    // In Settings, out of a section's own, out of its sections.
+    if (padFocus?.closest('.pane')) {
+        focusOn(page('sections').querySelector('button.on'));
+        return true;
+    }
+    const tab = document.querySelector('#sidebar button.on');
+    if (padFocus?.closest('#sections') && tab?.checkVisibility()) {
+        focusOn(tab);
+        return true;
+    }
     const search = page('filter');
     if (search.value) {
         search.value = '';
@@ -1939,7 +2055,8 @@ function goBack() {
 window.openBusBack = goBack;
 
 addEventListener('keydown', (event) => {
-    const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName);
+    // A switch clicked keeps the focus, but takes no typing.
+    const typing = document.activeElement?.matches('input:not([type="checkbox"]), select, textarea');
     const dialog = page('controls-dialog').open || pageDialog();
     if (emulator || typing || page('library').hidden || dialog || settingsOpen()) {
         return;
@@ -3068,6 +3185,24 @@ if (native) {
     page('vsync').checked = localStorage.getItem('vsync') !== 'no';
     page('vsync').onchange = ({ target }) => localStorage.setItem('vsync', target.checked ? 'yes' : 'no');
 }
+/// Settings' sections, one showing at a time: the last shown, again.
+function showSection(name) {
+    const sections = [...page('sections').querySelectorAll('button')];
+    const shown = sections.find((button) => button.dataset.section === name) ?? sections[0];
+    for (const button of sections) {
+        button.classList.toggle('on', button === shown);
+    }
+    for (const pane of document.querySelectorAll('#settings .pane')) {
+        pane.hidden = pane.id !== `pane-${shown.dataset.section}`;
+    }
+    localStorage.setItem('section', shown.dataset.section);
+    scroller.scrollTo(0, 0);
+}
+for (const button of page('sections').querySelectorAll('button')) {
+    button.onclick = () => showSection(button.dataset.section);
+}
+showSection(localStorage.getItem('section'));
+
 // The Settings of both: what's to be read once a game's started.
 page('change-controls').onclick = native ? () => playNatively({ kind: 'controls' }) : openControls;
 page('rewind').checked = localStorage.getItem('rewind') !== 'no';
@@ -3698,6 +3833,10 @@ await loadArt();
 await refresh();
 // No games yet, and it starts in Settings, where they're added.
 const lastShelf = localStorage.getItem('shelf');
+// No games yet: Settings, where they're added.
+if (!hasGames()) {
+    showSection('library');
+}
 showShelf(!hasGames() ? 'settings' : lastShelf && lastShelf !== 'settings' ? lastShelf : gamesShelf());
 if (native) {
     // With nothing known yet, the folders may yet turn something up.
