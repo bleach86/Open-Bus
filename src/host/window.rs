@@ -220,7 +220,19 @@ impl Window {
             .texture_creator()
             .create_texture_streaming(PixelFormatEnum::RGB888, width as u32, height as u32)
             .expect("a texture");
+        // Typed text, for the machines with keyboards. On Android, starting
+        // it puts its keyboard on the screen, over the picture: there, text
+        // events only let through, a real keyboard's typing still coming.
+        #[cfg(not(target_os = "android"))]
         video.text_input().start();
+        #[cfg(target_os = "android")]
+        // SAFETY: SDL's video is initialised, on this thread.
+        unsafe {
+            sdl2::sys::SDL_EventState(
+                sdl2::sys::SDL_EventType::SDL_TEXTINPUT as u32,
+                sdl2::sys::SDL_ENABLE as i32,
+            );
+        }
         // The sound, if the host has any: a queue of samples, a cushion of
         // silence in it to start.
         let audio: Option<AudioQueue<f32>> = sdl.audio().ok().and_then(|audio| {
@@ -708,6 +720,11 @@ fn function_key(keycode: Keycode) -> Option<u8> {
         Keycode::F9,
         Keycode::F10,
     ];
+    // A TV's remote has Back, not F1: the menu, and out of it again.
+    #[cfg(target_os = "android")]
+    if keycode == Keycode::AcBack {
+        return Some(1);
+    }
     keys.iter()
         .position(|&key| key == keycode)
         .map(|n| n as u8 + 1)

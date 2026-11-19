@@ -151,6 +151,9 @@ impl Default for Controls {
         for (action, source) in KEYBOARD {
             bindings.push((0, action, source.to_string()));
         }
+        // A TV remote's OK button, the middle of its arrows: A, to choose.
+        #[cfg(target_os = "android")]
+        bindings.push((0, Action::A, "key:Select".to_string()));
         bindings.push((0, Action::Library, "pad:guide".to_string()));
         bindings.push((0, Action::FastForward, "pad:righttrigger".to_string()));
         bindings.push((0, Action::Rewind, "pad:lefttrigger".to_string()));

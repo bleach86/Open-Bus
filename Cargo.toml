@@ -29,6 +29,11 @@ sdl2 = { version = "0.38.0", features = ["unsafe_textures"] }
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 sdl2 = { version = "0.38.0", features = ["bundled", "static-link", "unsafe_textures"] }
 
+# Nor has Android: built with the NDK, but shared, for SDL's activity to
+# load before the emulator.
+[target.'cfg(target_os = "android")'.dependencies]
+sdl2 = { version = "0.38.0", features = ["bundled", "unsafe_textures"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.130"
 

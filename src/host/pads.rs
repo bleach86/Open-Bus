@@ -113,10 +113,14 @@ impl Pad {
     }
 }
 
-/// The players' gamepads.
+/// The players' gamepads. On Android, each a player's only once it's used:
+/// a TV's remotes are gamepads to SDL too, and come first, so the first
+/// two of all there are would be them; the first two used are the players'.
 pub struct Pads {
     controllers: GameControllerSubsystem,
     places: [Option<Pad>; 2],
+    /// Those there, on Android, not yet used.
+    waiting: Vec<GameController>,
 }
 
 impl Pads {
@@ -126,11 +130,15 @@ impl Pads {
             .filter(|&n| controllers.is_game_controller(n))
             .filter_map(|n| controllers.open(n).ok())
             .map(Pad::new);
-        let places = [opened.next(), opened.next()];
-        drop(opened);
+        let (places, waiting) = if cfg!(target_os = "android") {
+            ([None, None], opened.map(|pad| pad.controller).collect())
+        } else {
+            ([opened.next(), opened.next()], Vec::new())
+        };
         Pads {
             controllers,
             places,
+            waiting,
         }
     }
 
@@ -155,16 +163,36 @@ impl Pads {
     }
 
     /// A gamepad plugged in, or there already, as SDL says at the start: the
-    /// first place free's, unless it has one.
+    /// first place free's, unless it has one; on Android, waiting to be used.
     fn plugged_in(&mut self, device: u32) {
-        let Some(place) = self.places.iter().position(Option::is_none) else {
-            return;
-        };
         let Ok(controller) = self.controllers.open(device) else {
             return;
         };
-        if self.of(controller.instance_id()).is_none() {
+        let which = controller.instance_id();
+        let known =
+            self.of(which).is_some() || self.waiting.iter().any(|pad| pad.instance_id() == which);
+        if known {
+            return;
+        }
+        if cfg!(target_os = "android") {
+            self.waiting.push(controller);
+        } else if let Some(place) = self.places.iter().position(Option::is_none) {
             self.places[place] = Some(Pad::new(controller));
+        }
+    }
+
+    /// The waiting gamepad of instance `which`, used: a player's, the first
+    /// place free's, if there is one.
+    fn used(&mut self, which: u32) {
+        let Some(at) = self
+            .waiting
+            .iter()
+            .position(|pad| pad.instance_id() == which)
+        else {
+            return;
+        };
+        if let Some(place) = self.places.iter().position(Option::is_none) {
+            self.places[place] = Some(Pad::new(self.waiting.remove(at)));
         }
     }
 
@@ -172,8 +200,18 @@ impl Pads {
     /// binding, if it pressed anything.
     pub fn take(&mut self, event: &Event) -> Option<String> {
         match *event {
+            Event::ControllerButtonDown { which, .. } => self.used(which),
+            Event::ControllerAxisMotion { which, value, .. }
+                if (value as f32 / 32767.0).abs() > PUSHED =>
+            {
+                self.used(which)
+            }
+            _ => {}
+        }
+        match *event {
             Event::ControllerDeviceAdded { which, .. } => self.plugged_in(which),
             Event::ControllerDeviceRemoved { which, .. } => {
+                self.waiting.retain(|pad| pad.instance_id() != which);
                 let place = self.places.iter_mut().find(|pad| {
                     pad.as_ref()
                         .is_some_and(|pad| pad.controller.instance_id() == which)

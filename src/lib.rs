@@ -25,6 +25,11 @@ pub mod chips {
     }
 }
 
+/// The command line: what's to run, and how, as the program and Android's
+/// game screen are given it.
+#[cfg(not(target_arch = "wasm32"))]
+pub mod cli;
+
 /// The host's side: what drives a machine, a frame at a time, and all that
 /// any machine shares: its window, sound and controls, its terminal, its
 /// notices, its save states.

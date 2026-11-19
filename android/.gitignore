@@ -1,0 +1,9 @@
+# Gradle's and Android Studio's, and the SDK's place, this computer's.
+.gradle/
+build/
+app/build/
+local.properties
+.idea/
+*.iml
+# The emulator's libraries, as tools/build-android builds them.
+app/src/main/jniLibs/
