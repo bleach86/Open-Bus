@@ -37,6 +37,7 @@ pub mod host {
     pub mod font;
     pub mod machine;
     pub mod md5;
+    pub mod modem;
     pub mod notice;
     #[cfg(not(target_arch = "wasm32"))]
     pub mod pads;
@@ -57,6 +58,7 @@ pub mod host {
         mod files;
         mod machine;
         mod md5;
+        mod modem;
         mod notice;
         mod page;
         mod run;

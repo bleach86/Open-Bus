@@ -1,7 +1,9 @@
 //! The MOS 6551 ACIA: a serial port, at 4 registers, clocked with the CPU.
 //! Its other end is the host's: what's to come in, `incoming`, and what's
 //! gone out, `outgoing`, a byte at a time as fast as its baud rate lets
-//! them, as it's set; `connected`, the carrier and the other end ready.
+//! them, as it's set; `connected`, the carrier and the other end ready;
+//! `ready`, the other end ready (DSR) without a carrier, as a modem is
+//! while it's on.
 //!
 //! 0, its data: a read takes the byte received (receive data register
 //! full no longer, and its errors cleared); a write's to be sent, held
@@ -56,6 +58,8 @@ pub struct Acia6551 {
     pub outgoing: Vec<u8>,
     #[serde(skip)]
     pub connected: bool,
+    #[serde(skip)]
+    pub ready: bool,
 }
 
 impl Acia6551 {
@@ -76,6 +80,11 @@ impl Acia6551 {
         let stop = 1 + (self.control >> 7) as u32;
         let bits = 1 + word + parity + stop;
         (self.clock_hz as u64 * bits as u64 / BAUDS[(self.control & 0x0F) as usize] as u64) as u32
+    }
+
+    /// The baud rate it's set to.
+    pub fn rate(&self) -> u32 {
+        BAUDS[(self.control & 0x0F) as usize]
     }
 
     fn on(&self) -> bool {
@@ -103,8 +112,13 @@ impl Acia6551 {
                 self.received
             }
             1 => {
-                let away = if self.connected { 0 } else { NO_DSR | NO_DCD };
-                let status = self.status | away;
+                let dsr = if self.connected || self.ready {
+                    0
+                } else {
+                    NO_DSR
+                };
+                let dcd = if self.connected { 0 } else { NO_DCD };
+                let status = self.status | dsr | dcd;
                 self.status &= !IRQ;
                 status
             }

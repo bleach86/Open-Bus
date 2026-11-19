@@ -422,6 +422,7 @@ impl Machine for Skink {
         self.acia.incoming = take(&mut running.acia.incoming);
         self.acia.outgoing = take(&mut running.acia.outgoing);
         self.acia.connected = running.acia.connected;
+        self.acia.ready = running.acia.ready;
         self.disk = running.disk.take();
     }
 }

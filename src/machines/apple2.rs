@@ -1,6 +1,7 @@
 //! The Apple II (the II+, or the IIe): a 6502 at 1.02 MHz; 48K of RAM; the keyboard,
 //! the speaker, the soft switches and the joystick at $C000; a language
-//! card in slot 0, a clock card in slot 1, Mockingboards in slots 4 and
+//! card in slot 0, a clock card in slot 1, a serial card and its modem in
+//! slot 2, Mockingboards in slots 4 and
 //! 5, a Disk II card in slot 6 and a hard disk card in slot 7, if there
 //! are; and 12K of
 //! ROM at $D000, the monitor and BASIC, from a dump of the machine's own
@@ -24,6 +25,7 @@ pub mod iie;
 pub mod language_card;
 pub mod mockingboard;
 pub mod rom_set;
+pub mod serial_card;
 pub mod video;
 
 #[cfg(test)]
@@ -39,6 +41,7 @@ mod tests {
     mod mockingboard;
     mod rom_set;
     mod save_state;
+    mod serial_card;
 }
 
 use crate::cpu::bus::Bus;
@@ -115,8 +118,9 @@ pub struct Apple2 {
     pub iie: Option<iie::Iie>,
     /// The language card, in slot 0; the IIe's built in.
     pub language_card: Option<language_card::LanguageCard>,
-    /// The clock card, in slot 1.
+    /// The clock card, in slot 1; the serial card, in slot 2.
     pub clock: Option<clock_card::ClockCard>,
+    pub serial: Option<serial_card::SerialCard>,
     /// The Mockingboards, in slots 4 and 5.
     pub mockingboards: [Option<mockingboard::Mockingboard>; 2],
     /// The Disk II card, in slot 6; the hard disk card, in slot 7.
@@ -171,6 +175,7 @@ impl Apple2 {
             iie: None,
             language_card: None,
             clock: None,
+            serial: None,
             mockingboards: [None, None],
             disk2: None,
             hard_disk: None,
@@ -545,6 +550,11 @@ impl Apple2 {
                 .as_mut()
                 .and_then(|card| card.io(addr, written))
                 .unwrap_or(floating),
+            0xC0A0 => self
+                .serial
+                .as_mut()
+                .and_then(|card| card.io(addr, written))
+                .unwrap_or(floating),
             0xC0E0 => self
                 .disk2
                 .as_mut()
@@ -610,8 +620,9 @@ impl Bus for Apple2 {
             0x0000..=0xBFFF => self.ram_read(addr),
             0xC000..=0xC0FF => self.io(addr, None),
             // A IIe's own ROM, as its MMU says; the clock's, in slot 1; the
-            // Mockingboards' 6522s, in slots 4 and 5; the Disk II's ROM, in
-            // slot 6; the hard disk's, in 7; no other cards.
+            // serial card's, in 2; the Mockingboards' 6522s, in slots 4 and
+            // 5; the Disk II's ROM, in slot 6; the hard disk's, in 7; no
+            // other cards.
             0xC100..=0xCFFF => {
                 if let Some(iie) = &mut self.iie {
                     if iie.internal(addr) {
@@ -620,6 +631,9 @@ impl Bus for Apple2 {
                 }
                 if let Some(card) = self.mockingboard(addr) {
                     return card.read(addr);
+                }
+                if let (0xC2, Some(card)) = (addr >> 8, &self.serial) {
+                    return card.rom(addr);
                 }
                 match (addr >> 8, &self.clock, &self.disk2, &self.hard_disk) {
                     (0xC1, Some(card), _, _) => card.rom(addr),
@@ -685,6 +699,9 @@ impl Bus for Apple2 {
         for card in self.mockingboards.iter_mut().flatten() {
             card.tick();
         }
+        if let Some(card) = &mut self.serial {
+            card.tick();
+        }
         self.sound_cycle();
         self.now += 1;
         self.cycle += 1;
@@ -708,10 +725,13 @@ impl Bus for Apple2 {
     }
 
     fn irq(&self) -> bool {
-        self.mockingboards
-            .iter()
-            .flatten()
-            .any(mockingboard::Mockingboard::irq)
+        let serial = self.serial.as_ref().is_some_and(|card| card.irq());
+        serial
+            || self
+                .mockingboards
+                .iter()
+                .flatten()
+                .any(mockingboard::Mockingboard::irq)
     }
 
     fn hand_back(&mut self) -> bool {
@@ -889,6 +909,9 @@ impl Machine for Apple2 {
     fn input(&mut self, input: Input) {
         self.joystick = input.joystick;
         self.key_down = input.key_down;
+        if let Some(card) = &mut self.serial {
+            card.frame();
+        }
     }
 
     fn menu(&self) -> Vec<(&'static str, u8)> {
@@ -990,6 +1013,12 @@ impl Machine for Apple2 {
         }
         if let (Some(card), Some(running)) = (&mut self.clock, &running.clock) {
             card.fixed = running.fixed;
+        }
+        if let (Some(card), Some(running)) = (&mut self.serial, &mut running.serial) {
+            card.modem = take(&mut running.modem);
+            card.acia.incoming = take(&mut running.acia.incoming);
+            card.acia.outgoing = take(&mut running.acia.outgoing);
+            (card.acia.connected, card.acia.ready) = (running.acia.connected, running.acia.ready);
         }
     }
 }
@@ -1117,6 +1146,7 @@ pub fn build(
     };
     apple.monitor = monitor;
     apple.clock = Some(clock_card::ClockCard::new());
+    apple.serial = Some(serial_card::SerialCard::new(CLOCK_HZ));
     for card in apple.mockingboards.iter_mut().take(mockingboards) {
         *card = Some(mockingboard::Mockingboard::new());
     }

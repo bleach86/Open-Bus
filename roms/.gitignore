@@ -1,8 +1,9 @@
-# Built by make; but the hard disk and clock cards' firmware, which the
-# emulator has built in
+# Built by make; but the hard disk, clock and serial cards' firmware, which
+# the emulator has built in
 *.bin
 !hard_disk.bin
 !clock.bin
+!serial_card.bin
 *.o
 *.map
 *.lbl
