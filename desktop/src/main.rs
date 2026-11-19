@@ -1042,18 +1042,28 @@ fn is_x16_rom_zip(bytes: &[u8]) -> bool {
     hash == X16_ROM_SHA256
 }
 
+/// A title bar's height, about, for a window whose frame isn't known yet;
+/// and how long it takes to be known, once the window's shown.
+const TITLE_BAR: u32 = 40;
+const FRAME_KNOWN: Duration = Duration::from_millis(500);
+
 /// Where a window of `outer` size goes, framed `outer - inner`, in the part of
 /// a screen at `at` and `area` that's free, a taskbar's left out: its `inner`
 /// size no more than leaves it all there, and the place that centres it. Its
 /// frame's not known yet, on Linux, its `outer` size being a stand-in, less
-/// than `inner`: it's taken as having none.
+/// than `inner`: it's taken as a title bar's, till it's fitted again, once
+/// it's on the screen.
 fn fitted(
     inner: (u32, u32),
     outer: (u32, u32),
     at: (i32, i32),
     area: (u32, u32),
 ) -> ((u32, u32), (i32, i32)) {
-    let outer = (outer.0.max(inner.0), outer.1.max(inner.1));
+    let outer = if outer.0 < inner.0 || outer.1 < inner.1 {
+        (inner.0, inner.1 + TITLE_BAR)
+    } else {
+        outer
+    };
     let frame = (outer.0 - inner.0, outer.1 - inner.1);
     let (width, height) = (outer.0.min(area.0), outer.1.min(area.1));
     let size = (
@@ -1158,7 +1168,16 @@ fn main() {
             start_pads(app.handle());
             watch_folders(app.handle());
             look_over_network(app.handle().clone());
-            fit_to_screen(&app.get_webview_window("main").ok_or("no window")?)?;
+            let window = app.get_webview_window("main").ok_or("no window")?;
+            fit_to_screen(&window)?;
+            // Fitted again once it's on the screen, its frame known then.
+            thread::spawn(move || {
+                thread::sleep(FRAME_KNOWN);
+                let shown = window.clone();
+                let _ = window.run_on_main_thread(move || {
+                    let _ = fit_to_screen(&shown);
+                });
+            });
             Ok(())
         })
         .manage(Dropped::default())
@@ -1222,10 +1241,20 @@ mod tests {
 
     /// As Linux has it, before the window's first drawn.
     #[test]
-    fn an_outer_size_less_than_the_inner_isnt_believed() {
+    fn an_outer_size_less_than_the_inner_isnt_believed_but_a_title_bars_left() {
         assert_eq!(
             fitted((1280, 800), (320, 158), (0, 36), (1920, 1044)),
-            ((1280, 800), (320, 158))
+            ((1280, 800), (320, 138))
+        );
+        // A laptop's 1366 by 768, all of it free: the window under it, its
+        // title bar on the screen too.
+        assert_eq!(
+            fitted((1280, 800), (1280, 800), (0, 0), (1366, 768)),
+            ((1280, 768), (43, 0))
+        );
+        assert_eq!(
+            fitted((1280, 800), (320, 158), (0, 0), (1366, 768)),
+            ((1280, 728), (43, 0))
         );
     }
 

@@ -122,6 +122,38 @@ const POINTER_SHOWN: Duration = Duration::from_secs(2);
 const AUDIO_CUSHION: f32 = 0.05;
 const AUDIO_MOST: f32 = 0.1;
 
+/// A title bar's height, about: a window's frame isn't known till it's
+/// open.
+const TITLE_BAR: u32 = 40;
+
+/// `place`, X, Y, width and height (its inside's), moved and made smaller
+/// as it has to be to be inside `usable`, X, Y, width and height, the part
+/// of the screen a taskbar's not over, its title bar above it inside too.
+pub fn placed_inside(place: [i32; 4], usable: (i32, i32, u32, u32)) -> [i32; 4] {
+    let (left, top, across, down) = usable;
+    let top = top + TITLE_BAR as i32;
+    let down = down.saturating_sub(TITLE_BAR) as i32;
+    let width = place[2].min(across as i32);
+    let height = place[3].min(down);
+    let x = place[0].clamp(left, left + across as i32 - width);
+    let y = place[1].clamp(top, top + down - height);
+    [x, y, width, height]
+}
+
+/// `size`, made smaller, its shape kept, as it has to be to fit `usable`'s
+/// width and height, a title bar's room left.
+pub fn sized_to_fit(size: (u32, u32), usable: (i32, i32, u32, u32)) -> (u32, u32) {
+    let (across, down) = (usable.2, usable.3.saturating_sub(TITLE_BAR));
+    if size.0 <= across && size.1 <= down {
+        return size;
+    }
+    let scale = (across as f64 / size.0 as f64).min(down as f64 / size.1 as f64);
+    (
+        (size.0 as f64 * scale) as u32,
+        (size.1 as f64 * scale) as u32,
+    )
+}
+
 impl Window {
     /// A window `title`d, for frames `width` by `height` pixels, shown at
     /// `size`, the window's width and height, its shape kept in
@@ -136,16 +168,40 @@ impl Window {
         pads::prepare();
         let sdl = sdl2::init().expect("SDL");
         let video = sdl.video().expect("SDL's video");
+        // On the screen it's to be on, in the part of it that's free, room
+        // left for its title bar.
+        let usable = |x: i32, y: i32| {
+            let displays = video.num_video_displays().unwrap_or(1).max(1);
+            let display = (0..displays)
+                .find(|&n| {
+                    video
+                        .display_bounds(n)
+                        .is_ok_and(|b| b.contains_point((x, y)))
+                })
+                .unwrap_or(0);
+            video
+                .display_usable_bounds(display)
+                .map(|b| (b.x(), b.y(), b.width(), b.height()))
+                .ok()
+        };
         let window = match PLACE.get() {
-            Some(&[x, y, width, height]) => video
-                .window(title, width as u32, height as u32)
-                .position(x, y)
-                .resizable()
-                .build(),
-            None => video
-                .window(title, size.0, size.1)
-                .position_centered()
-                .build(),
+            Some(&place) => {
+                let [x, y, width, height] =
+                    usable(place[0], place[1]).map_or(place, |usable| placed_inside(place, usable));
+                video
+                    .window(title, width as u32, height as u32)
+                    .position(x, y)
+                    .resizable()
+                    .build()
+            }
+            None => {
+                let (width, height) =
+                    usable(0, 0).map_or(size, |usable| sized_to_fit(size, usable));
+                video
+                    .window(title, width, height)
+                    .position_centered()
+                    .build()
+            }
         }
         .expect("a window");
         let mut canvas = window

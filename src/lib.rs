@@ -63,6 +63,8 @@ pub mod host {
         mod page;
         mod run;
         mod stats;
+        #[cfg(not(target_arch = "wasm32"))]
+        mod window;
         mod zip;
     }
 }

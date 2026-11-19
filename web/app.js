@@ -2777,12 +2777,15 @@ page('background').onchange = ({ target }) => {
 /// many lines tall as the NES's picture and scaled up by whole pixels, more
 /// of it to the sides in a wider window: as it's chosen in Settings, and
 /// centred on the library, right of the sidebar, if there's room for one.
+/// Or none, plain, the sidebar not frosted either: what older graphics,
+/// drawing them in stripes, draw well.
 function showScene() {
     const name = page('background').value;
     const scene = page('scene');
+    document.documentElement.classList.toggle('plain', name === 'plain');
     scene.classList.toggle('pixel', name !== 'smooth');
     let canvas = scene.querySelector('canvas');
-    if (name === 'smooth') {
+    if (name === 'smooth' || name === 'plain') {
         canvas?.remove();
         return;
     }

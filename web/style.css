@@ -1611,6 +1611,16 @@ body.dropping::after {
   display: block;
   image-rendering: pixelated;
 }
+/* Plain: no scene, and the sidebar solid, not frosted, for graphics that
+   draw a blur over what's moving in stripes. */
+.plain #scene {
+  display: none;
+}
+.plain .tabs {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: #14052e;
+}
 #background,
 #power-on-ram {
   margin-left: 0.5rem;
