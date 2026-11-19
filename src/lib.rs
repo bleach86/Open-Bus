@@ -49,6 +49,7 @@ pub mod host {
     pub mod page;
     pub mod run;
     pub mod save_state;
+    pub mod saves;
     pub mod sound;
     pub mod stats;
     pub mod terminal;

@@ -28,6 +28,7 @@ use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::borrow::Cow;
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -111,9 +112,32 @@ fn decode(text: &str) -> Result<String, String> {
     String::from_utf8(decoded).map_err(|e| e.to_string())
 }
 
-fn body<'a>(request: &'a Request<'a>) -> Result<&'a [u8], String> {
+/// A request's bytes: as they're sent, on a desktop; on Android, whose
+/// webview sends only JSON, as base64, as the page sends them there; or an
+/// array of them, or a typed array's, by index.
+fn body<'a>(request: &'a Request<'a>) -> Result<Cow<'a, [u8]>, String> {
+    let byte = |value: &Value| {
+        value
+            .as_u64()
+            .and_then(|byte| u8::try_from(byte).ok())
+            .ok_or("not a byte".to_string())
+    };
     match request.body() {
-        InvokeBody::Raw(bytes) => Ok(bytes),
+        InvokeBody::Raw(bytes) => Ok(Cow::Borrowed(bytes)),
+        InvokeBody::Json(Value::String(text)) => {
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD.decode(text);
+            Ok(Cow::Owned(bytes.map_err(|e| e.to_string())?))
+        }
+        InvokeBody::Json(Value::Array(bytes)) => bytes.iter().map(byte).collect(),
+        InvokeBody::Json(Value::Object(bytes)) => {
+            let mut all = vec![0; bytes.len()];
+            for (at, value) in bytes {
+                let at: usize = at.parse().map_err(|_| "not a byte's place".to_string())?;
+                *all.get_mut(at).ok_or("a byte out of place")? = byte(value)?;
+            }
+            Ok(Cow::Owned(all))
+        }
         InvokeBody::Json(_) => Err("expected bytes".to_string()),
     }
 }
@@ -132,7 +156,7 @@ fn keep_file(app: AppHandle, request: Request<'_>) -> Result<String, String> {
     let path = place(&app, &header(&request, "name")?)?;
     let bytes = body(&request)?;
     let size = bytes.len() as u64;
-    write(&path, bytes)?;
+    write(&path, &bytes)?;
     let path = path.to_string_lossy().into_owned();
     library(&app).kept(&path, size)?;
     learn_facts(&app);
@@ -241,9 +265,16 @@ fn x16_program(paths: &[PathBuf]) -> Option<PathBuf> {
 /// `folder` remembered.
 fn remember(app: &AppHandle, folder: &str) -> Result<(), String> {
     if library(app).add_folder(folder)? {
-        watch_folders(app);
+        watch(app);
     }
     Ok(())
+}
+
+/// The folders watched, as `watch_folders` has them, on a thread of its
+/// own: watching a big folder takes a while, and nothing waits for it.
+fn watch(app: &AppHandle) {
+    let app = app.clone();
+    thread::spawn(move || watch_folders(&app));
 }
 
 /// What Settings shows: the folders, the hidden, and the app's own folder.
@@ -284,7 +315,8 @@ fn watch_folders(app: &AppHandle) {
         },
     );
     let Ok(mut watcher) = watching else { return };
-    for folder in &folders {
+    // Not those on other computers: looked over every so often instead.
+    for folder in folders.iter().filter(|folder| !on_network(folder)) {
         let _ = watcher
             .watcher()
             .watch(Path::new(folder), RecursiveMode::Recursive);
@@ -347,7 +379,14 @@ fn seen(app: &AppHandle, paths: Vec<PathBuf>) {
 /// of, only of what's done from here: an NFS, SMB or SSH mount's, on Linux,
 /// as /proc/mounts has them. Windows asks an SMB server to tell it of changes
 /// there, by anyone, so its shares are watched as well as its own folders.
+/// On Android, a drive's or a Shield's network share's, beside the device's
+/// own storage: all of them mounted alike, through Android's own layer,
+/// and only its own storage watched, a share's taking minutes to watch.
 fn on_network(folder: &str) -> bool {
+    #[cfg(target_os = "android")]
+    if folder.starts_with("/storage/") && !folder.starts_with("/storage/emulated/") {
+        return true;
+    }
     let Ok(mounts) = fs::read_to_string("/proc/mounts") else {
         return false;
     };
@@ -409,7 +448,7 @@ fn add_folder_files(app: AppHandle, entries: Vec<Value>) -> Result<Vec<Value>, S
 #[tauri::command(async)]
 fn remove_folder(app: AppHandle, path: String) -> Result<(), String> {
     library(&app).remove_folder(&path)?;
-    watch_folders(&app);
+    watch(&app);
     Ok(())
 }
 
@@ -647,7 +686,7 @@ fn keep_art(app: AppHandle, request: Request<'_>) -> Result<(), String> {
     let entry = serde_json::json!({ "key": key, "known": serde_json::from_str::<Value>(&known).map_err(|e| e.to_string())? }).to_string();
     let mut file = (entry.len() as u32).to_le_bytes().to_vec();
     file.extend(entry.as_bytes());
-    file.extend(body(&request)?);
+    file.extend_from_slice(&body(&request)?);
     write(&art_file(&app, &key)?, &file)
 }
 
@@ -1011,7 +1050,6 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
         Some(game) => game.to_string(),
         None => line.get(1).cloned().unwrap_or_default(),
     };
-    #[cfg_attr(mobile, allow(unused_mut))]
     let mut line: Vec<String> = line
         .into_iter()
         .chain(
@@ -1067,6 +1105,12 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
             .map_err(|e| e.to_string())?
             .join("game.log");
         let _ = fs::remove_file(&log);
+        // Its saves in the app's own folder: a game's own may be a network
+        // share's, not to be written to.
+        line.push(format!(
+            "--saves={}",
+            folder(&app, "saves")?.to_string_lossy()
+        ));
         android::start(&window, line, &library, &log)?;
         thread::spawn(move || {
             let ran = android::wait();
@@ -1356,7 +1400,7 @@ pub fn run() {
             app.manage(Library::open(&data)?);
             learn_facts(app.handle());
             start_pads(app.handle());
-            watch_folders(app.handle());
+            watch(app.handle());
             look_over_network(app.handle().clone());
             #[cfg(desktop)]
             {

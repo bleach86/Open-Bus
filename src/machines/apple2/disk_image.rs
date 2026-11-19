@@ -20,6 +20,7 @@
 //! by its tracks' bytes; a .woz by its bits, as a WOZ2.
 
 use crate::host::files;
+use crate::host::saves;
 use crate::host::zip::crc32;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -205,9 +206,11 @@ fn name_order(name: &str) -> Vec<(u64, String)> {
 
 impl Disk {
     /// The disk in the image at `path`, by its kind: a .dsk or .do, .po,
-    /// .nib or .woz; write protected if the file is read only.
+    /// .nib or .woz; write protected if the file is read only, unless
+    /// saves are kept apart, it with them, as it's written, and read from
+    /// there.
     pub fn open(path: &Path) -> Result<Disk, String> {
-        let image = files::read(path).map_err(|e| e.to_string())?;
+        let image = saves::read(path).map_err(|e| e.to_string())?;
         let kind = path
             .extension()
             .map_or(String::new(), |kind| kind.to_string_lossy().to_lowercase());
@@ -219,7 +222,7 @@ impl Disk {
             _ => Err("not a .dsk, .do, .po, .nib or .woz".to_string()),
         }?;
         let read_only = files::read_only(path).map_err(|e| e.to_string())?;
-        disk.write_protected |= read_only;
+        disk.write_protected |= read_only && !saves::kept_apart();
         disk.path = Some(path.to_path_buf());
         Ok(disk)
     }

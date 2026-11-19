@@ -101,6 +101,7 @@ use crate::host::machine::{Input, Machine, Picture};
 use crate::host::run::Host;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::save_state;
+use crate::host::saves;
 use crate::host::sound::{HighPass, LowPass, Sampler};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::window::Window;
@@ -848,12 +849,12 @@ pub fn build(rom: &str, overscan: usize, chosen: Chosen) -> Result<CPU<Nes>, Str
     }
     if nes.cartridge.battery {
         let file = path.with_extension("srm");
-        if let Ok(saved) = files::read(&file) {
+        if let Ok(saved) = saves::read(&file) {
             let ram = &mut nes.cartridge.prg_ram;
             let len = saved.len().min(ram.len());
             ram[..len].copy_from_slice(&saved[..len]);
         }
-        nes.battery_file = Some(file);
+        nes.battery_file = Some(saves::place(&file));
     }
     nes.name = path
         .file_stem()

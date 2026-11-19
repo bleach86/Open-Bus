@@ -16,6 +16,7 @@
 //! that, highscre.srm (all $FF, as a7800 starts it, until there is one).
 
 use crate::host::files;
+use crate::host::saves;
 use std::path::{Path, PathBuf};
 
 /// Its ROM's name, and its size.
@@ -73,11 +74,11 @@ impl HighScore {
         })?;
         let mut high_score = HighScore::new(rom);
         let file = place.with_extension("srm");
-        if let Ok(kept) = files::read(&file) {
+        if let Ok(kept) = saves::read(&file) {
             let len = kept.len().min(RAM_SIZE);
             high_score.ram[..len].copy_from_slice(&kept[..len]);
         }
-        high_score.file = Some(file);
+        high_score.file = Some(saves::place(&file));
         Some(high_score)
     }
 

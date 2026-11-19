@@ -1667,6 +1667,7 @@ html:not(.native) .for-desktop,
 #controls-dialog,
 #x16-rom-dialog,
 #folder-dialog,
+#ask-dialog,
 #game-settings {
   width: min(30rem, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
@@ -1682,6 +1683,7 @@ html:not(.native) .for-desktop,
 #controls-dialog::backdrop,
 #x16-rom-dialog::backdrop,
 #folder-dialog::backdrop,
+#ask-dialog::backdrop,
 #game-settings::backdrop {
   background: #05010dc0;
 }
@@ -1713,10 +1715,14 @@ html:not(.native) .for-desktop,
 #x16-rom-link {
   text-decoration: none;
 }
-/* The app's own list of folders, on Android: a folder a row, scrolling. */
+/* The app's own list of folders, on Android: a folder a row, as a list
+   of files has them, the one there marked, scrolling; the screen's height
+   to it, for as many as fit. */
 #folder-dialog {
   display: none;
   flex-direction: column;
+  width: min(42rem, calc(100vw - 2rem));
+  height: min(38rem, calc(100dvh - 2rem));
 }
 #folder-dialog[open] {
   display: flex;
@@ -1728,17 +1734,59 @@ html:not(.native) .for-desktop,
 #folder-list {
   flex: 1;
   min-height: 0;
+  margin: 0.8rem 0 0;
   overflow-y: auto;
+  border-top: 1px solid #ffffff14;
 }
 #folder-list li {
-  padding: 0.15rem 0;
+  padding: 0;
 }
 #folder-list button {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
   width: 100%;
-  text-align: left;
+  padding: 0.6rem 0.8rem;
+  color: var(--text);
+  cursor: pointer;
+  overflow-wrap: anywhere;
 }
-#folder-dialog > .row-actions {
+/* Into it, a folder; the way up's its own. */
+#folder-list button::after {
+  content: "›";
+  color: var(--quiet);
+}
+#folder-list button.up {
+  color: var(--quiet);
+}
+#folder-list button.up::after,
+#folder-list button.use::after {
+  content: none;
+}
+#folder-list button.use {
+  color: var(--pink);
+  font-weight: 600;
+}
+/* The page's own dialogs, gone round by a gamepad or a remote: the choice
+   there filled, as the library marks its selection; by its focus only, the
+   webview's idea of a pointer, on a TV, marking another. */
+#ask-dialog button:focus,
+#folder-dialog button:focus,
+body.pointer-gone #x16-rom-dialog button:focus {
+  color: var(--night);
+  background: #ffffffd9;
+  border-color: transparent;
+  box-shadow: none;
+  outline: none;
+}
+#folder-dialog > .row-actions,
+#ask-dialog > .row-actions {
   justify-content: flex-end;
+}
+#ask-question {
+  margin: 0 0 0.8rem;
 }
 #x16-rom-dialog .row-actions {
   flex-wrap: wrap;

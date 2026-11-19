@@ -21,7 +21,7 @@ const where = new Map();
 /// there already: else what's found next, as a ROM's sorted, would have
 /// only what was there before.
 export async function keep(name, bytes) {
-    const path = await invoke('keep_file', bytes, { headers: { name: encodeURIComponent(name) } });
+    const path = await invoke('keep_file', sendable(bytes), { headers: { name: encodeURIComponent(name) } });
     where.set(name, path);
     unfound(path);
     found?.library.push({ path, size: bytes.length });
@@ -204,8 +204,22 @@ export async function keepArt(art) {
     for (const [key, { cover, ...known }] of art) {
         const picture = cover ? new Uint8Array(await cover.arrayBuffer()) : new Uint8Array();
         const headers = { key: encodeURIComponent(key), known: encodeURIComponent(JSON.stringify(known)) };
-        await invoke('keep_art', picture, { headers });
+        await invoke('keep_art', sendable(picture), { headers });
     }
+}
+
+/// Bytes to send the app: as they are; on Android, whose webview sends only
+/// JSON, as base64, a third bigger, not a number a byte.
+function sendable(bytes) {
+    if (!android) {
+        return bytes;
+    }
+    const CHUNK = 0x8000;
+    let text = '';
+    for (let at = 0; at < bytes.length; at += CHUNK) {
+        text += String.fromCharCode(...bytes.subarray(at, at + CHUNK));
+    }
+    return btoa(text);
 }
 
 /// A machine started on the native emulator, the app's window going as its

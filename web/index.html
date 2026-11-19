@@ -93,7 +93,8 @@
         <div class="for-desktop">
           <p class="quiet">
             Open Bus shows the games in these folders. Nothing is copied or
-            moved, and saves go beside each game.
+            moved,
+            <span id="saves-where">and saves go beside each game.</span>
           </p>
           <ul id="folders" class="rows"></ul>
           <p class="row-actions" id="folder-actions">
@@ -465,6 +466,14 @@
             type="file"
             accept=".zip,.bin"
         /></label>
+      </p>
+    </dialog>
+
+    <dialog id="ask-dialog" aria-labelledby="ask-question">
+      <p id="ask-question"></p>
+      <p class="row-actions">
+        <button id="ask-no">Cancel</button>
+        <button id="ask-yes" class="primary">OK</button>
       </p>
     </dialog>
 

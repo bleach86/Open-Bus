@@ -8,6 +8,7 @@
 
 use crate::cpu::CPU;
 use crate::host::machine::Machine;
+use crate::host::saves;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -24,13 +25,14 @@ struct Header {
 }
 
 /// Where the state of a machine run with `first`, its first disk or its
-/// game, or its ROM, is kept: beside it, its name with .state after.
+/// game, or its ROM, is kept: beside it, its name with .state after; or
+/// where saves are kept, if they're kept apart.
 pub fn path(first: &Path) -> PathBuf {
     let name = first.file_name().map_or_else(
         || "machine".into(),
         |name| name.to_string_lossy().into_owned(),
     );
-    first.with_file_name(format!("{name}.state"))
+    saves::place(&first.with_file_name(format!("{name}.state")))
 }
 
 /// The state of `cpu` and its machine.

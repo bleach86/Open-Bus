@@ -14,6 +14,13 @@ pub fn read(path: &Path) -> io::Result<Vec<u8>> {
 /// `bytes` saved to `path`: to a file beside it, then put in its place, so
 /// that it's never half saved.
 pub fn save(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    // A save's folder made, as one kept apart has its own.
+    if let Some(folder) = path
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(folder)?;
+    }
     let mut saving = path.as_os_str().to_owned();
     saving.push(".saving");
     std::fs::write(&saving, bytes)?;

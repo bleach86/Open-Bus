@@ -54,6 +54,9 @@
 //! `--launched` says that a launcher started it, as EmulationStation might,
 //! for Select and Start held together to go back to. `--resume` keeps its
 //! state as it's put away, beside it, and goes on from that next time.
+//! `--saves=FOLDER` keeps its saves (a battery's RAM, its states) in
+//! FOLDER, under each one's whole path, not beside the game: as the app on
+//! Android has them, its games' folders perhaps not to be written to.
 //! `cpu_emu controls` for only the screen that changes the controls, as F6
 //! has it in a game; they're for all of these.
 //! `cpu_emu pads` for no window, and what the gamepads hold told on standard
@@ -68,6 +71,10 @@ use machines::apple2::video::Monitor;
 
 /// The program run with `args`, its name first, as its command line has them.
 pub fn run(args: Vec<String>) {
+    // Its saves kept in a folder of their own, not beside its games.
+    if let Some(folder) = args.iter().find_map(|arg| arg.strip_prefix("--saves=")) {
+        crate::host::saves::keep_in(std::path::Path::new(folder));
+    }
     if let Some(place) = args.iter().find_map(|arg| arg.strip_prefix("--window=")) {
         let numbers: Vec<i32> = place
             .split(',')

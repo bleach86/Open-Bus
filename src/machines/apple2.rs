@@ -54,6 +54,7 @@ use crate::host::machine::{Input, Machine, Picture};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::run::Host;
 use crate::host::save_state;
+use crate::host::saves;
 use crate::host::sound::{HighPass, Sampler};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::terminal::Terminal;
@@ -350,7 +351,7 @@ impl Apple2 {
         };
         disk.written = false;
         match disk.to_image() {
-            Ok(image) => files::save_later(&path, image),
+            Ok(image) => files::save_later(&saves::place(&path), image),
             Err(e) => eprintln!("{}: not saved: {e}", path.display()),
         }
     }

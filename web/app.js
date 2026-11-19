@@ -1598,11 +1598,29 @@ function move(way) {
         if (way === 'right' && lastOfRow && !page('letters').hidden) {
             return focusOn(page('letters').querySelector(`[data-letter="${letterOf(selectedGame)}"]`));
         }
+        // Left off the first of a row, onto the shelf's own tab, the sidebar's
+        // to go along.
+        const tab = document.querySelector('#sidebar button.on');
+        if (way === 'left' && at % columns === 0 && tab?.checkVisibility()) {
+            return focusOn(tab);
+        }
         return above ? focusOn(above) : moveInGames(way);
     }
     // Left off the strip, back to the shelf, at its letter.
     if (way === 'left' && padFocus?.closest('#letters')) {
         return backToShelf();
+    }
+    // Right off the sidebar, onto the shelf it shows: its games, or what's
+    // on it, not the toolbar over it.
+    if (way === 'right' && padFocus?.closest('#sidebar')) {
+        if (gamesShowing() && shelf.length) {
+            return backToShelf();
+        }
+        const onShelf = focusable().filter((option) => !pinned(option) && !option.closest('#sidebar'));
+        const next = nearest(padFocus, 'right', onShelf);
+        if (next) {
+            return focusOn(next);
+        }
     }
     // Down the sidebar's along it, to the shelf it shows, as a TV remote has
     // no shoulder buttons to change shelves with.
@@ -1739,8 +1757,8 @@ function navigate(now) {
         wasPressed = pressed;
         return;
     }
-    if (page('folder-dialog').open) {
-        padInDialog(page('folder-dialog'), pressed);
+    if (pageDialog()) {
+        padInDialog(pageDialog(), pressed);
         wasPressed = pressed;
         return;
     }
@@ -1793,11 +1811,17 @@ function navigate(now) {
 }
 
 /// Back, as a gamepad's B has it, and a TV remote's Back, in the app on
-/// Android: out of a game's settings, onto the shelf of games, or the search
-/// cleared. Whether there was anywhere to go back from.
+/// Android: a message put away, out of a game's settings, onto the shelf
+/// of games, or the search cleared. Whether there was anywhere to go back
+/// from.
 function goBack() {
-    if (page('folder-dialog').open) {
-        page('folder-dialog').close();
+    const dialog = pageDialog();
+    if (dialog) {
+        backInDialog(dialog);
+        return true;
+    }
+    if (!page('message').hidden) {
+        say('');
         return true;
     }
     if (settingsOpen()) {
@@ -1820,13 +1844,18 @@ window.openBusBack = goBack;
 
 addEventListener('keydown', (event) => {
     const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName);
-    const dialog = page('controls-dialog').open || page('folder-dialog').open;
+    const dialog = page('controls-dialog').open || pageDialog();
     if (emulator || typing || page('library').hidden || dialog || settingsOpen()) {
         return;
     }
     // A TV remote's keys are named, but they're no keyboard's.
     const key = event.code || event.key;
     const way = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[key];
+    // The arrows the page's: what the browser had focused, a button pressed
+    // or a dialog's opener given it back, isn't what Enter presses now.
+    if (way && document.activeElement !== document.body) {
+        document.activeElement.blur();
+    }
     const confirming = key === 'Enter' && (selectedGame || padFocus) && document.activeElement === document.body;
     if (way || confirming) {
         event.preventDefault();
@@ -2160,7 +2189,38 @@ function diskBox(name) {
 
 /// Whether `question`'s answered yes: in the app by the system's own dialog,
 /// as its webview's `confirm` goes on without waiting for an answer.
-const sure = (question) => (native ? native.ask(question) : Promise.resolve(confirm(question)));
+const sure = (question) =>
+    native?.android ? askInPage(question) : native ? native.ask(question) : Promise.resolve(confirm(question));
+
+/// `question` asked in the page, not by Android's own dialog: as the rest of
+/// the page is, with a gamepad, its buttons where its maker has them. Whether
+/// it was OK'd.
+function askInPage(question) {
+    const dialog = page('ask-dialog');
+    page('ask-question').textContent = question;
+    let yes = false;
+    page('ask-no').onclick = () => dialog.close();
+    page('ask-yes').onclick = () => {
+        yes = true;
+        dialog.close();
+    };
+    return new Promise((resolve) => {
+        dialog.onclose = () => {
+            letGoOfFocus();
+            resolve(yes);
+        };
+        dialog.showModal();
+        page('ask-yes').focus();
+    });
+}
+
+/// A dialog of the page's own closed, the browser's focus not given back
+/// to what opened it, for a remote's OK to press: its selection's the page's.
+const letGoOfFocus = () => document.activeElement?.blur();
+
+/// The page's own dialog that's open, of those a gamepad goes round as it
+/// does: asking, the folders, the X16's ROM.
+const pageDialog = () => ['ask-dialog', 'folder-dialog', 'x16-rom-dialog'].map(page).find((dialog) => dialog.open);
 
 /// What taking `name` out of the library is, and what's asked first, of
 /// `what`: in the app a folder's game is only hidden, its own copy deleted;
@@ -2549,9 +2609,10 @@ native?.whenGameEnds((problem) => {
 /// they are: what's taken from it once are the machines' ROMs, into the
 /// library, and the covers and game lists beside its games.
 async function addFolder(folder) {
+    // Said at once: a network share's folders take a while to look through.
+    say(`Looking through ${folder}…`);
     const found = await native.folderFiles(folder);
     const romFiles = found.map(({ path, size }) => ({ path, size, name: baseName(path) })).filter(mayHoldRoms);
-    say('Looking through the folder…');
     const { held, roms } = await native.sortRoms(romFiles.map(({ path }) => path));
     for (const path of held) {
         await native.hide(path); // a ROM, not a game
@@ -2629,7 +2690,7 @@ function browseFolders() {
     const list = page('folder-list');
     let [here, chosen] = [null, null];
     // The app let read them first, by Android's settings.
-    const show = async (path) => {
+    const show = async (path, from = null) => {
         const allowed = await native.storageAccess().catch(() => false);
         page('folder-access').hidden = allowed;
         list.hidden = !allowed;
@@ -2647,20 +2708,31 @@ function browseFolders() {
         }
         here = path;
         page('folder-where').textContent = path ?? 'Where are your games?';
-        const item = (text, action) => {
+        // Rows all: this one added, up a folder, into one; as a remote or
+        // a gamepad goes down a list.
+        const item = (text, action, kind = '') => {
             const row = document.createElement('li');
             const button = document.createElement('button');
             button.textContent = text;
+            if (kind) {
+                button.className = kind;
+            }
             button.onclick = action;
             row.append(button);
             return row;
         };
-        list.replaceChildren(
-            ...(path === null ? [] : [item('↑ Up', () => show(found.up))]),
-            ...found.folders.map((folder) => item(folder.name, () => show(folder.path))),
-        );
+        const into = found.folders.map((folder) => {
+            const row = item(folder.name, () => show(folder.path, null));
+            row.firstChild.dataset.path = folder.path;
+            return row;
+        });
+        const adding = path === null ? [] : [item('+ Add this folder', () => page('folder-use').click(), 'use')];
+        const up = path === null ? [] : [item('‹ Up a folder', () => show(found.up, path), 'up')];
+        list.replaceChildren(...adding, ...up, ...into);
         page('folder-use').disabled = path === null;
-        (list.querySelector('button') ?? page('folder-cancel')).focus();
+        // The one come up from, or the first to go into; else this one added.
+        const back = into.find((row) => row.firstChild.dataset.path === from)?.firstChild;
+        (back ?? into[0]?.firstChild ?? list.querySelector('button') ?? page('folder-cancel')).focus();
     };
     // Back from Android's settings, it's looked at again.
     const returned = () => {
@@ -2678,6 +2750,7 @@ function browseFolders() {
     return new Promise((resolve) => {
         dialog.onclose = () => {
             document.removeEventListener('visibilitychange', returned);
+            letGoOfFocus();
             resolve(chosen);
         };
         dialog.showModal();
@@ -2687,7 +2760,7 @@ function browseFolders() {
 
 /// A dialog of the page's own gone round by a gamepad: its buttons by its
 /// directions, the browser's focus moved; A presses the one there, and B
-/// closes it.
+/// goes back.
 function padInDialog(dialog, pressed) {
     const newly = (name) => pressed[name] && !wasPressed[name];
     const buttons = [...dialog.querySelectorAll('button:not([disabled])')].filter(
@@ -2702,6 +2775,17 @@ function padInDialog(dialog, pressed) {
     } else if (newly('a')) {
         from?.click();
     } else if (newly('b')) {
+        backInDialog(dialog);
+    }
+}
+
+/// Back, in a dialog of the page's own: up a folder, in the list of them,
+/// if it's not at the top; else out of it.
+function backInDialog(dialog) {
+    const up = dialog.querySelector('button.up');
+    if (up) {
+        up.click();
+    } else {
         dialog.close();
     }
 }
@@ -2858,6 +2942,10 @@ if (native) {
         }
     });
     page('quit-app').hidden = false;
+    // On Android, the games' folders perhaps not to be written to.
+    if (native.android) {
+        page('saves-where').textContent = 'and saves are kept in the app.';
+    }
     page('start-fullscreen').checked = localStorage.getItem('fullscreen') === 'yes';
     page('start-fullscreen').onchange = ({ target }) =>
         localStorage.setItem('fullscreen', target.checked ? 'yes' : 'no');
