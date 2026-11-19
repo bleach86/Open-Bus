@@ -369,6 +369,12 @@ impl Mmc5 {
         self.last_read = Some(addr);
     }
 
+    /// Whether a line's start has been seen, to be counted at the next
+    /// read: its IRQ can come with it.
+    pub fn line_due(&self) -> bool {
+        self.line_next
+    }
+
     /// The PPU's fetching, this cycle, without saying what.
     pub fn fetching(&mut self) {
         self.reading = true;

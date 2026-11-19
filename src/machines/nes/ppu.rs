@@ -39,6 +39,12 @@
 //! of a register without all of its bits, or of one only written, is the
 //! registers' bus: what was last on it, a write's or a read's bits, each
 //! bit decaying to 0 if it isn't driven 1 again for 600 ms or so.
+//!
+//! Dots that nothing could see the doing of till later can be owed: gone by
+//! for the CPU, run all at once when something's to look, as `owe` says.
+//! They're the same dots, in the same order, at the same dot of its count,
+//! only run later, together: much quicker than one at a time between the
+//! CPU's cycles.
 
 use super::cartridge::Cartridge;
 use super::region::Region;
@@ -82,6 +88,13 @@ pub struct Ppu {
     pub fast: bool,
     #[serde(skip)]
     nothing_until: u16,
+    /// Dots owed: gone by for the CPU, but not yet run, as they can be on a
+    /// line being drawn. Never any between frames, where a state's taken.
+    #[serde(skip)]
+    owed: u16,
+    /// Whether they're of the vertical blank, where it does nothing.
+    #[serde(skip)]
+    owed_idle: bool,
     /// This frame's picture isn't wanted: only what the game can see of it.
     #[serde(skip)]
     pub leaving_out: bool,
@@ -180,6 +193,10 @@ pub struct Ppu {
     /// 6 bits, and the emphasis, 3 more.
     #[serde(skip)]
     pub frame: Vec<u16>,
+    /// The palette's 32 colours as they're drawn, greyed and emphasised as
+    /// PPUMASK has them: made again once either's written.
+    #[serde(skip)]
+    colours: Option<[u16; 32]>,
     /// A frame finished, to be shown.
     #[serde(skip)]
     pub frame_ready: bool,
@@ -195,6 +212,8 @@ impl Ppu {
             region,
             fast: false,
             nothing_until: 0,
+            owed: 0,
+            owed_idle: false,
             leaving_out: false,
             ctrl: 0,
             mask: 0,
@@ -248,6 +267,7 @@ impl Ppu {
             sprite_dots: Vec::new(),
             sprites_laid_out: false,
             frame: vec![0; WIDTH * HEIGHT],
+            colours: None,
             frame_ready: false,
             v_due: 0,
         }
@@ -263,6 +283,7 @@ impl Ppu {
     pub fn reset(&mut self) {
         self.ctrl = 0;
         self.mask = 0;
+        self.colours = None;
         self.w = false;
         self.buffer = 0;
         self.warming_up = true;
@@ -321,7 +342,10 @@ impl Ppu {
                         value;
                 }
             }
-            _ => self.palette[palette_index(addr)] = value & 0x3F,
+            _ => {
+                self.palette[palette_index(addr)] = value & 0x3F;
+                self.colours = None;
+            }
         }
     }
 
@@ -391,7 +415,10 @@ impl Ppu {
                 self.ctrl = value;
                 self.t = (self.t & !0x0C00) | ((value as u16 & 3) << 10);
             }
-            1 if !self.warming_up => self.mask = value,
+            1 if !self.warming_up => {
+                self.mask = value;
+                self.colours = None;
+            }
             3 => self.oam_addr = value,
             4 => {
                 // While rendering it's OAM's address that moves, a sprite on,
@@ -564,11 +591,110 @@ impl Ppu {
         quiet
     }
 
+    /// `dots` to come owed, if they can be, after any owed already: run
+    /// later, all at once, when something's to see what they've done, or
+    /// they can't be. Whether they are, and if so, whether there are
+    /// fetches in them.
+    ///
+    /// They can be on a line being drawn, from its dot 2 to 255, rendering
+    /// on and as it was: then the PPU only fetches its tiles, looks for the
+    /// next line's sprites and draws, so nothing the CPU can see changes
+    /// but by its registers, and nothing a mapper does: its NMI's not due,
+    /// an MMC3 sees A12 high for no more than a few dots at a time, and an
+    /// MMC5 sees no line start (but, `quiet` not, the one it's to count at
+    /// the next read, its third dot's). What a mapper reads it's to read
+    /// in the same order, and the dot it's at the same, only later. Or in
+    /// the lines after the picture's, but where the vertical blank starts:
+    /// there it does nothing at all.
+    #[inline]
+    pub fn owe(&mut self, dots: u16, quiet: bool) -> Option<bool> {
+        if self.fast || self.v_due != 0 {
+            return None;
+        }
+        if self.line < 240 {
+            let owing = (quiet || self.owed > 0)
+                && self.dot >= 2
+                && self.dot + self.owed + dots <= 256
+                && self.rendering_was
+                && self.rendering_before
+                && self.rendering();
+            if !owing {
+                return None;
+            }
+        } else {
+            // From the line's start to the vertical blank's dot, or from
+            // the dot after it to the pre-render line.
+            let at = |line: u16, dot: u16| line as u32 * DOTS as u32 + dot as u32;
+            let (from, to) = (
+                at(self.line, self.dot),
+                at(self.line, self.dot) + (self.owed + dots) as u32,
+            );
+            let owing = if from <= at(VBLANK, 1) {
+                to <= at(VBLANK, 1)
+            } else {
+                from >= at(VBLANK, 2) && to <= at(self.pre_render(), 0)
+            };
+            if !owing {
+                return None;
+            }
+        }
+        self.owed_idle = self.line >= 240;
+        self.owed += dots;
+        Some(!self.owed_idle)
+    }
+
+    /// The dots owed, run.
+    #[inline]
+    pub fn catch_up(&mut self, cart: &mut Cartridge) {
+        if self.owed > 0 {
+            self.run_owed(cart);
+        }
+    }
+
+    #[inline(never)]
+    fn run_owed(&mut self, cart: &mut Cartridge) {
+        let owed = std::mem::take(&mut self.owed);
+        if !self.owed_idle {
+            for _ in 0..owed {
+                self.drawing_dot(cart);
+            }
+            return;
+        }
+        // Nothing but the time, and whether it was rendering.
+        self.rendering_before = if owed == 1 {
+            self.rendering_was
+        } else {
+            self.rendering()
+        };
+        self.rendering_was = self.rendering();
+        self.dots += owed as u64;
+        let dot = self.dot + owed;
+        self.line += dot / DOTS;
+        self.dot = dot % DOTS;
+    }
+
     /// A dot.
     #[inline]
     pub fn tick(&mut self, cart: &mut Cartridge) {
         if !self.fast {
-            self.exact_tick(cart);
+            // Most are a line's being drawn, rendering, as it was, or its
+            // sprites' being fetched: those on their own, without looking
+            // for what the others do.
+            let steady = self.line < 240
+                && self.v_due == 0
+                && self.rendering_was
+                && self.rendering_before
+                && self.rendering();
+            if steady && self.dot.wrapping_sub(2) < 254 {
+                self.drawing_dot(cart);
+            } else if steady && self.dot.wrapping_sub(258) < 63 {
+                self.sprite_fetches(cart);
+                self.oam_dot();
+                self.dot += 1;
+                self.dots += 1;
+            } else {
+                self.exact_tick(cart);
+            }
         } else if self.dot < self.nothing_until && self.v_due == 0 {
             self.dot += 1;
             self.dots += 1;
@@ -578,6 +704,7 @@ impl Ppu {
     }
 
     /// A dot of everything it does.
+    #[inline(never)]
     fn exact_tick(&mut self, cart: &mut Cartridge) {
         self.settle_v(cart);
         let (line, dot) = (self.line, self.dot);
@@ -613,6 +740,113 @@ impl Ppu {
             self.pre_render_end();
         }
         self.next_dot();
+    }
+
+    /// A dot from 2 to 255 of a line seen, rendering on and as it was the
+    /// two dots before: as `exact_tick` has it, but only what it does then.
+    #[inline(always)]
+    fn drawing_dot(&mut self, cart: &mut Cartridge) {
+        let dot = self.dot;
+        self.shift_low <<= 1;
+        self.shift_high <<= 1;
+        self.shift_attribute_low <<= 1;
+        self.shift_attribute_high <<= 1;
+        match (dot - 1) % 8 {
+            0 => {
+                self.load_shifters();
+                self.tile = self.read(0x2000 | (self.v & 0x0FFF), cart);
+            }
+            2 => {
+                let v = self.v;
+                let addr = 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07);
+                let shift = ((v >> 4) & 4) | (v & 2);
+                self.attribute = (self.read(addr, cart) >> shift) & 3;
+            }
+            4 => self.pattern_low = self.read(self.pattern_address(), cart),
+            6 => self.pattern_high = self.read(self.pattern_address() + 8, cart),
+            _ => {}
+        }
+        // The sprites' memories, a dot on.
+        let next = dot + 1;
+        if next <= 64 {
+            self.oam_buffer = 0xFF;
+            if next & 1 == 0 {
+                self.secondary[self.secondary_addr as usize] = 0xFF;
+                self.next_secondary();
+            }
+        } else {
+            self.evaluation_dot(next);
+        }
+        if next == 64 || next == 256 {
+            self.secondary_addr = 0;
+            self.secondary_full = false;
+        }
+        if dot & 7 == 0 {
+            self.next_tile();
+        }
+        self.drawn_pixel(dot as usize - 1);
+        self.dot += 1;
+        self.dots += 1;
+    }
+
+    /// `pixel`, rendering: the dot at `x`.
+    #[inline(always)]
+    fn drawn_pixel(&mut self, x: usize) {
+        let bit = 15 - self.fine_x as u16;
+        let pick = |shift: u16| ((shift >> bit) & 1) as usize;
+        let shown = |on: u8, left: u8| self.mask & on != 0 && (x >= 8 || self.mask & left != 0);
+        let background = if shown(0x08, 0x02) {
+            pick(self.shift_high) << 1 | pick(self.shift_low)
+        } else {
+            0
+        };
+        // The first sprite's there that isn't clear, as `lay_out_sprites`
+        // has it.
+        let sprite = if shown(0x10, 0x04) {
+            if !self.sprites_laid_out {
+                self.lay_out_sprites();
+            }
+            self.sprite_dots[x] as usize
+        } else {
+            0
+        };
+        // Sprite 0 hit where both are drawn, in front or behind: looked for
+        // only where there's a sprite, the background's then known.
+        let index = if sprite != 0 && (background == 0 || sprite & 0x10 == 0) {
+            if background != 0 {
+                self.hit(sprite, x);
+            }
+            0x10 | sprite & 0x0F
+        } else if background != 0 {
+            self.hit(sprite, x);
+            pick(self.shift_attribute_high) << 3 | pick(self.shift_attribute_low) << 2 | background
+        } else {
+            0
+        };
+        self.put(x, index);
+    }
+
+    /// Sprite 0's hit, if `sprite`'s dot at `x` is sprite 0's, over a
+    /// background's not clear, and it's the first.
+    #[inline(always)]
+    fn hit(&mut self, sprite: usize, x: usize) {
+        if sprite & 0x20 != 0 && x != 255 && !self.sprite_zero_hit {
+            self.sprite_zero_hit = true;
+            self.hit_at = self.dots + 1;
+        }
+    }
+
+    /// The palette's colour `index` at `x` of the line; or, PAL's, the
+    /// border there.
+    #[inline(always)]
+    fn put(&mut self, x: usize, index: usize) {
+        let border = self.region == Region::Pal && (self.line == 0 || !(2..WIDTH - 2).contains(&x));
+        let colour = if border {
+            BORDER
+        } else {
+            self.colours()[index]
+        };
+        self.frame[self.line as usize * WIDTH + x] = colour;
     }
 
     /// The background's fetches and shifts, for a dot of a line rendered;
@@ -880,67 +1114,29 @@ impl Ppu {
     /// off, the backdrop, or the palette's colour v is at if it's there.
     fn pixel(&mut self) {
         let x = self.dot as usize - 1;
-        let colour = if !self.rendering() {
-            let addr = if self.v & 0x3F00 == 0x3F00 {
-                self.v
-            } else {
-                0x3F00
-            };
-            self.palette[palette_index(addr)]
+        if self.rendering() {
+            self.drawn_pixel(x);
+            return;
+        }
+        let addr = if self.v & 0x3F00 == 0x3F00 {
+            self.v
         } else {
-            let (background, palette) = self.background_dot(x);
-            let sprite = self.sprite_dot(x);
-            if let Some((zero, _, _, _)) = sprite {
-                if zero && background != 0 && x != 255 && !self.sprite_zero_hit {
-                    self.sprite_zero_hit = true;
-                    self.hit_at = self.dots + 1;
-                }
-            }
-            let index = match sprite {
-                Some((_, colour, sprite_palette, behind)) if background == 0 || !behind => {
-                    0x10 | sprite_palette << 2 | colour
-                }
-                _ if background != 0 => palette << 2 | background,
-                _ => 0,
-            };
-            self.palette[palette_index(0x3F00 | index as u16)]
+            0x3F00
         };
-        let grey = if self.mask & 0x01 != 0 { 0x30 } else { 0x3F };
-        let emphasis = (self.mask as u16 >> 5) << 6;
-        let border = self.region == Region::Pal && (self.line == 0 || !(2..WIDTH - 2).contains(&x));
-        self.frame[self.line as usize * WIDTH + x] = if border {
-            BORDER
-        } else {
-            (colour & grey) as u16 | emphasis
-        };
+        self.put(x, addr as usize & 0x1F);
     }
 
-    /// The background's dot at `x`: its colour, 0 to 3, and its palette;
-    /// clear where it's off, or in the leftmost 8 hidden.
-    fn background_dot(&self, x: usize) -> (u8, u8) {
-        if self.mask & 0x08 == 0 || (x < 8 && self.mask & 0x02 == 0) {
-            return (0, 0);
+    /// The palette's colours as they're drawn, `index` 0 to 31.
+    #[inline(always)]
+    fn colours(&mut self) -> &[u16; 32] {
+        if self.colours.is_none() {
+            let grey = if self.mask & 0x01 != 0 { 0x30 } else { 0x3F };
+            let emphasis = (self.mask as u16 >> 5) << 6;
+            self.colours = Some(std::array::from_fn(|index| {
+                (self.palette[palette_index(0x3F00 | index as u16)] & grey) as u16 | emphasis
+            }));
         }
-        let bit = 15 - self.fine_x as u16;
-        let pick = |shift: u16| ((shift >> bit) & 1) as u8;
-        (
-            pick(self.shift_high) << 1 | pick(self.shift_low),
-            pick(self.shift_attribute_high) << 1 | pick(self.shift_attribute_low),
-        )
-    }
-
-    /// The first sprite's dot at `x` that isn't clear: whether it's sprite
-    /// 0, its colour, its palette, and whether it's behind the background;
-    /// none where they're off, or in the leftmost 8 hidden.
-    fn sprite_dot(&mut self, x: usize) -> Option<(bool, u8, u8, bool)> {
-        if self.mask & 0x10 == 0 || (x < 8 && self.mask & 0x04 == 0) {
-            return None;
-        }
-        if !self.sprites_laid_out {
-            self.lay_out_sprites();
-        }
-        let dot = self.sprite_dots[x];
-        (dot != 0).then_some((dot & 0x20 != 0, dot & 3, dot >> 2 & 3, dot & 0x10 != 0))
+        self.colours.as_ref().unwrap()
     }
 
     /// Each X's first sprite not clear, a byte: its colour, its palette

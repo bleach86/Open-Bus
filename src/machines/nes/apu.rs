@@ -262,14 +262,22 @@ impl Pulse {
         self.length.clock();
     }
 
-    /// `cycles` of them at once: the timer run down, a cycle where it's out.
-    fn cycles(&mut self, mut cycles: u16) {
-        while cycles > self.timer {
-            cycles -= self.timer + 1;
-            self.timer = 0;
-            self.cycle();
+    /// `cycles` of them at once: the timer run down, and out each time
+    /// round, a step back each time.
+    fn cycles(&mut self, cycles: u16) {
+        if cycles <= self.timer {
+            self.timer -= cycles;
+            return;
         }
-        self.timer -= cycles;
+        let (after, round) = (cycles - self.timer - 1, (self.period + 1) * 2);
+        let outs = 1 + after / round;
+        self.timer = round - 1 - after % round;
+        self.step = (self.step + 8 - (outs % 8) as u8) & 7;
+    }
+
+    /// Whether it's sounding: what its steps are can be heard.
+    fn heard(&self) -> bool {
+        !self.muted() && self.length.counter > 0 && self.envelope.output() > 0
     }
 
     fn cycle(&mut self) {
@@ -380,25 +388,24 @@ impl Triangle {
         }
     }
 
-    /// `cycles` of them at once: the timer run down, a cycle where it's out.
-    fn cycles(&mut self, mut cycles: u16) {
-        while cycles > self.timer {
-            cycles -= self.timer + 1;
-            self.timer = 0;
-            self.cycle();
+    /// `cycles` of them at once: the timer run down, and out each time
+    /// round, a step on each time if it's stepping.
+    fn cycles(&mut self, cycles: u16) {
+        if cycles <= self.timer {
+            self.timer -= cycles;
+            return;
         }
-        self.timer -= cycles;
+        let (after, round) = (cycles - self.timer - 1, self.period + 1);
+        let outs = 1 + after / round;
+        self.timer = self.period - after % round;
+        if self.stepping() {
+            self.step = ((self.step as u32 + outs as u32) & 31) as u8;
+        }
     }
 
-    fn cycle(&mut self) {
-        if self.timer == 0 {
-            self.timer = self.period;
-            if self.length.counter > 0 && self.linear > 0 {
-                self.step = (self.step + 1) & 31;
-            }
-        } else {
-            self.timer -= 1;
-        }
+    /// Whether its timer running out moves it on a step.
+    fn stepping(&self) -> bool {
+        self.length.counter > 0 && self.linear > 0
     }
 
     fn output(&self) -> u8 {
@@ -454,6 +461,11 @@ impl Noise {
         } else {
             self.timer -= 1;
         }
+    }
+
+    /// Whether it's sounding: what its shifts are can be heard.
+    fn heard(&self) -> bool {
+        self.length.counter > 0 && self.envelope.output() > 0
     }
 
     fn output(&self) -> u8 {
@@ -627,6 +639,19 @@ pub struct Apu {
     mixed_levels: u32,
     #[serde(skip)]
     mixed: f32,
+    /// The pulses', triangle's and noise's levels, as `output` last had them,
+    /// and whether they're still what they are: nothing's changed them since.
+    #[serde(skip)]
+    levels: u32,
+    #[serde(skip)]
+    levels_known: bool,
+    /// The cycles the pulses, triangle and noise haven't been run for yet,
+    /// and how many they can go without one of them stepping: they're run
+    /// when one does, or before anything changes or reads them.
+    #[serde(skip)]
+    owed: u16,
+    #[serde(skip)]
+    quiet: u16,
     pulses: [Pulse; 2],
     triangle: Triangle,
     noise: Noise,
@@ -663,6 +688,10 @@ impl Apu {
             lengths_settled: false,
             mixed_levels: 0,
             mixed: 0.0,
+            levels: 0,
+            levels_known: false,
+            owed: 0,
+            quiet: 0,
             pulses: [
                 Pulse::default(),
                 Pulse {
@@ -725,6 +754,7 @@ impl Apu {
     /// DMC stopped; the IRQ flags cleared; the frame counter to start over
     /// as $4017 was last written, once it's let go.
     pub fn reset(&mut self) {
+        self.catch_up();
         let [first, second] = &mut self.pulses;
         for length in [
             &mut first.length,
@@ -739,6 +769,7 @@ impl Apu {
         self.dmc.irq = false;
         self.frame_irq = false;
         self.write_frame_counter(self.last_4017, false);
+        self.recount();
     }
 
     /// The IRQ line: the frame counter's, the DMC's.
@@ -771,6 +802,7 @@ impl Apu {
     /// A register written, $4000 to $4017 but $4014 and $4016; `odd`, the
     /// write's cycle.
     pub fn write(&mut self, addr: u16, value: u8, odd: bool) {
+        self.catch_up();
         self.lengths_settled = false;
         match addr {
             0x4000..=0x4003 => self.pulses[0].write(addr, value),
@@ -789,6 +821,7 @@ impl Apu {
             0x4017 => self.write_frame_counter(value, odd),
             _ => {}
         }
+        self.recount();
     }
 
     /// $4017 written: its IRQ inhibit at once, the flag cleared with it;
@@ -804,10 +837,12 @@ impl Apu {
     }
 
     fn quarter_frame(&mut self) {
+        self.catch_up();
         self.pulses[0].envelope.clock();
         self.pulses[1].envelope.clock();
         self.noise.envelope.clock();
         self.triangle.quarter_frame();
+        self.recount();
     }
 
     fn half_frame(&mut self) {
@@ -816,6 +851,7 @@ impl Apu {
         self.pulses[1].half_frame();
         self.triangle.length.clock();
         self.noise.length.clock();
+        self.recount();
     }
 
     /// The channels sounding, for the debug panel.
@@ -848,11 +884,10 @@ impl Apu {
         }
         self.frame_counter();
         if !self.fast {
-            for pulse in &mut self.pulses {
-                pulse.cycle();
+            self.owed += 1;
+            if self.owed > self.quiet {
+                self.catch_up();
             }
-            self.triangle.cycle();
-            self.noise.cycle();
         } else {
             self.fast_cycles = (self.fast_cycles + 1) % FAST_CYCLES;
             if self.fast_cycles == 0 {
@@ -861,6 +896,7 @@ impl Apu {
         }
         self.dmc.cycle();
         if !self.lengths_settled {
+            self.catch_up();
             let [first, second] = &mut self.pulses;
             for length in [
                 &mut first.length,
@@ -870,8 +906,37 @@ impl Apu {
             ] {
                 length.settle();
             }
+            self.recount();
             self.lengths_settled = true;
         }
+    }
+
+    /// The pulses, triangle and noise run for the cycles they're owed; and
+    /// how many more they can go before one of them steps.
+    pub fn catch_up(&mut self) {
+        if self.owed > 0 {
+            let owed = self.owed;
+            for pulse in &mut self.pulses {
+                pulse.cycles(owed);
+            }
+            self.triangle.cycles(owed);
+            self.noise.cycles(owed);
+            self.owed = 0;
+        }
+        self.recount();
+    }
+
+    /// Their levels to be looked at again, and how long they can go before
+    /// one that's heard steps: one that isn't can step unseen, till it is,
+    /// which only something that catches them up can make it.
+    fn recount(&mut self) {
+        self.levels_known = false;
+        let timer = |heard: bool, timer: u16| if heard { timer } else { u16::MAX - 1 };
+        let [first, second] = &self.pulses;
+        self.quiet = timer(first.heard(), first.timer)
+            .min(timer(second.heard(), second.timer))
+            .min(timer(self.triangle.stepping(), self.triangle.timer))
+            .min(timer(self.noise.heard(), self.noise.timer));
     }
 
     /// FAST_CYCLES cycles of what makes a tone, in performance mode: its
@@ -947,12 +1012,17 @@ impl Apu {
 
     /// The channels mixed, as the 2A03's two DACs do: 0 to 1.
     pub fn output(&mut self) -> f32 {
-        let pulses = self.pulses[0].output() + self.pulses[1].output();
-        let (triangle, noise, dmc) = (self.triangle.output(), self.noise.output(), self.dmc.output);
-        let levels = u32::from_le_bytes([pulses, triangle, noise, dmc]);
+        if !self.levels_known || self.fast {
+            let pulses = self.pulses[0].output() + self.pulses[1].output();
+            let (triangle, noise) = (self.triangle.output(), self.noise.output());
+            self.levels = u32::from_le_bytes([pulses, triangle, noise, 0]);
+            self.levels_known = true;
+        }
+        let levels = self.levels | (self.dmc.output as u32) << 24;
         if levels != self.mixed_levels {
             self.mixed_levels = levels;
-            self.mixed = Self::mix(pulses as f32, triangle as f32, noise as f32, dmc as f32);
+            let [pulses, triangle, noise, dmc] = levels.to_le_bytes().map(f32::from);
+            self.mixed = Self::mix(pulses, triangle, noise, dmc);
         }
         self.mixed
     }

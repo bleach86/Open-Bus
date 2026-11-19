@@ -1581,11 +1581,8 @@ impl Cartridge {
     /// A read of $4020 to $FFFF: what the cartridge drives on the bus, if it
     /// drives anything.
     pub fn cpu_read(&mut self, addr: u16) -> Option<u8> {
-        // Not the vectors: for the MMC5, reading those is an event.
-        if let (0x8000..0xFFFA, Some(pages)) = (addr, &self.prg_pages) {
-            return Some(
-                self.prg_rom[pages[addr as usize >> 12 & 7] as usize + (addr as usize & 0xFFF)],
-            );
+        if let Some(value) = self.plain_read(addr) {
+            return Some(value);
         }
         if let Mapper::Mmc5(mmc5) = &mut self.mapper {
             let value = mmc5.cpu_read(addr, &self.prg_rom, &self.prg_ram);
@@ -2034,6 +2031,7 @@ impl Cartridge {
     /// Which 1K of the PPU's nametable RAM, 0 to 3, PPU address `addr` is
     /// in: as the board's mirroring wires it, or on TxSROM, the top bit of
     /// the CHR bank that address falls in.
+    #[inline]
     pub fn nametable_page(&self, addr: u16) -> usize {
         match &self.mapper {
             Mapper::Mmc3(mmc3) if self.board == Board::Txsrom => {
@@ -2074,6 +2072,17 @@ impl Cartridge {
         }
     }
 
+    /// Whether the PPU's next read can do nothing the CPU sees, but by
+    /// what's read: not so for an MMC5 that's seen a line start, which it
+    /// counts then.
+    #[inline]
+    pub fn reads_quietly(&self) -> bool {
+        match &self.mapper {
+            Mapper::Mmc5(mmc5) => !mmc5.line_due(),
+            _ => true,
+        }
+    }
+
     /// Whether its mapper counts the lines by what's fetched.
     pub fn counts_lines(&self) -> bool {
         matches!(self.mapper, Mapper::Mmc5(_))
@@ -2081,7 +2090,17 @@ impl Cartridge {
 
     /// A PPU read of a nametable, if its mapper answers it, not the PPU's
     /// RAM.
+    #[inline]
     pub fn nametable_read(&mut self, addr: u16) -> Option<u8> {
+        match &self.mapper {
+            Mapper::Mmc5(_) | Mapper::Vrc6(_) | Mapper::Sunsoft4(_) | Mapper::Namco163(_) => {
+                self.mapper_nametable_read(addr)
+            }
+            _ => None,
+        }
+    }
+
+    fn mapper_nametable_read(&mut self, addr: u16) -> Option<u8> {
         match &mut self.mapper {
             Mapper::Mmc5(mmc5) => mmc5.nametable_read(addr),
             Mapper::Vrc6(vrc6) if vrc6.rom_tables() => {
@@ -2135,10 +2154,22 @@ impl Cartridge {
     }
 
     /// A PPU read of `addr`, for a mapper that watches them.
+    #[inline]
     pub fn ppu_read(&mut self, addr: u16) {
         if let Mapper::Mmc5(mmc5) = &mut self.mapper {
             mmc5.ppu_read(addr);
         }
+    }
+
+    /// A CPU read of its PRG ROM that's only that, nothing to its mapper,
+    /// if `addr`'s is: where its pages are kept. Not the vectors: for the
+    /// MMC5, reading those is an event.
+    #[inline]
+    pub fn plain_read(&self, addr: u16) -> Option<u8> {
+        let (0x8000..0xFFFA, Some(pages)) = (addr, &self.prg_pages) else {
+            return None;
+        };
+        Some(self.prg_rom[pages[addr as usize >> 12 & 7] as usize + (addr as usize & 0xFFF)])
     }
 
     /// A CPU write of a PPU register, or $4014, for a mapper that watches.
@@ -2149,6 +2180,7 @@ impl Cartridge {
     }
 
     /// A read of the pattern tables, $0000 to $1FFF.
+    #[inline]
     pub fn chr_read(&mut self, addr: u16) -> u8 {
         if let Some(pages) = &self.chr_pages {
             let at = pages[addr as usize >> 10 & 7] as usize + (addr as usize & 0x3FF);
@@ -2157,6 +2189,20 @@ impl Cartridge {
             } else {
                 self.chr_rom[at]
             };
+        }
+        self.chr_read_moved(addr)
+    }
+
+    /// A read of them with no pages kept, as they are now.
+    fn chr_read_moved(&mut self, addr: u16) -> u8 {
+        // The MMC5's move with each fetch: no pages to keep.
+        if let Mapper::Mmc5(mmc5) = &mut self.mapper {
+            let chr = if self.chr_rom.is_empty() {
+                &self.chr_ram
+            } else {
+                &self.chr_rom
+            };
+            return chr[mmc5.chr_offset(addr as usize, self.sprite_fetch) % chr.len()];
         }
         self.chr_pages = self.chr_pages_now();
         if let Some(open_bus) = self.chr_off(addr) {
@@ -2226,7 +2272,14 @@ impl Cartridge {
 
     /// The PPU's address on its bus, at PPU dot `dot`: for MMC3 and RAMBO-1,
     /// A12 rising after it's been low a while clocking its IRQ counter.
+    #[inline]
     pub fn ppu_bus(&mut self, addr: u16, dot: u64) {
+        if matches!(self.mapper, Mapper::Mmc3(_) | Mapper::Rambo1(_)) {
+            self.a12(addr, dot);
+        }
+    }
+
+    fn a12(&mut self, addr: u16, dot: u64) {
         let low_since = match &mut self.mapper {
             Mapper::Mmc3(mmc3) => &mut mmc3.a12_low_since,
             Mapper::Rambo1(rambo) if !rambo.counting_cycles => &mut rambo.a12_low_since,

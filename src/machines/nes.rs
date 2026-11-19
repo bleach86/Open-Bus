@@ -317,6 +317,7 @@ impl Nes {
     /// $4017 with a Zapper there: its bits; a Famicom's, the second
     /// controller's too, which is still wired in.
     fn zapper_read(&mut self) -> u8 {
+        self.ppu.catch_up(&mut self.cartridge);
         let pad = if self.famicom { self.controller(1) } else { 0 };
         let zapper = self.zapper.unwrap_or_default();
         let ppu = &self.ppu;
@@ -326,14 +327,31 @@ impl Nes {
     fn cpu_read(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1FFF => self.ram[addr as usize & 0x7FF],
-            0x2000..=0x3FFF => self.ppu.read_register(addr, &mut self.cartridge),
+            0x2000..=0x3FFF => {
+                self.ppu.catch_up(&mut self.cartridge);
+                self.ppu.read_register(addr, &mut self.cartridge)
+            }
             0x4015 => self.apu.status(self.internal_bus, self.cycles % 2 == 1),
             0x4017 if self.zapper.is_some() => self.zapper_read(),
             0x4016 | 0x4017 => self.controller(addr as usize - 0x4016) | (self.open_bus & 0xE0),
             0x4000..=0x401F => self.open_bus,
-            0x4020..=0x7FFF => self.cartridge.register_read(addr, self.open_bus),
-            _ => self.cartridge.cpu_read(addr).unwrap_or(self.open_bus),
+            0x4020..=0x7FFF => {
+                self.ppu.catch_up(&mut self.cartridge);
+                self.cartridge.register_read(addr, self.open_bus)
+            }
+            _ => self.cartridge_read(addr).unwrap_or(self.open_bus),
         }
+    }
+
+    /// A read of the cartridge, $4020 on: the PPU caught up first, unless
+    /// it's only of its ROM, as what a mapper does can change what it does.
+    #[inline]
+    fn cartridge_read(&mut self, addr: u16) -> Option<u8> {
+        if let Some(value) = self.cartridge.plain_read(addr) {
+            return Some(value);
+        }
+        self.ppu.catch_up(&mut self.cartridge);
+        self.cartridge.cpu_read(addr)
     }
 
     /// A cycle of DMA, the CPU halted, the odd cycles gets: the DMC's step,
@@ -364,6 +382,7 @@ impl Nes {
                 }
                 Some(value) if !get => {
                     self.open_bus = value;
+                    self.ppu.catch_up(&mut self.cartridge);
                     self.ppu.dma_write(value);
                     let dma = self.dma.as_mut().unwrap();
                     dma.value = None;
@@ -395,7 +414,7 @@ impl Nes {
     fn dma_read(&mut self, addr: u16) -> u8 {
         let driving = match addr {
             0x4000..=0x401F => None,
-            0x4020..=0xFFFF => self.cartridge.cpu_read(addr),
+            0x4020..=0xFFFF => self.cartridge_read(addr),
             _ => Some(self.cpu_read(addr)),
         };
         self.open_bus = driving.unwrap_or(self.open_bus);
@@ -467,10 +486,12 @@ impl Bus for Nes {
         match addr {
             0x0000..=0x1FFF => self.ram[addr as usize & 0x7FF] = value,
             0x2000..=0x3FFF => {
+                self.ppu.catch_up(&mut self.cartridge);
                 self.ppu.write_register(addr, value, &mut self.cartridge);
                 self.cartridge.ppu_register_written(addr, value);
             }
             0x4014 => {
+                self.ppu.catch_up(&mut self.cartridge);
                 self.cartridge.ppu_register_written(addr, value);
                 self.dma = Some(Dma {
                     page: value,
@@ -481,7 +502,10 @@ impl Bus for Nes {
             0x4016 => self.strobe_written = value & 1 != 0,
             0x4000..=0x4017 => self.apu.write(addr, value, self.cycles % 2 == 1),
             0x4018..=0x401F => {}
-            _ => self.cartridge.cpu_write(addr, value, self.cycles),
+            _ => {
+                self.ppu.catch_up(&mut self.cartridge);
+                self.cartridge.cpu_write(addr, value, self.cycles)
+            }
         }
     }
 
@@ -491,12 +515,18 @@ impl Bus for Nes {
     fn tick(&mut self) {
         self.cycles += 1;
         let dots = self.region.dots(self.cycles);
-        let passed = self.ppu.passed(dots as u16);
+        // Owed, the dots are as good as run: the NMI line as it is, and a
+        // mapper told if there are fetches, as there are on all of them.
+        let owed = self.ppu.owe(dots as u16, self.cartridge.reads_quietly());
+        if owed.is_none() {
+            self.ppu.catch_up(&mut self.cartridge);
+        }
+        let passed = owed.is_some() || self.ppu.passed(dots as u16);
         if !passed {
             self.ppu.tick(&mut self.cartridge);
         }
         self.nmi_line = self.ppu.nmi();
-        if self.ppu.fetching_unseen() {
+        if owed == Some(true) || self.ppu.fetching_unseen() {
             self.cartridge.fetching();
         }
         self.cartridge.cycle();
@@ -528,6 +558,8 @@ impl Bus for Nes {
         }
         self.sound_cycle();
         if self.ppu.frame_ready {
+            // Between frames, where a state's taken, all of it as it is.
+            self.apu.catch_up();
             self.ppu.frame_ready = false;
             self.frames += 1;
             self.frame_ended = true;
