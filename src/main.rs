@@ -276,6 +276,17 @@ fn main() {
                 fullscreen,
             );
         }
-        _ => machines::basic::run(),
+        Some("basic") => {
+            let files: Vec<&String> = args[2..]
+                .iter()
+                .filter(|arg| !arg.starts_with("--"))
+                .collect();
+            let rom = files.first().expect(usage);
+
+            let with_terminal = !args.iter().any(|arg| arg == "--no-terminal");
+
+            machines::basic::run(Some(rom), with_terminal);
+        }
+        _ => machines::basic::run(None, true),
     }
 }
