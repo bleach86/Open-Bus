@@ -12,14 +12,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::WebviewWindow;
 
 /// The emulator's program, as tools/build-android names it: a library's
 /// name, for it to be installed with them.
 const PROGRAM: &str = "libcpu_emu_exe.so";
-/// The game's process, as the manifest names it.
+/// The game's process, as the manifest names it; and what it says as it
+/// closes, as GameActivity has it.
 const GAME: &str = "app.openbus:game";
+const ENDED: &str = "ended\n";
 /// How often it's looked for; and how long it has to start.
 const LOOK_EVERY: Duration = Duration::from_millis(250);
 const STARTING: Duration = Duration::from_secs(10);
@@ -256,30 +258,74 @@ fn start_activity(
     Ok(())
 }
 
-/// Whether the game's process is running.
-fn game_running() -> bool {
-    let Ok(processes) = fs::read_dir("/proc") else {
-        return false;
-    };
-    let numbered = |name: &str| name.bytes().all(|byte| byte.is_ascii_digit());
-    processes.flatten().any(|process| {
-        process.file_name().to_str().is_some_and(numbered)
-            && fs::read(process.path().join("cmdline"))
-                .is_ok_and(|line| line.split(|&byte| byte == 0).next() == Some(GAME.as_bytes()))
-    })
+/// Whether the game's process is running, as Android says of the app's
+/// own: if it says, the activity answering.
+fn game_running(window: &WebviewWindow) -> Option<bool> {
+    let running = on_activity(window, |env, activity| {
+        let service = env.new_string("activity")?;
+        let manager = env
+            .call_method(
+                activity,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[JValue::Object(&service)],
+            )?
+            .l()?;
+        let processes = env
+            .call_method(
+                &manager,
+                "getRunningAppProcesses",
+                "()Ljava/util/List;",
+                &[],
+            )?
+            .l()?;
+        if processes.is_null() {
+            return Ok(false);
+        }
+        let count = env.call_method(&processes, "size", "()I", &[])?.i()?;
+        for n in 0..count {
+            let process = env
+                .call_method(
+                    &processes,
+                    "get",
+                    "(I)Ljava/lang/Object;",
+                    &[JValue::Int(n)],
+                )?
+                .l()?;
+            let name = env
+                .get_field(&process, "processName", "Ljava/lang/String;")?
+                .l()?;
+            let name: String = env.get_string(&name.into())?.into();
+            if name == GAME {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    });
+    running.ok()
 }
 
-/// Until the game's over: its process started, and gone. Whether it ran.
-pub fn wait() -> bool {
-    let starting = Instant::now();
-    while !game_running() {
-        if starting.elapsed() > STARTING {
+/// Until the game's over: started, as its log's made as it starts; and over,
+/// as it says in it as it closes (or panicking), or its process gone.
+/// Whether it started. Its time to start counted in looks, not by the
+/// clock, the app perhaps held up meanwhile.
+pub fn wait(window: &WebviewWindow, log: &Path) -> bool {
+    let mut looks = STARTING.as_millis() / LOOK_EVERY.as_millis();
+    while !log.exists() {
+        if looks == 0 {
             return false;
         }
+        looks -= 1;
         thread::sleep(LOOK_EVERY);
     }
-    while game_running() {
+    loop {
         thread::sleep(LOOK_EVERY);
+        let said = fs::read_to_string(log).unwrap_or_default();
+        if said.contains(ENDED) || said.contains("panicked") {
+            return true;
+        }
+        if game_running(window) == Some(false) {
+            return true;
+        }
     }
-    true
 }

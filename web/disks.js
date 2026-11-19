@@ -4,8 +4,10 @@
 // saying what they are, "Ultima IV side A", "Ultima IV side B". A hard disk's
 // volume is a game of its own, wherever it's from.
 
-/// Names in the order a person would put them: disk 2 before disk 10.
-export const natural = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+/// Names in the order a person would put them: disk 2 before disk 10, case
+/// and accents aside. One collator for all, not one made at each comparison.
+const reading = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+export const natural = (a, b) => reading.compare(a, b);
 
 export const isVolume = (name) => /\.(hdv|2mg)$/i.test(name);
 const base = (path) => path.split('/').pop();

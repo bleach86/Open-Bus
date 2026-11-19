@@ -1143,7 +1143,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
         ));
         android::start(&window, line, &library, &log)?;
         thread::spawn(move || {
-            let ran = android::wait();
+            let ran = android::wait(&window, &log);
             let said = fs::read_to_string(&log).unwrap_or_default();
             let problem = if !ran {
                 Some("the game didn't start".to_string())

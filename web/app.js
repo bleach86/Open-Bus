@@ -350,7 +350,12 @@ function showShelf(name) {
     localStorage.setItem('shelf', name);
     if (isConsole(name) && name !== consoleShowing) {
         consoleShowing = name;
-        fillGames(page('filter').value.trim().toLowerCase());
+        const wanted = page('filter').value.trim().toLowerCase();
+        if (shelvesFor === wanted) {
+            showGames();
+        } else {
+            fillGames(wanted);
+        }
     }
     page('nes').hidden = !isConsole(name);
     page('recent').hidden = name !== 'recent';
@@ -653,28 +658,51 @@ function oneEach(all) {
     });
 }
 
+/// Each console's shelf, as it was last made, and the search it was made
+/// for: a tab shown again as it is, nothing else having changed, as all
+/// else that would comes by `refresh`.
+const shelves = new Map();
+let shelvesFor = null;
+
 /// The shelf of games, the console's showing; and each console's tab, how
 /// many it has.
 function fillGames(wanted) {
-    const knownOf = nesKnown;
+    // Each game's title and what's known of it worked out once, not again
+    // at each of the sort's comparisons: thousands of games, and a TV's
+    // slow to.
+    const once = (work) => {
+        const done = new Map();
+        return (name) => {
+            if (!done.has(name)) {
+                done.set(name, work(name));
+            }
+            return done.get(name);
+        };
+    };
+    const [knownOf, titled] = [once(nesKnown), once(titleOf)];
     const matches = (name) =>
-        versionsOf.get(name).some((version) => found(wanted, titleOf(version), version, knownOf(version)));
+        versionsOf.get(name).some((version) => found(wanted, titled(version), version, knownOf(version)));
     versionsOf = new Map();
     const games = files.filter(isGame);
     for (const [system, name] of Object.entries(CONSOLES)) {
         const all = oneEach(games.filter((game) => systemOf(game) === system));
-        const shown = arranged(system, all.filter(matches), titleOf, knownOf);
+        const shown = arranged(system, all.filter(matches), titled, knownOf);
         // The X16 itself, first, once there's its ROM to start it.
         if (system === 'x16' && files.includes(X16_ROM) && found(wanted, X16_TITLE, 'basic')) {
             shown.unshift(X16_ROM);
         }
         showCount(`tab-${system}`, name, shown.length);
-        if (system === consoleShowing) {
-            shelf = shown;
-        }
+        shelves.set(system, shown);
     }
+    shelvesFor = wanted;
+    showGames();
+}
+
+/// The console's shelf showing, as it was made.
+function showGames() {
+    shelf = shelves.get(consoleShowing) ?? [];
     const list = page('games');
-    list.nextElementSibling.textContent = wanted ? 'Nothing matches.' : noGames;
+    list.nextElementSibling.textContent = shelvesFor ? 'Nothing matches.' : noGames;
     tiles.clear();
     showLetters();
     placeShelf();
