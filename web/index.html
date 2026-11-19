@@ -468,6 +468,25 @@
       </p>
     </dialog>
 
+    <dialog id="folder-dialog" aria-labelledby="folder-title">
+      <h2 id="folder-title">Add a folder</h2>
+      <p id="folder-where" class="quiet"></p>
+      <div id="folder-access" hidden>
+        <p>
+          To see your folders, Open Bus needs Android's All files access. Its
+          settings open for you: turn it on for Open Bus, then come back.
+        </p>
+        <p class="row-actions">
+          <button id="folder-allow" class="primary">Open its settings</button>
+        </p>
+      </div>
+      <ul id="folder-list" class="rows"></ul>
+      <p class="row-actions">
+        <button id="folder-cancel">Cancel</button>
+        <button id="folder-use" class="primary">Add this folder</button>
+      </p>
+    </dialog>
+
     <dialog id="controls-dialog" aria-labelledby="controls-title">
       <h2 id="controls-title">Controls</h2>
       <div class="dialog-tabs">

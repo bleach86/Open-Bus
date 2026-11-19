@@ -1666,6 +1666,7 @@ html:not(.native) .for-desktop,
 /* The controls' dialog, and a game's details. */
 #controls-dialog,
 #x16-rom-dialog,
+#folder-dialog,
 #game-settings {
   width: min(30rem, calc(100vw - 2rem));
   max-height: calc(100vh - 2rem);
@@ -1680,11 +1681,13 @@ html:not(.native) .for-desktop,
 }
 #controls-dialog::backdrop,
 #x16-rom-dialog::backdrop,
+#folder-dialog::backdrop,
 #game-settings::backdrop {
   background: #05010dc0;
 }
 #controls-dialog h2,
 #x16-rom-dialog h2,
+#folder-dialog h2,
 #game-settings h2 {
   margin: 0 0 0.6rem;
   font:
@@ -1709,6 +1712,33 @@ html:not(.native) .for-desktop,
 }
 #x16-rom-link {
   text-decoration: none;
+}
+/* The app's own list of folders, on Android: a folder a row, scrolling. */
+#folder-dialog {
+  display: none;
+  flex-direction: column;
+}
+#folder-dialog[open] {
+  display: flex;
+}
+#folder-where {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+#folder-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+#folder-list li {
+  padding: 0.15rem 0;
+}
+#folder-list button {
+  width: 100%;
+  text-align: left;
+}
+#folder-dialog > .row-actions {
+  justify-content: flex-end;
 }
 #x16-rom-dialog .row-actions {
   flex-wrap: wrap;

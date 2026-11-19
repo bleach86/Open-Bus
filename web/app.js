@@ -1294,9 +1294,9 @@ const gamesShowing = () => !page('nes').hidden;
 /// What's pressed for moving around, on any gamepad: its directions, Select
 /// and Start as the first player's are bound; confirming and going back by
 /// its maker's convention. In the app, what the emulator says, which it
-/// hasn't yet, just back from a game.
+/// hasn't yet, just back from a game; on Android, the webview's own.
 function navigationPressed() {
-    if (native) {
+    if (native?.tellsPads) {
         return padsSaid;
     }
     const pressed = {};
@@ -1604,7 +1604,9 @@ function move(way) {
     if (way === 'left' && padFocus?.closest('#letters')) {
         return backToShelf();
     }
-    if (way === 'down' && padFocus?.closest('.toolbar') && gamesShowing()) {
+    // Down the sidebar's along it, to the shelf it shows, as a TV remote has
+    // no shoulder buttons to change shelves with.
+    if (way === 'down' && padFocus?.closest('.toolbar') && !padFocus.closest('#sidebar') && gamesShowing()) {
         return backToShelf();
     }
     const options = focusable();
@@ -1737,6 +1739,11 @@ function navigate(now) {
         wasPressed = pressed;
         return;
     }
+    if (page('folder-dialog').open) {
+        padInDialog(page('folder-dialog'), pressed);
+        wasPressed = pressed;
+        return;
+    }
     const way = ['up', 'down', 'left', 'right', 'pageup', 'pagedown'].find((direction) => pressed[direction]) ?? '';
     // A first press, after the mouse or a scroll: from where they left it.
     const pressing = Object.values(pressed).some(Boolean);
@@ -1765,16 +1772,8 @@ function navigate(now) {
     if (newly('a')) {
         navigationWaits = true;
         confirmSelected();
-    } else if (newly('b') && settingsOpen()) {
-        page('game-settings').close();
-    } else if (newly('b') && padFocus && gamesShowing()) {
-        backToShelf();
     } else if (newly('b')) {
-        const search = page('filter');
-        if (search.value) {
-            search.value = '';
-            refresh();
-        }
+        goBack();
     } else if (newly('start') && appleShowing()) {
         navigationWaits = true;
         page('apple').click();
@@ -1793,13 +1792,42 @@ function navigate(now) {
     wasPressed = pressed;
 }
 
+/// Back, as a gamepad's B has it, and a TV remote's Back, in the app on
+/// Android: out of a game's settings, onto the shelf of games, or the search
+/// cleared. Whether there was anywhere to go back from.
+function goBack() {
+    if (page('folder-dialog').open) {
+        page('folder-dialog').close();
+        return true;
+    }
+    if (settingsOpen()) {
+        page('game-settings').close();
+        return true;
+    }
+    if (padFocus && gamesShowing()) {
+        backToShelf();
+        return true;
+    }
+    const search = page('filter');
+    if (search.value) {
+        search.value = '';
+        refresh();
+        return true;
+    }
+    return false;
+}
+window.openBusBack = goBack;
+
 addEventListener('keydown', (event) => {
     const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName);
-    if (emulator || typing || page('library').hidden || page('controls-dialog').open || settingsOpen()) {
+    const dialog = page('controls-dialog').open || page('folder-dialog').open;
+    if (emulator || typing || page('library').hidden || dialog || settingsOpen()) {
         return;
     }
-    const way = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[event.code];
-    const confirming = event.code === 'Enter' && (selectedGame || padFocus) && document.activeElement === document.body;
+    // A TV remote's keys are named, but they're no keyboard's.
+    const key = event.code || event.key;
+    const way = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[key];
+    const confirming = key === 'Enter' && (selectedGame || padFocus) && document.activeElement === document.body;
     if (way || confirming) {
         event.preventDefault();
         padInUse = false;
@@ -2583,10 +2611,98 @@ async function lookForChanges(askedTo = false) {
 
 /// A folder chosen in the system's own dialog, and added.
 async function chooseFolder() {
-    const folder = await native.pickFolder().catch((problem) => say(String(problem), true));
+    const picked = native.android
+        ? browseFolders().then((path) => path && native.addFolder(path))
+        : native.pickFolder();
+    const folder = await picked.catch((problem) => say(String(problem), true));
     if (folder) {
         await addNatively([folder], []);
         fillSettings();
+    }
+}
+
+/// A folder chosen in the page's own list of them, as the app on Android has
+/// no folder picker fit for a TV: from where folders are (the device's
+/// storage, a drive put in), down through them. Its path, or nothing.
+function browseFolders() {
+    const dialog = page('folder-dialog');
+    const list = page('folder-list');
+    let [here, chosen] = [null, null];
+    // The app let read them first, by Android's settings.
+    const show = async (path) => {
+        const allowed = await native.storageAccess().catch(() => false);
+        page('folder-access').hidden = allowed;
+        list.hidden = !allowed;
+        if (!allowed) {
+            page('folder-use').disabled = true;
+            page('folder-allow').focus();
+            return;
+        }
+        let found;
+        try {
+            found = await native.foldersIn(path);
+        } catch (problem) {
+            say(String(problem), true);
+            return;
+        }
+        here = path;
+        page('folder-where').textContent = path ?? 'Where are your games?';
+        const item = (text, action) => {
+            const row = document.createElement('li');
+            const button = document.createElement('button');
+            button.textContent = text;
+            button.onclick = action;
+            row.append(button);
+            return row;
+        };
+        list.replaceChildren(
+            ...(path === null ? [] : [item('↑ Up', () => show(found.up))]),
+            ...found.folders.map((folder) => item(folder.name, () => show(folder.path))),
+        );
+        page('folder-use').disabled = path === null;
+        (list.querySelector('button') ?? page('folder-cancel')).focus();
+    };
+    // Back from Android's settings, it's looked at again.
+    const returned = () => {
+        if (dialog.open && !document.hidden) {
+            show(here);
+        }
+    };
+    page('folder-allow').onclick = () => native.askStorageAccess().catch((problem) => say(String(problem), true));
+    page('folder-cancel').onclick = () => dialog.close();
+    page('folder-use').onclick = () => {
+        chosen = here;
+        dialog.close();
+    };
+    document.addEventListener('visibilitychange', returned);
+    return new Promise((resolve) => {
+        dialog.onclose = () => {
+            document.removeEventListener('visibilitychange', returned);
+            resolve(chosen);
+        };
+        dialog.showModal();
+        show(null);
+    });
+}
+
+/// A dialog of the page's own gone round by a gamepad: its buttons by its
+/// directions, the browser's focus moved; A presses the one there, and B
+/// closes it.
+function padInDialog(dialog, pressed) {
+    const newly = (name) => pressed[name] && !wasPressed[name];
+    const buttons = [...dialog.querySelectorAll('button:not([disabled])')].filter(
+        (button) => button.checkVisibility?.() ?? button.getClientRects().length > 0,
+    );
+    const from = buttons.includes(document.activeElement) ? document.activeElement : null;
+    const way = ['up', 'down', 'left', 'right'].find(newly);
+    if (way) {
+        const next = from ? nearest(from, way, buttons) : buttons[0];
+        next?.focus();
+        next?.scrollIntoView({ block: 'nearest' });
+    } else if (newly('a')) {
+        from?.click();
+    } else if (newly('b')) {
+        dialog.close();
     }
 }
 

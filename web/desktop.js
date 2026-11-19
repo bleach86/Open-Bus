@@ -274,6 +274,26 @@ export async function fetchX16Rom() {
     return sorted;
 }
 
+/// Whether it's the app on Android: with no folder picker fit for a TV, the
+/// page's own list of folders; and the gamepads the webview's.
+export const android = /Android/.test(navigator.userAgent);
+
+/// Whether the app tells the page what its gamepads hold: not on Android,
+/// where the webview has them all, as a desktop's doesn't.
+export const tellsPads = !android;
+
+/// The folders in `path`, by name, and the folder above: `{ folders: [{ name,
+/// path }], up }`; with no `path`, where folders are, to start.
+export const foldersIn = (path) => invoke('folders_in', { path });
+
+/// Whether the app may read folders, on Android; and that asked for, by its
+/// settings opening.
+export const storageAccess = () => invoke('storage_access');
+export const askStorageAccess = () => invoke('ask_storage_access');
+
+/// A folder chosen in the page's own list, remembered: its path.
+export const addFolder = (path) => invoke('add_folder', { path });
+
 /// `told` of what the gamepads hold for moving around the library, by name,
 /// each time that changes; and whose the first player's pad is, `maker`:
 /// xbox, playstation or nintendo.

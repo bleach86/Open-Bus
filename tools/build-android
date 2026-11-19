@@ -1,9 +1,17 @@
 #!/bin/sh
-# Build the emulator for Android: libcpu_emu.so, with SDL's libSDL2.so
-# (SDL built from sdl2-sys's own source, with the NDK), for
-# each of Android's CPUs given (all four if none are), into
-# android/app/src/main/jniLibs/<ABI>/, where the Android app picks them up.
-# arm64-v8a is the NVIDIA Shield's; x86 an Android TV emulator's.
+# Build the emulator for Android: libcpu_emu.so, the game screen's, with
+# SDL's libSDL2.so (SDL built from sdl2-sys's own source, with the NDK); and
+# the emulator's program, as the library app runs it for what it asks
+# without a window, named libcpu_emu_exe.so for Android to install it with
+# them. For each of Android's CPUs given (all four if none are), into
+# desktop/gen/android/app/src/main/jniLibs/<ABI>/, where the app picks them
+# up, beside the library app's own, as Tauri builds it. arm64-v8a is the
+# NVIDIA Shield's; x86 an Android TV emulator's. Then the app itself, by
+# Tauri: release, signed as the debug build is, to be installed by hand;
+# with --debug first, debuggable (run-as, the webview's inspector). Its APK
+# is in desktop/gen/android/app/build/outputs/apk/universal/.
+#
+# Gradle wants JAVA_HOME a JDK 17.
 #
 # The NDK is $ANDROID_NDK_HOME, or the newest in ~/Android/Sdk/ndk before
 # 27, which took away ALooper_pollAll, as SDL 2.26 has it. CMake is the
@@ -11,6 +19,12 @@
 # NDK's toolchain doesn't take, and CMake 4 lets them be lifted.
 set -e
 cd "$(dirname "$0")/.."
+
+PROFILE=
+if [ "$1" = "--debug" ]; then
+    PROFILE=--debug
+    shift
+fi
 
 SDK="$HOME/Android/Sdk"
 NDK=${ANDROID_NDK_HOME:-$(ls -d "$SDK"/ndk/* | sort -V | awk -F/ '$NF+0 < 27' | tail -1)}
@@ -21,7 +35,7 @@ export CMAKE_POLICY_VERSION_MINIMUM=3.5
 TOOLS="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
 # The oldest Android it runs on: 7.0, API 24.
 API=24
-OUT=android/app/src/main/jniLibs
+OUT=desktop/gen/android/app/src/main/jniLibs
 
 ABIS=${*:-arm64-v8a armeabi-v7a x86 x86_64}
 for abi in $ABIS; do
@@ -51,16 +65,36 @@ CMAKE
     export "CMAKE_TOOLCHAIN_FILE_${lower}=$toolchain"
     # sdl2-sys copies SDL into Cargo's deps folder, as it once was: there.
     mkdir -p "target/$target/release/deps"
-    cargo build --release --lib --target "$target"
+    cargo build --release --lib --bin cpu_emu --target "$target"
 
     mkdir -p "$OUT/$abi"
     built=target/$target/release
     cp "$built/libcpu_emu.so" "$OUT/$abi/"
+    cp "$built/cpu_emu" "$OUT/$abi/libcpu_emu_exe.so"
     # SDL; and hidapi, if SDL's build made it a library of its own.
     cp "$built/libSDL2.so" "$OUT/$abi/"
     if [ -f "$built/libhidapi.so" ]; then
         cp "$built/libhidapi.so" "$OUT/$abi/"
     fi
-    "$TOOLS/llvm-strip" "$OUT/$abi"/*.so
+    for lib in libcpu_emu.so libcpu_emu_exe.so libSDL2.so libhidapi.so; do
+        if [ -f "$OUT/$abi/$lib" ]; then
+            "$TOOLS/llvm-strip" "$OUT/$abi/$lib"
+        fi
+    done
     echo "$abi: $(ls "$OUT/$abi" | tr '\n' ' ')"
 done
+
+# The app, for the same CPUs, by Tauri's names for them.
+targets=
+for abi in $ABIS; do
+    case $abi in
+        arm64-v8a) targets="$targets aarch64" ;;
+        armeabi-v7a) targets="$targets armv7" ;;
+        x86) targets="$targets i686" ;;
+        x86_64) targets="$targets x86_64" ;;
+    esac
+done
+export ANDROID_HOME="$SDK" NDK_HOME="$NDK"
+cd desktop
+# shellcheck disable=SC2086
+cargo tauri android build --apk $PROFILE --target $targets

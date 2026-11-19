@@ -1,5 +1,6 @@
 /target
 /web/pkg
 /desktop/target
-/desktop/gen
+# Tauri's schemas, made again each build; its Android project's kept.
+/desktop/gen/schemas
 /desktop/binaries

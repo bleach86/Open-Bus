@@ -299,6 +299,19 @@ pub extern "C" fn SDL_main(
     argv: *const *const std::ffi::c_char,
 ) -> std::ffi::c_int {
     to_log();
+    // Where the library has it run, as a desktop's does: in its folder;
+    // and a panic told it in the file it says, as it has no output of the
+    // game's to read.
+    if let Ok(folder) = std::env::var("OPENBUS_FOLDER") {
+        let _ = std::env::set_current_dir(folder);
+    }
+    if let Ok(log) = std::env::var("OPENBUS_LOG") {
+        let told = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = std::fs::write(&log, format!("thread 'main' {info}\n"));
+            told(info);
+        }));
+    }
     let args = (0..argc.max(0) as usize)
         .map(|n| {
             // SAFETY: SDL hands over argc arguments, each a C string.
