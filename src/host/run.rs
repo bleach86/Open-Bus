@@ -154,6 +154,8 @@ const REWIND_NOTICE: &str = "Rewind";
 pub static RESUME: AtomicBool = AtomicBool::new(false);
 
 pub struct Host<M: Machine> {
+    /// Whether the machine has a mouse, as the display was last told.
+    has_mouse: bool,
     pub cpu: CPU<M>,
     display: Box<dyn Display>,
     /// Where its save state is kept.
@@ -201,10 +203,12 @@ impl<M: Machine> Host<M> {
             cpu.memory.sound_on();
         }
         display.aiming(cpu.memory.aimed_at());
-        display.mouse(cpu.memory.has_mouse());
+        let has_mouse = cpu.memory.has_mouse();
+        display.mouse(has_mouse);
         display.raw_keys(cpu.memory.raw_keys());
         let moments = (REWIND.load(Ordering::Relaxed) && cpu.memory.rewinds()).then(VecDeque::new);
         Host {
+            has_mouse,
             cpu,
             display,
             state,
@@ -578,6 +582,12 @@ impl<M: Machine> Host<M> {
         self.left_out = self.cpu.memory.leave_out_picture(leave_out);
         self.cpu.run_frame();
         self.watch_light();
+        // A mouse only while the machine has one on: the display told.
+        let has_mouse = self.cpu.memory.has_mouse();
+        if has_mouse != self.has_mouse {
+            self.has_mouse = has_mouse;
+            self.display.mouse(has_mouse);
+        }
         let cycles = self.cpu.clock.wrapping_sub(before) as u64;
         self.cycles += if fast { cycles / FAST } else { cycles };
         if !rewinding {

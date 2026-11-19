@@ -246,6 +246,20 @@ pub struct Smc {
 }
 
 impl Smc {
+    /// Whether it's to give the mouse's packets: its default read the
+    /// mouse's, or the key's and the mouse's, as the KERNAL sets it when a
+    /// program turns the mouse on (MOUSE 1), and back to the key's alone
+    /// when it's turned off.
+    pub fn mouse_on(&self) -> bool {
+        matches!(self.default_read, 0x42 | KEY_AND_MOUSE)
+    }
+
+    /// Its default read set, as the KERNAL sets it: for the host's tests.
+    #[cfg(test)]
+    pub fn set_default_read(&mut self, read: u8) {
+        self.default_read = read;
+    }
+
     fn new() -> Smc {
         Smc {
             keys: VecDeque::new(),

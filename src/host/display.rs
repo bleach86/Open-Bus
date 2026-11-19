@@ -77,7 +77,7 @@ pub trait Display {
     /// Whether the machine has a mouse: the host's captured for it once
     /// it's clicked on the picture, its cursor gone and its moves and
     /// clicks the machine's, till it's let go; not captured, it's none of
-    /// the machine's.
+    /// the machine's. Told again as it changes: no longer, let go.
     fn mouse(&mut self, _on: bool) {}
 
     /// Whether a key is held down, any but the modifiers and the function

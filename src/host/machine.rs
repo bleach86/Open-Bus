@@ -100,7 +100,8 @@ pub trait Machine: Bus + Serialize + DeserializeOwned {
     }
 
     /// Whether it has a mouse: the host's captured for it, the pointer's
-    /// moves its, past the picture's edges too.
+    /// moves its, past the picture's edges too. Asked each frame, as it
+    /// may be only while a program has it on.
     fn has_mouse(&self) -> bool {
         false
     }

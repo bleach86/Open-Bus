@@ -3,7 +3,8 @@
 //! sound played, a frame at a time; its title; a notice over its picture;
 //! F2 and F4; its Reset button, and the keys given to it; the window
 //! closed, and what it keeps saved. And on the X16, a machine that takes
-//! the keyboard's keys: them, but the host's own.
+//! the keyboard's keys: them, but the host's own; and its mouse, only
+//! while a program has it on.
 
 #[cfg(test)]
 mod tests {
@@ -41,6 +42,8 @@ mod tests {
         /// Characters typed, and keys pressed and let go.
         keys: Vec<Key>,
         key_changes: Vec<(Scancode, bool)>,
+        /// Whether the machine has a mouse, each time it's told.
+        mouse: Vec<bool>,
     }
 
     /// The test's window: its own controls, never saved, as the window's
@@ -122,6 +125,10 @@ mod tests {
 
         fn play(&mut self, samples: &[f32]) {
             self.0.borrow_mut().samples += samples.len();
+        }
+
+        fn mouse(&mut self, on: bool) {
+            self.0.borrow_mut().mouse.push(on);
         }
     }
 
@@ -605,6 +612,31 @@ mod tests {
             keys,
             [31, 116, 31 | 0x80],
             "A, F5, A let go; not F2, nor 'a' typed"
+        );
+    }
+
+    #[test]
+    fn the_display_is_told_of_a_mouse_as_a_program_turns_it_on_and_off() {
+        use crate::machines::x16::X16;
+        let mut cpu = CPU::with_bus(X16::new(&[0xEA; 0x4000]).unwrap());
+        cpu.variant = Variant::Wdc65C02;
+        cpu.reset();
+        cpu.memory.i2c.smc.set_default_read(0x41);
+        let seen = Rc::new(RefCell::new(Seen::default()));
+        let state =
+            std::env::temp_dir().join(format!("cpu_emu_{}_host_mouse.state", std::process::id()));
+        let window = Window(seen.clone(), Controls::default());
+        let mut host = Host::new(cpu, Box::new(window), state);
+        host.frame();
+        host.cpu.memory.i2c.smc.set_default_read(0x43);
+        host.frame();
+        host.frame();
+        host.cpu.memory.i2c.smc.set_default_read(0x41);
+        host.frame();
+        assert_eq!(
+            seen.borrow().mouse,
+            [false, true, false],
+            "told as it changes, only"
         );
     }
 }

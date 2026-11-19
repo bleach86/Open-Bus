@@ -139,6 +139,17 @@ mod tests {
     }
 
     #[test]
+    fn the_mouse_is_on_as_the_kernal_sets_the_smcs_default_read() {
+        let mut i2c = I2c::new();
+        write(&mut i2c, SMC, &[0x40, 0x41]);
+        assert!(!i2c.smc.mouse_on(), "the key's alone: MOUSE 0");
+        write(&mut i2c, SMC, &[0x40, 0x43]);
+        assert!(i2c.smc.mouse_on(), "the key's and the mouse's: MOUSE 1");
+        write(&mut i2c, SMC, &[0x40, 0x42]);
+        assert!(i2c.smc.mouse_on(), "the mouse's alone");
+    }
+
+    #[test]
     fn the_smc_gives_the_mouses_packets_whole_as_its_id_has_them() {
         let mut i2c = I2c::new();
         assert_eq!(read(&mut i2c, SMC, 0x22, 1), [3], "a wheel");

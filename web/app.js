@@ -3105,6 +3105,7 @@ function tick(now) {
     }
     if (ran) {
         show();
+        mouseWanted();
     }
     if (now > nextSave) {
         nextSave = now + 2000;
@@ -3266,8 +3267,20 @@ page('screen').ondblclick = () => aiming || hasMouse || fullscreen();
 
 /// Whether the machine has a mouse: the pointer locked to the picture for
 /// it by a click there, the browser's Esc letting it go; its moves summed,
-/// in the picture's dots, however far they go, and its buttons.
+/// in the picture's dots, however far they go, and its buttons. Asked each
+/// frame, as a machine may have one only while a program has it on.
 let hasMouse = false;
+
+/// Whether it has one now: let go, if it hasn't.
+function mouseWanted() {
+    const wanted = emulator.has_mouse();
+    if (wanted !== hasMouse) {
+        hasMouse = wanted;
+        if (!wanted && locked()) {
+            document.exitPointerLock();
+        }
+    }
+}
 const mouse = { x: 0, y: 0, buttons: 0 };
 const locked = () => document.pointerLockElement === page('screen');
 function tellMouse() {

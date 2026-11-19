@@ -649,8 +649,10 @@ impl Machine for X16 {
         self.i2c.smc.activity_light || card
     }
 
+    /// A mouse while a program has it on: as the KERNAL's asked the SMC
+    /// for its packets.
     fn has_mouse(&self) -> bool {
-        true
+        self.i2c.smc.mouse_on()
     }
 
     fn raw_keys(&self) -> bool {
