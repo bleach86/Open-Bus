@@ -6,6 +6,8 @@ name = "open-bus"
 version = "0.2.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
+repository = "https://github.com/bleach86/Open-Bus"
+homepage = "https://obus.tuxprint.com/"
 
 # A library too, as Android has the app: its activity loads it.
 [lib]
