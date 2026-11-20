@@ -153,6 +153,17 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
-      - run: gh release create "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --title "Open Bus ${GITHUB_REF_NAME#v}" --generate-notes
+      # The artifacts keep their folders (deb/, dmg/ and the rest), so it's
+      # their files that go up. A draft first, published once they're all
+      # there; and run again, the release that's there already is used.
+      - name: The release, and its files
         env:
           GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft \
+              --title "Open Bus ${GITHUB_REF_NAME#v}" --generate-notes
+          fi
+          find artifacts -type f -print0 |
+            xargs -0 gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
