@@ -1,0 +1,50 @@
+# What building for Android wants, for tools/build-android and tools/nesbench
+# to source: the SDK, at ~/Android/Sdk; the NDK, $ANDROID_NDK_HOME or the
+# newest there before 27, which took away ALooper_pollAll, as SDL 2.26 has
+# it; and CMake, the SDK's newest, 4 or later: SDL 2.26's CMake asks for 3.0's
+# ways, which the NDK's toolchain doesn't take, and CMake 4 lets them be
+# lifted.
+#
+# Then `android_target ABI [TARGET_DIR]` for each of Android's CPUs, its
+# target the triple Cargo builds it for, and the compilers, linker and SDL's
+# CMake toolchain made its. TARGET_DIR is Cargo's, target if it's not said.
+
+SDK="$HOME/Android/Sdk"
+NDK=${ANDROID_NDK_HOME:-$(ls -d "$SDK"/ndk/* | sort -V | awk -F/ '$NF+0 < 27' | tail -1)}
+export ANDROID_NDK_HOME="$NDK"
+CMAKE_BIN=$(ls -d "$SDK"/cmake/*/bin 2>/dev/null | sort -V | tail -1)
+[ -n "$CMAKE_BIN" ] && export PATH="$CMAKE_BIN:$PATH"
+export CMAKE_POLICY_VERSION_MINIMUM=3.5
+TOOLS="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+# The oldest Android it runs on: 7.0, API 24.
+API=24
+
+android_target() {
+    case $1 in
+        arm64-v8a) target=aarch64-linux-android clang=aarch64-linux-android$API-clang ;;
+        armeabi-v7a) target=armv7-linux-androideabi clang=armv7a-linux-androideabi$API-clang ;;
+        x86) target=i686-linux-android clang=i686-linux-android$API-clang ;;
+        x86_64) target=x86_64-linux-android clang=x86_64-linux-android$API-clang ;;
+        *) echo "no ABI $1" >&2; return 1 ;;
+    esac
+    mkdir -p "${2:-target}"
+    target_dir=$(cd "${2:-target}" && pwd)
+    # Cargo's and the C compiler's names for the target: its triple, upper
+    # case and with underscores, and as it is with underscores.
+    upper=$(echo "$target" | tr 'a-z-' 'A-Z_')
+    lower=$(echo "$target" | tr '-' '_')
+    export "CARGO_TARGET_${upper}_LINKER=$TOOLS/$clang"
+    export "CC_${lower}=$TOOLS/$clang"
+    export "CXX_${lower}=$TOOLS/$clang++"
+    export "AR_${lower}=$TOOLS/llvm-ar"
+    # SDL's CMake, by the NDK's own toolchain file, as this ABI's.
+    toolchain="$target_dir/android-$1.cmake"
+    cat > "$toolchain" <<CMAKE
+set(ANDROID_ABI $1)
+set(ANDROID_PLATFORM android-$API)
+include($NDK/build/cmake/android.toolchain.cmake)
+CMAKE
+    export "CMAKE_TOOLCHAIN_FILE_${lower}=$toolchain"
+    # sdl2-sys copies SDL into Cargo's deps folder, as it once was: there.
+    mkdir -p "$target_dir/$target/release/deps"
+}

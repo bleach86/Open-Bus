@@ -21,6 +21,11 @@ gamepad.
 
 No games, BIOS files or system ROMs come with Open Bus. You add your own.
 
+[docs/machines.md](docs/machines.md) covers each machine in detail: the files
+it needs, its controls, and what isn't supported yet.
+[docs/architecture.md](docs/architecture.md) explains how the code fits
+together, for anyone changing it.
+
 ## The app
 
 The library shows your games by system. It fills in covers and details (year,

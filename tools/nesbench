@@ -1,0 +1,136 @@
+#!/bin/sh
+# Run NES games headless (examples/nesbench.rs): each one's speed, and its
+# frames' picture and sound checksums. With --base REF, against REF's build
+# too, games one by one, the two runs one after the other: each game's speed
+# both ways, and whether the checksums are the same. They should be, for a
+# change that's only to make it faster; if any aren't, it exits 1.
+#
+#   tools/nesbench [--base REF] [--frames N] [--fast] [--android ABI] GAME...
+#
+# REF's tree is taken by git archive into target/nesbench/<commit>/, kept to
+# be built again quickly, and given this tree's examples/nesbench.rs: REF
+# has to have what that uses of the emulator.
+#
+# --frames N, how many (1800, 30 seconds, if it's not said); --fast,
+# performance mode. --android ABI (arm64-v8a, say) builds for Android, as
+# tools/android-env has it, and runs on the device adb has, $ANDROID_SERIAL
+# if there's more than one: the games and the builds pushed to
+# /data/local/tmp/nesbench/. A speed-up on x86 often isn't one on ARM.
+#
+# --log FILE goes to the example itself, run by hand: each frame's checksums,
+# to find where two builds first differ.
+set -e
+cd "$(dirname "$0")/.."
+repo=$PWD
+
+usage() {
+    sed -n 's/^#   //p' "$0" >&2
+    exit 2
+}
+
+base= frames=1800 fast= abi=
+while [ $# -gt 0 ]; do
+    case $1 in
+        --base) base=$2; shift 2 ;;
+        --frames) frames=$2; shift 2 ;;
+        --fast) fast=--fast; shift ;;
+        --android) abi=$2; shift 2 ;;
+        -h | --help) usage ;;
+        --*) echo "nesbench: no option $1" >&2; usage ;;
+        *) break ;;
+    esac
+done
+[ $# -gt 0 ] || usage
+
+if [ -n "$abi" ]; then
+    . tools/android-env
+    adb=$(command -v adb || echo "$SDK/platform-tools/adb")
+    remote=/data/local/tmp/nesbench
+fi
+
+# The example built in the tree $1, into $built.
+build() {
+    if [ -n "$abi" ]; then
+        android_target "$abi" "$1/target"
+        (cd "$1" && cargo build --quiet --release --example nesbench --target "$target")
+        built=$1/target/$target/release/examples/nesbench
+    else
+        (cd "$1" && cargo build --quiet --release --example nesbench)
+        built=$1/target/release/examples/nesbench
+    fi
+}
+
+# On a device, the build $1 pushed to its own folder there, $2, with the
+# libraries beside it (SDL's).
+push() {
+    "$adb" shell mkdir -p "$remote/$2"
+    "$adb" push "$1" "$remote/$2/" >/dev/null
+    for lib in "$(dirname "$1")"/../*.so; do
+        [ -f "$lib" ] && "$adb" push "$lib" "$remote/$2/" >/dev/null
+    done
+}
+
+# $1 quoted for the device's shell.
+quoted() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+echo "Building this tree's" >&2
+build "$repo"
+now=$built
+if [ -n "$base" ]; then
+    commit=$(git rev-parse --short "$base^{commit}")
+    tree=target/nesbench/$commit
+    if [ ! -f "$tree/Cargo.toml" ]; then
+        mkdir -p "$tree"
+        git archive "$commit" | tar -x -C "$tree"
+    fi
+    mkdir -p "$tree/examples"
+    cp examples/nesbench.rs "$tree/examples/"
+    echo "Building $base's ($commit)" >&2
+    build "$repo/$tree"
+    before=$built
+fi
+if [ -n "$abi" ]; then
+    push "$now" now
+    [ -n "$base" ] && push "$before" base
+fi
+
+# The example run, $1 now or base, on the game $2: its line.
+run() {
+    if [ -n "$abi" ]; then
+        "$adb" shell "cd $remote/$1 && LD_LIBRARY_PATH=. ./nesbench $(quoted "$2") --frames $frames $fast"
+    elif [ "$1" = now ]; then
+        "$now" "$2" --frames "$frames" $fast
+    else
+        "$before" "$2" --frames "$frames" $fast
+    fi
+}
+speed() { sed -n 's/.*: \([0-9]*\)% of real time.*/\1/p'; }
+sums() { sed -n 's/.*; \(picture .*\)/\1/p'; }
+
+differ=0
+n=0
+for game in "$@"; do
+    n=$((n + 1))
+    name=$(basename "$game")
+    if [ -n "$abi" ]; then
+        "$adb" shell mkdir -p "$remote/games/$n"
+        "$adb" push "$game" "$remote/games/$n/$name" >/dev/null
+        game=../games/$n/$name
+    fi
+    line=$(run now "$game")
+    if [ -z "$base" ]; then
+        echo "$name: $(echo "$line" | speed)%, $(echo "$line" | sums)"
+        continue
+    fi
+    was=$(run base "$game")
+    if [ "$(echo "$line" | sums)" = "$(echo "$was" | sums)" ]; then
+        same=same
+    else
+        same="DIFFERENT: $(echo "$line" | sums), was $(echo "$was" | sums)"
+        differ=1
+    fi
+    echo "$name: $(echo "$line" | speed)%, was $(echo "$was" | speed)%; $same"
+done
+exit $differ
