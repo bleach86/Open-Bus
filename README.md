@@ -95,7 +95,7 @@ Some systems need files of your own, which you add in Settings → System:
 | F3               | Debug panel: speed, host load, the CPU    |
 | F5               | Back to the library (on a gamepad, Guide) |
 | F6               | Change the controls                       |
-| F11              | Fullscreen                                |
+| F11              | Fullscreen (on a Mac, Ctrl+Cmd+F)         |
 | F12              | Reset                                     |
 
 Machines use some function keys for themselves. For example, F9 and F10 change
@@ -115,9 +115,10 @@ cargo build --release
 target/release/cpu_emu --help
 ```
 
-On Linux it links to the system's SDL2 (`libsdl2-dev` or your distro's
-equivalent). On Windows and macOS, SDL is built in, which needs CMake and a C
-compiler.
+SDL 2.32 is built into the program, which needs CMake and a C compiler. On
+Linux it also needs the X11, Wayland and sound headers so SDL can use them;
+installing `libsdl2-dev` (or your distro's equivalent) brings them all. The
+ARM handheld build is the exception: it links to the device's own SDL.
 
 Run a game directly:
 
