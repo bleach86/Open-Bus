@@ -7,6 +7,10 @@ the desktop, on Android TV, and in a web browser.
 **[Play it in your browser](https://obus.tuxprint.com/)**: nothing to
 install. Add your own games and it runs them.
 
+![The library on Android TV: the NES shelf, its games' covers, years and genres, and the machines down the side](docs/images/library.jpg)
+
+![Castlevania III and Super Mario Bros. 3 on the NES, Nox Archaist on the Apple IIe, Planet X16 on the Commander X16, Commando on the Atari 7800, and River Raid on the Atari 2600](docs/images/games.png)
+
 | Machine               | What's there                                                                                                                                                                                           |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **NES and Famicom**   | NTSC and PAL, over 70 iNES mappers, the Famicom Disk System, the Zapper, and expansion sound (VRC6, Namco 163, MMC5, FDS)                                                                              |
