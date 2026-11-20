@@ -25,7 +25,7 @@
     "active": true,
     "targets": "all",
     "category": "Game",
-    "shortDescription": "An emulator of the Apple II and the NES, from the 6502 up",
+    "shortDescription": "Old machines, emulated cycle by cycle: the NES, the Apple II, the Atari 2600 and 7800, and the Commander X16",
     "license": "GPL-3.0-or-later",
     "linux": {
       "deb": { "depends": ["libsdl2-2.0-0"] },

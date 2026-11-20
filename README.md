@@ -1,8 +1,8 @@
 # Open Bus
 
-Old machines, emulated from the 6502 up. One Rust emulator runs every machine,
-and a game library sits in front of it. The library works on the desktop, on
-Android TV, and in a web browser.
+Old machines, emulated cycle by cycle from the 6502 up. One Rust emulator runs
+every machine, and a game library sits in front of it. The library works on
+the desktop, on Android TV, and in a web browser.
 
 | Machine               | What's there                                                                                                                                                                                           |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -14,10 +14,8 @@ Android TV, and in a web browser.
 | **Skink**             | A small 6502 computer of our own, built to run GeckOS                                                                                                                                                  |
 | **BASIC**             | A bare 6502 with Microsoft BASIC in a terminal                                                                                                                                                         |
 
-The NES runs a dot at a time, and the CPU is checked against Tom Harte's and
-Klaus Dormann's test suites. Every machine has save states, rewind (held),
-fast-forward, controls you can rebind, and a menu that works with just a
-gamepad.
+Every machine has save states, rewind (held), fast-forward, controls you can
+rebind, and a menu that works with just a gamepad.
 
 No games, BIOS files or system ROMs come with Open Bus. You add your own.
 
@@ -25,6 +23,35 @@ No games, BIOS files or system ROMs come with Open Bus. You add your own.
 it needs, its controls, and what isn't supported yet.
 [docs/architecture.md](docs/architecture.md) explains how the code fits
 together, for anyone changing it.
+
+## Cycle accuracy
+
+The 6502 core is cycle-accurate. It makes one bus access per cycle, every read
+and write the real chip makes, including the dummy ones. Each machine sees
+those accesses in order and clocks its other chips by them, so interrupt
+timing, DMA and mid-instruction effects come out as on hardware, with no
+special cases.
+
+The core is checked against Tom Harte's SingleStepTests, which compare every
+cycle's bus access for the NMOS 6502, the Synertek, Rockwell and WDC 65C02s,
+and the NES's 2A03. Klaus Dormann's functional and decimal tests run too.
+
+How finely the rest of each machine runs:
+
+- **NES:** the PPU runs dot by dot, three dots per CPU cycle. Mappers see
+  every fetch, as scanline counters need. It passes nestest and blargg's CPU,
+  PPU, APU, timing and MMC3 suites, and 140 of AccuracyCoin's 147 tests.
+- **Atari 2600:** the TIA runs a color clock at a time, three per CPU cycle.
+  Register writes land with the chip's own delays, so games that race the
+  beam draw correctly.
+- **Atari 7800:** MARIA builds each line by DMA and takes the CPU's cycles as
+  the real chip does, so games run at their true speed.
+- **Apple II:** the Disk II's sequencer runs from its PROM twice per CPU
+  cycle, reading the disk bit by bit. Copy-protected `.woz` disks load as
+  they did on the real drive. Reads of unmapped addresses return the
+  floating bus, the byte the video circuit last fetched.
+- **Commander X16:** VERA draws a line at a time, as the real one renders
+  ahead of the beam. The YM2151's slower bus costs the CPU its wait states.
 
 ## The app
 
