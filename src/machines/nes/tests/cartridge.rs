@@ -76,8 +76,8 @@ mod tests {
                 .map_err(|e| e.to_string())
         };
         assert_eq!(
-            mapper([0x10, 0x40, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap_err(),
-            "mapper 65, which isn't here yet"
+            mapper([0x10, 0x50, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap_err(),
+            "mapper 81, which isn't here yet"
         );
         // NES 2.0: byte 8's low nibble its bits 8 to 11.
         assert_eq!(
@@ -176,7 +176,7 @@ mod tests {
             (Mapper::Nrom, Mirroring::Vertical)
         );
         let neither =
-            Cartridge::known_as(&image(2, 1, [0x10, 0x40, 0, 0, 0, 0, 0, 0, 0, 0]), karaoke);
+            Cartridge::known_as(&image(2, 1, [0x10, 0x50, 0, 0, 0, 0, 0, 0, 0, 0]), karaoke);
         assert_eq!(
             neither.err().as_deref(),
             Some("mapper 188, which isn't here yet"),

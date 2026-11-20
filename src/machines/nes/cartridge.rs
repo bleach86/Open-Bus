@@ -245,9 +245,13 @@
 use super::bandai::{self, Bandai};
 use super::database::{self, Known};
 use super::fds::Fds;
+use super::irem::{G101, H3001};
+use super::jaleco::Ss88006;
 use super::mmc5::{self, Mmc5};
 use super::namco163::{CHIP_RAM, Chip, Namco163};
 use super::region::Region;
+use super::sunsoft3::Sunsoft3;
+use super::taito::{Tc0190, X1};
 use super::vrc::{Vrc, Vrc1, Vrc3, Vrc6, Wiring};
 use serde::{Deserialize, Serialize};
 
@@ -426,9 +430,8 @@ impl Sunsoft4 {
 }
 
 /// MMC3's registers: bank select, the 8 banks, the PRG RAM's enable and
-/// protection; the IRQ's latch, counter, reload, enable and line; and
-/// the PPU dot A12 was last seen low from. Whether it's an MMC6, and its
-/// RAM's halves' enables.
+/// protection; whether it's an MMC6, and its RAM's halves' enables; and
+/// its scanline counter.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mmc3 {
     select: u8,
@@ -437,12 +440,68 @@ pub struct Mmc3 {
     ram_protected: bool,
     mmc6: bool,
     halves: u8,
-    irq_latch: u8,
-    irq_counter: u8,
-    irq_reload: bool,
-    irq_enabled: bool,
-    irq: bool,
-    a12_low_since: Option<u64>,
+    lines: Scanlines,
+}
+
+/// A scanline counter, as MMC3's and its relatives' are: clocked by A12
+/// rising after it's been low a while, as the PPU's fetches go from one
+/// pattern table to the other once a line. Its latch, counter, reload,
+/// enable and line; and the PPU dot A12 was last seen low from. (In a
+/// state, as these were in MMC3's, after its other registers.)
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Scanlines {
+    pub latch: u8,
+    counter: u8,
+    reload: bool,
+    enabled: bool,
+    pub irq: bool,
+    low_since: Option<u64>,
+}
+
+impl Scanlines {
+    /// The counter to start again from the latch, at its next clock.
+    pub fn restart(&mut self) {
+        self.counter = 0;
+        self.reload = true;
+    }
+
+    /// Its IRQ enabled, or not and its line let go.
+    pub fn enable(&mut self, on: bool) {
+        self.enabled = on;
+        if !on {
+            self.irq = false;
+        }
+    }
+
+    /// A12 on the PPU's bus, as `addr` has it, at PPU dot `dot`: whether
+    /// it's counted a line, and its IRQ's due.
+    pub fn a12(&mut self, addr: u16, dot: u64) -> bool {
+        a12_rose(&mut self.low_since, addr, dot) && self.clock()
+    }
+
+    /// A line counted: the counter reloaded from the latch at 0, or as it's
+    /// asked, else one down; whether it's then 0 with its IRQ enabled.
+    fn clock(&mut self) -> bool {
+        if self.counter == 0 || self.reload {
+            self.counter = self.latch;
+            self.reload = false;
+        } else {
+            self.counter -= 1;
+        }
+        self.counter == 0 && self.enabled
+    }
+}
+
+/// Whether A12, as `addr` has it at PPU dot `dot`, rises after it's been
+/// low A12_LOW_DOTS, since `low_since`.
+fn a12_rose(low_since: &mut Option<u64>, addr: u16, dot: u64) -> bool {
+    if addr & 0x1000 == 0 {
+        low_since.get_or_insert(dot);
+        return false;
+    }
+    low_since
+        .take()
+        .is_some_and(|since| dot - since >= A12_LOW_DOTS)
 }
 
 /// What a board's register gets of a write, with its ROM's `rom` there.
@@ -789,6 +848,13 @@ pub enum Mapper {
     Nwc(Nwc),
     Sunsoft4(Sunsoft4),
     Vrc6(Box<Vrc6>),
+    // New ones after the rest: a state has each by its place.
+    Tc0190(Tc0190),
+    X1(X1),
+    Ss88006(Ss88006),
+    G101(G101),
+    H3001(H3001),
+    Sunsoft3(Sunsoft3),
 }
 
 /// Its ROMs aren't in a save state: the machine it's loaded into has
@@ -986,12 +1052,7 @@ impl Cartridge {
                 ram_protected: false,
                 mmc6,
                 halves: 0,
-                irq_latch: 0,
-                irq_counter: 0,
-                irq_reload: false,
-                irq_enabled: false,
-                irq: false,
-                a12_low_since: None,
+                lines: Scanlines::default(),
             }),
             5 => Mapper::Mmc5(Box::new(Mmc5::new())),
             7 => Mapper::Axrom(0),
@@ -1051,8 +1112,19 @@ impl Cartridge {
                 ..Quattro::default()
             }),
             79 => Mapper::Nina03(Banks::new(Conflicts::None)),
+            33 | 48 => Mapper::Tc0190(Tc0190::new(number == 48, submapper)),
+            80 | 207 => Mapper::X1(X1::new(false, number == 207)),
+            82 => Mapper::X1(X1::new(true, false)),
+            18 => Mapper::Ss88006(Ss88006::default()),
+            32 => Mapper::G101(G101::new(submapper)),
+            65 => Mapper::H3001(H3001::default()),
+            67 => Mapper::Sunsoft3(Sunsoft3::default()),
             _ => return Err(format!("mapper {number}, which isn't here yet")),
         };
+        // The X1s' RAM, their own, all there is.
+        if let Mapper::X1(x1) = &mapper {
+            prg_ram_size = x1.ram();
+        }
         // Bandai's EEPROMs' bytes, as its RAM, saved as a battery's: it has
         // no other, but Famicom Jump II's 8K.
         if let Mapper::Bandai(bandai) = &mapper {
@@ -1099,9 +1171,10 @@ impl Cartridge {
         };
         // As these start: 77's own four screens; 41's and 234's registers
         // all 0, vertical.
-        let mirroring = match number {
-            77 => Mirroring::FourScreen,
-            41 | 234 => Mirroring::Vertical,
+        let mirroring = match (number, &mapper) {
+            (77, _) => Mirroring::FourScreen,
+            (41 | 234, _) => Mirroring::Vertical,
+            (_, Mapper::G101(g101)) => g101.mirroring(mirroring),
             _ => mirroring,
         };
         if board == Board::Cprom {
@@ -1305,6 +1378,21 @@ impl Cartridge {
             Mapper::Vrc6(vrc6) => {
                 vrc6.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF)
             }
+            Mapper::Tc0190(taito) => {
+                taito.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF)
+            }
+            Mapper::X1(x1) => x1.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF),
+            Mapper::Ss88006(jaleco) => {
+                jaleco.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF)
+            }
+            Mapper::G101(irem) => {
+                irem.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF)
+            }
+            Mapper::H3001(irem) => {
+                irem.prg_bank(addr as u16, len / 0x2000) * 0x2000 + (addr & 0x1FFF)
+            }
+            Mapper::Sunsoft3(_) if addr >= 0xC000 => in_16k(last_16k),
+            Mapper::Sunsoft3(sunsoft) => in_16k(sunsoft.prg_bank()),
             Mapper::Bandai(bandai) => in_16k(bandai.prg_bank(addr as u16, len / PRG_BANK)),
             Mapper::Vrc3(vrc3) => in_16k(if addr < 0xC000 {
                 vrc3.prg_bank()
@@ -1473,6 +1561,12 @@ impl Cartridge {
             Mapper::Vrc1(vrc1) => vrc1.chr_bank(addr as u16) * 0x1000 + (addr & 0x0FFF),
             Mapper::Namco163(namco) => namco.chr_bank(addr as u16) * 0x400 + (addr & 0x3FF),
             Mapper::Vrc6(vrc6) => vrc6.chr_bank(addr as u16) * 0x400 + (addr & 0x3FF),
+            Mapper::Tc0190(taito) => taito.chr_bank(addr as u16) * 0x400 + (addr & 0x3FF),
+            Mapper::X1(x1) => x1.chr_bank(addr as u16) * 0x400 + (addr & 0x3FF),
+            Mapper::Ss88006(jaleco) => jaleco.chr_bank(addr as u16) * 0x400 + (addr & 0x3FF),
+            Mapper::G101(irem) => irem.chr_bank(addr as u16) * 0x400 + (addr & 0x3FF),
+            Mapper::H3001(irem) => irem.chr_bank(addr as u16) * 0x400 + (addr & 0x3FF),
+            Mapper::Sunsoft3(sunsoft) => sunsoft.chr_bank(addr as u16) * 0x800 + (addr & 0x7FF),
             Mapper::Bandai(bandai) => bandai.chr_offset(addr as u16),
             Mapper::Latch(latch) => {
                 let latch = *latch as usize;
@@ -1559,6 +1653,7 @@ impl Cartridge {
             }
             Mapper::Mmc3(mmc3) if !mmc3.ram_enabled || (writing && mmc3.ram_protected) => None,
             Mapper::Fme7(fme7) if fme7.window & 0xC0 != 0xC0 => None,
+            Mapper::X1(x1) => x1.ram_offset(addr as u16 + 0x6000),
             _ => Some(addr % self.prg_ram.len()),
         }
     }
@@ -1721,6 +1816,14 @@ impl Cartridge {
                 return;
             }
         }
+        if let Mapper::X1(x1) = &mut self.mapper
+            && X1::registers_at(addr)
+        {
+            if let Some(mirroring) = x1.write(addr, value) {
+                self.mirroring = mirroring;
+            }
+            return;
+        }
         if let 0x6000..=0x7FFF = addr {
             if let Mapper::Nina001(nina) = &mut self.mapper {
                 match addr {
@@ -1763,7 +1866,8 @@ impl Cartridge {
             | Mapper::Mmc5(_)
             | Mapper::Fds(_)
             | Mapper::Namco163(_)
-            | Mapper::Bandai(_) => {}
+            | Mapper::Bandai(_)
+            | Mapper::X1(_) => {}
             Mapper::Uxrom(bank) | Mapper::Cnrom(bank) => *bank = value,
             Mapper::Latch(_) if self.board.register_at_6000() => {}
             Mapper::Vrc(vrc) => {
@@ -1781,6 +1885,23 @@ impl Cartridge {
             }
             Mapper::Vrc3(vrc3) => vrc3.write(addr, value),
             Mapper::Vrc6(vrc6) => vrc6.write(addr, value),
+            Mapper::Tc0190(_)
+            | Mapper::Ss88006(_)
+            | Mapper::G101(_)
+            | Mapper::H3001(_)
+            | Mapper::Sunsoft3(_) => {
+                let mirroring = match &mut self.mapper {
+                    Mapper::Tc0190(taito) => taito.write(addr, value),
+                    Mapper::Ss88006(jaleco) => jaleco.write(addr, value),
+                    Mapper::G101(irem) => irem.write(addr, value),
+                    Mapper::H3001(irem) => irem.write(addr, value),
+                    Mapper::Sunsoft3(sunsoft) => sunsoft.write(addr, value),
+                    _ => None,
+                };
+                if let Some(mirroring) = mirroring.filter(|_| !four_screen) {
+                    self.mirroring = mirroring;
+                }
+            }
             Mapper::Caltron(caltron) => {
                 if caltron.prg >= 4 {
                     caltron.chr = (caltron.chr & 0x0C) | (value & 3);
@@ -2013,16 +2134,10 @@ impl Cartridge {
                     mmc3.ram_enabled = value & 0x80 != 0;
                     mmc3.ram_protected = value & 0x40 != 0;
                 }
-                0xC000 => mmc3.irq_latch = value,
-                0xC001 => {
-                    mmc3.irq_counter = 0;
-                    mmc3.irq_reload = true;
-                }
-                0xE000 => {
-                    mmc3.irq_enabled = false;
-                    mmc3.irq = false;
-                }
-                0xE001 => mmc3.irq_enabled = true,
+                0xC000 => mmc3.lines.latch = value,
+                0xC001 => mmc3.lines.restart(),
+                0xE000 => mmc3.lines.enable(false),
+                0xE001 => mmc3.lines.enable(true),
                 _ => {}
             },
         }
@@ -2042,6 +2157,7 @@ impl Cartridge {
             }
             Mapper::Mmc5(mmc5) => mmc5.nametable_page(addr),
             Mapper::Vrc6(vrc6) => vrc6.table(addr) & 1,
+            Mapper::X1(x1) => x1.table(addr).unwrap_or_else(|| self.mirroring.page(addr)),
             Mapper::Namco163(namco) => match namco.nametable(addr) {
                 Some(Ok(page)) => page,
                 _ => self.mirroring.page(addr),
@@ -2274,39 +2390,28 @@ impl Cartridge {
     /// A12 rising after it's been low a while clocking its IRQ counter.
     #[inline]
     pub fn ppu_bus(&mut self, addr: u16, dot: u64) {
-        if matches!(self.mapper, Mapper::Mmc3(_) | Mapper::Rambo1(_)) {
+        if matches!(
+            self.mapper,
+            Mapper::Mmc3(_) | Mapper::Rambo1(_) | Mapper::Tc0190(_)
+        ) {
             self.a12(addr, dot);
         }
     }
 
     fn a12(&mut self, addr: u16, dot: u64) {
-        let low_since = match &mut self.mapper {
-            Mapper::Mmc3(mmc3) => &mut mmc3.a12_low_since,
-            Mapper::Rambo1(rambo) if !rambo.counting_cycles => &mut rambo.a12_low_since,
-            _ => return,
-        };
-        if addr & 0x1000 == 0 {
-            low_since.get_or_insert(dot);
-            return;
-        }
-        if !low_since
-            .take()
-            .is_some_and(|since| dot - since >= A12_LOW_DOTS)
-        {
-            return;
-        }
-        if let Mapper::Rambo1(rambo) = &mut self.mapper {
-            rambo.count(RAMBO1_LINE_DELAY);
-        } else if let Mapper::Mmc3(mmc3) = &mut self.mapper {
-            if mmc3.irq_counter == 0 || mmc3.irq_reload {
-                mmc3.irq_counter = mmc3.irq_latch;
-                mmc3.irq_reload = false;
-            } else {
-                mmc3.irq_counter -= 1;
+        match &mut self.mapper {
+            Mapper::Mmc3(mmc3) => {
+                if mmc3.lines.a12(addr, dot) {
+                    mmc3.lines.irq = true;
+                }
             }
-            if mmc3.irq_counter == 0 && mmc3.irq_enabled {
-                mmc3.irq = true;
+            Mapper::Rambo1(rambo) if !rambo.counting_cycles => {
+                if a12_rose(&mut rambo.a12_low_since, addr, dot) {
+                    rambo.count(RAMBO1_LINE_DELAY);
+                }
             }
+            Mapper::Tc0190(taito) if taito.counts_lines() => taito.a12(addr, dot),
+            _ => {}
         }
     }
 
@@ -2393,6 +2498,12 @@ impl Cartridge {
             Mapper::Nwc(_) => (105, "NES-EVENT"),
             Mapper::Sunsoft4(_) => (68, "SUNSOFT-4"),
             Mapper::Vrc6(vrc6) => (if vrc6.swapped() { 26 } else { 24 }, "VRC6"),
+            Mapper::Tc0190(taito) => taito.name(),
+            Mapper::X1(x1) => x1.name(),
+            Mapper::Ss88006(_) => (18, "JALECO SS88006"),
+            Mapper::G101(_) => (32, "IREM G-101"),
+            Mapper::H3001(_) => (65, "IREM H3001"),
+            Mapper::Sunsoft3(_) => (67, "SUNSOFT-3"),
         };
         format!("MAPPER {number} {name}")
     }
@@ -2463,6 +2574,13 @@ impl Cartridge {
             sunsoft.licence = sunsoft.licence.saturating_sub(1);
             return;
         }
+        match &mut self.mapper {
+            Mapper::Tc0190(taito) => return taito.cycle(),
+            Mapper::Ss88006(jaleco) => return jaleco.cycle(),
+            Mapper::H3001(irem) => return irem.cycle(),
+            Mapper::Sunsoft3(sunsoft) => return sunsoft.cycle(),
+            _ => {}
+        }
         if let Mapper::Fme7(fme7) = &mut self.mapper {
             if fme7.counting {
                 fme7.irq |= fme7.counter == 0 && fme7.irq_enabled;
@@ -2488,7 +2606,7 @@ impl Cartridge {
     /// Whether its mapper holds the IRQ line.
     pub fn irq(&self) -> bool {
         match &self.mapper {
-            Mapper::Mmc3(mmc3) => mmc3.irq,
+            Mapper::Mmc3(mmc3) => mmc3.lines.irq,
             Mapper::Rambo1(rambo) => rambo.irq,
             Mapper::Fme7(fme7) => fme7.irq,
             Mapper::Mmc5(mmc5) => mmc5.irq(),
@@ -2499,6 +2617,10 @@ impl Cartridge {
             Mapper::Namco163(namco) => namco.irq(),
             Mapper::Bandai(bandai) => bandai.irq(),
             Mapper::Nwc(nwc) => nwc.irq,
+            Mapper::Tc0190(taito) => taito.irq(),
+            Mapper::Ss88006(jaleco) => jaleco.irq(),
+            Mapper::H3001(irem) => irem.irq(),
+            Mapper::Sunsoft3(sunsoft) => sunsoft.irq(),
             _ => false,
         }
     }

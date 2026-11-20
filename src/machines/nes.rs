@@ -66,17 +66,22 @@ pub mod bandai;
 pub mod cartridge;
 mod database;
 pub mod fds;
+pub mod irem;
+pub mod jaleco;
 pub mod mmc5;
 pub mod namco163;
 pub mod palette;
 pub mod ppu;
 pub mod region;
+pub mod sunsoft3;
+pub mod taito;
 pub mod vrc;
 pub mod zapper;
 
 #[cfg(test)]
 mod tests {
     mod bandai;
+    mod boards;
     mod cartridge;
     mod controllers;
     mod database;
