@@ -44,9 +44,17 @@ jobs:
             name: linux
           - os: windows-latest
             name: windows
+          # Apple Silicon, and Intel Macs, a .dmg each.
           - os: macos-latest
-            name: macos
+            name: macos-arm64
+          - os: macos-15-intel
+            name: macos-intel
     runs-on: ${{ matrix.os }}
+    env:
+      # The oldest macOS the app runs on, as tauri.conf.json says: for the
+      # emulator and the SDL built into it, which would otherwise want the
+      # runner's own. Big Sur, the first on Apple Silicon. Only macOS reads it.
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@v7
       - if: runner.os == 'Linux'
