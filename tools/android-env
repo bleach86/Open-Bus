@@ -1,5 +1,5 @@
 # What building for Android wants, for tools/build-android and tools/nesbench
-# to source: the SDK, at ~/Android/Sdk; the NDK, $ANDROID_NDK_HOME or the
+# to source: the SDK, $ANDROID_HOME or ~/Android/Sdk; the NDK, $ANDROID_NDK_HOME or the
 # newest there before 27, which took away ALooper_pollAll, as SDL 2.26 has
 # it; and CMake, the SDK's newest, 4 or later: SDL 2.26's CMake asks for 3.0's
 # ways, which the NDK's toolchain doesn't take, and CMake 4 lets them be
@@ -9,7 +9,7 @@
 # target the triple Cargo builds it for, and the compilers, linker and SDL's
 # CMake toolchain made its. TARGET_DIR is Cargo's, target if it's not said.
 
-SDK="$HOME/Android/Sdk"
+SDK=${ANDROID_HOME:-$HOME/Android/Sdk}
 NDK=${ANDROID_NDK_HOME:-$(ls -d "$SDK"/ndk/* | sort -V | awk -F/ '$NF+0 < 27' | tail -1)}
 export ANDROID_NDK_HOME="$NDK"
 CMAKE_BIN=$(ls -d "$SDK"/cmake/*/bin 2>/dev/null | sort -V | tail -1)

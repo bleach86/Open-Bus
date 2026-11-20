@@ -1,0 +1,73 @@
+# Every push and pull request: formatting, the tests, and the builds that
+# aren't covered by them (the web page's WebAssembly, the desktop app).
+name: Check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --check
+      - run: cargo fmt --check
+        working-directory: desktop
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The version the editor's Prettier has, so the two agree.
+      - run: npx --yes prettier@3.7.4 --check "web/*.{js,css,html}" README.md "docs/*.md" ".github/workflows/*.yml"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libsdl2-dev cc65
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Klaus Dormann's 6502 tests, which `cargo test dormann` runs once
+      # they're here. Tom Harte's are gigabytes, so they're left to a run by
+      # hand.
+      - run: tools/fetch-dormann
+      - run: cargo test --release
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - run: tools/build-web
+
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: >-
+          sudo apt-get update && sudo apt-get install -y libsdl2-dev
+          libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      - run: cargo check --locked
+        working-directory: desktop

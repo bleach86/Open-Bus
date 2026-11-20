@@ -288,3 +288,22 @@ windowless subcommands.
 - Prettier on `web/`
 - `tools/build-web` after any Rust change, since the page loads `web/pkg/`,
   which goes stale silently
+
+[`.github/workflows/check.yml`](../.github/workflows/check.yml) runs these on
+every push and pull request: formatting, the tests (with Klaus Dormann's,
+fetched), the WebAssembly build, and a check of the desktop app.
+
+## Releases
+
+1. Bump `version` in `Cargo.toml` and `desktop/Cargo.toml`. The app shows it
+   in Settings → System, and Android's version code comes from it.
+2. Commit, then tag the commit `v<version>` and push the tag.
+
+[`release.yml`](../.github/workflows/release.yml) refuses a tag that doesn't
+match `desktop/Cargo.toml`. It builds the desktop installers on Linux, Windows
+and macOS and the Android APK, then puts them all on a GitHub release for the
+tag. The APK is signed with the debug key from the `ANDROID_DEBUG_KEYSTORE`
+secret, so it installs over earlier builds.
+
+[`pages.yml`](../.github/workflows/pages.yml) publishes the web build to
+GitHub Pages whenever `main` moves.
