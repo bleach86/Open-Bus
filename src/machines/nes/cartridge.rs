@@ -1054,7 +1054,7 @@ impl Cartridge {
                 halves: 0,
                 lines: Scanlines::default(),
             }),
-            5 => Mapper::Mmc5(Box::new(Mmc5::new())),
+            5 => Mapper::Mmc5(Box::default()),
             7 => Mapper::Axrom(0),
             // Its CHR there at first, as it'd be with nothing written.
             185 if submapper >= 4 => Mapper::Latch(submapper & 3),
@@ -1717,16 +1717,16 @@ impl Cartridge {
                 // for reads to miss them.
                 Mapper::Maxi15(_) => {
                     let value = self.prg_rom[self.prg_offset(addr)];
-                    if let Mapper::Maxi15(maxi) = &mut self.mapper {
-                        if let Some(mirroring) = maxi.access(addr, value) {
-                            self.mirroring = mirroring;
-                            self.chr_pages = None; // a write's would be too
-                        }
+                    if let Mapper::Maxi15(maxi) = &mut self.mapper
+                        && let Some(mirroring) = maxi.access(addr, value)
+                    {
+                        self.mirroring = mirroring;
+                        self.chr_pages = None; // a write's would be too
                     }
                     Some(value)
                 }
                 _ => {
-                    if self.prg_rom.len() % 0x1000 == 0 {
+                    if self.prg_rom.len() & 0xFFF == 0 {
                         self.prg_pages = Some(std::array::from_fn(|page| {
                             self.prg_offset(0x8000 + page as u16 * 0x1000) as u32
                         }));
@@ -1777,15 +1777,15 @@ impl Cartridge {
         // bytes, written, are saved only if they're all the RAM there is:
         // a game with more keeps its saves there, and the sound writes
         // these every frame.
-        if let Mapper::Namco163(namco) = &mut self.mapper {
-            if (0x4800..0x6000).contains(&addr) || addr >= 0x8000 {
-                let chip_ram = self.prg_ram.len() - CHIP_RAM;
-                if let Some(mirroring) = namco.write(addr, value, &mut self.prg_ram[chip_ram..]) {
-                    self.mirroring = mirroring;
-                }
-                self.written |= self.battery && chip_ram == 0 && addr & 0xF800 == 0x4800;
-                return;
+        if let Mapper::Namco163(namco) = &mut self.mapper
+            && ((0x4800..0x6000).contains(&addr) || addr >= 0x8000)
+        {
+            let chip_ram = self.prg_ram.len() - CHIP_RAM;
+            if let Some(mirroring) = namco.write(addr, value, &mut self.prg_ram[chip_ram..]) {
+                self.mirroring = mirroring;
             }
+            self.written |= self.battery && chip_ram == 0 && addr & 0xF800 == 0x4800;
+            return;
         }
         if let (0x4020..=0x5FFF, Mapper::Nina03(banks)) = (addr, &mut self.mapper) {
             if addr & 0xE100 == 0x4100 {
@@ -1807,14 +1807,14 @@ impl Cartridge {
             };
             return;
         }
-        if let (0x6000..=0x7FFF, Mapper::Latch(latch)) = (addr, &mut self.mapper) {
-            if self.board.register_at_6000() {
-                // JF-13's sound at $7000 up, not here.
-                if !(self.board == Board::Jf13 && addr >= 0x7000) {
-                    *latch = value;
-                }
-                return;
+        if let (0x6000..=0x7FFF, Mapper::Latch(latch)) = (addr, &mut self.mapper)
+            && self.board.register_at_6000()
+        {
+            // JF-13's sound at $7000 up, not here.
+            if !(self.board == Board::Jf13 && addr >= 0x7000) {
+                *latch = value;
             }
+            return;
         }
         if let Mapper::X1(x1) = &mut self.mapper
             && X1::registers_at(addr)
@@ -1835,10 +1835,10 @@ impl Cartridge {
             if let Mapper::Namco163(namco) = &mut self.mapper {
                 namco.ram_written();
             }
-            if let Mapper::Sunsoft4(sunsoft) = &mut self.mapper {
-                if !sunsoft.ram_on {
-                    sunsoft.licence = SUNSOFT4_LICENCE;
-                }
+            if let Mapper::Sunsoft4(sunsoft) = &mut self.mapper
+                && !sunsoft.ram_on
+            {
+                sunsoft.licence = SUNSOFT4_LICENCE;
             }
             let at = match &self.mapper {
                 Mapper::Mmc3(mmc3) if mmc3.mmc6 => self.mmc6_ram(mmc3, addr, true).flatten(),

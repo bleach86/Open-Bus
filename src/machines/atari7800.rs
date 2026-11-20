@@ -750,7 +750,7 @@ impl Machine for Atari7800 {
     /// as it's put away.
     fn keep_saved(&mut self, closing: bool) {
         if let Some(high_score) = &mut self.high_score
-            && (closing || self.frames % 60 == 0)
+            && (closing || self.frames.is_multiple_of(60))
         {
             high_score.keep_saved();
         }

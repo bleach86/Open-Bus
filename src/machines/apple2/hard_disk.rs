@@ -193,3 +193,9 @@ impl HardDisk {
         };
     }
 }
+
+impl Default for HardDisk {
+    fn default() -> Self {
+        Self::new()
+    }
+}

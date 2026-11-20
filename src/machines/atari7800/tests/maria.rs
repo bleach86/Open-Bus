@@ -174,10 +174,7 @@ mod tests {
         memory.put(0x3000, &[0b01_10_11_00]);
         let mut maria = self::maria();
         first_line(&mut maria, &memory);
-        assert_eq!(
-            shown(&maria, 0, 2),
-            [(0b11 << 4) | 0b01, (0b00 << 4) | 0b10]
-        );
+        assert_eq!(shown(&maria, 0, 2), [(0b11 << 4) | 0b01, 0b10]);
     }
 
     #[test]

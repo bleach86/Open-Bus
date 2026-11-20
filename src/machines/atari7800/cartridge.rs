@@ -21,8 +21,9 @@ use serde::{Deserialize, Serialize};
 const BANK: usize = 0x4000;
 
 /// Its board.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Kind {
+    #[default]
     Plain,
     SuperGame,
     SuperGameRam,
@@ -122,12 +123,6 @@ pub struct Cartridge {
     ram: Vec<u8>,
 }
 
-impl Default for Kind {
-    fn default() -> Kind {
-        Kind::Plain
-    }
-}
-
 impl Cartridge {
     pub fn new(rom: &[u8], kind: Kind, pokey: Option<u16>) -> Result<Cartridge, String> {
         if rom.is_empty() {
@@ -200,13 +195,13 @@ impl Cartridge {
                 match at {
                     ..0x8000 if self.kind == Kind::SuperGameRam => self.ram[at - 0x4000],
                     ..0x8000 => rom(last.saturating_sub(1) * BANK + (at & 0x3FFF)),
-                    ..0xC000 => rom(self.bank * BANK + (at & 0x3FFF)),
+                    0x8000..0xC000 => rom(self.bank * BANK + (at & 0x3FFF)),
                     _ => rom(last * BANK + (at & 0x3FFF)),
                 }
             }
             Kind::SuperGame9 => match at {
                 ..0x8000 => rom(at & 0x3FFF),
-                ..0xC000 => rom(self.bank * BANK + (at & 0x3FFF)),
+                0x8000..0xC000 => rom(self.bank * BANK + (at & 0x3FFF)),
                 _ => rom((self.last_bank() + 1) * BANK + (at & 0x3FFF)),
             },
             Kind::Absolute => match at {
@@ -249,7 +244,7 @@ impl Cartridge {
                         match at {
                             ..0x8000 if self.pokey.is_some() => 0xFF,
                             ..0x8000 => rom(image + last.saturating_sub(1) * BANK + (at & 0x3FFF)),
-                            ..0xC000 => rom(image + self.bank * BANK + (at & 0x3FFF)),
+                            0x8000..0xC000 => rom(image + self.bank * BANK + (at & 0x3FFF)),
                             _ => rom(image + last * BANK + (at & 0x3FFF)),
                         }
                     }

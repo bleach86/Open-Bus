@@ -222,7 +222,7 @@ impl Mmc5 {
         let mut pages = [0; 8];
         for (page, offset) in pages.iter_mut().enumerate() {
             match self.place(0x8000 + page as u16 * 0x1000) {
-                Place::Rom(at) if len % 0x1000 == 0 => *offset = (at % len) as u32,
+                Place::Rom(at) if len.is_multiple_of(0x1000) => *offset = (at % len) as u32,
                 _ => return None,
             }
         }
@@ -319,11 +319,11 @@ impl Mmc5 {
                 }
             }
             0x6000..=0xFFFF => {
-                if let (Place::Ram(at), true) = (self.place(addr), self.ram_writable()) {
-                    if let Some(byte) = ram.get_mut(at) {
-                        *byte = value;
-                        return true;
-                    }
+                if let (Place::Ram(at), true) = (self.place(addr), self.ram_writable())
+                    && let Some(byte) = ram.get_mut(at)
+                {
+                    *byte = value;
+                    return true;
                 }
             }
             _ => {}
@@ -560,5 +560,11 @@ impl Mmc5 {
             (_, true) => (8 + (slot & 3), 0x400),
         };
         self.chr[register] as usize * size + (addr & (size - 1))
+    }
+}
+
+impl Default for Mmc5 {
+    fn default() -> Self {
+        Self::new()
     }
 }

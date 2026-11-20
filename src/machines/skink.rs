@@ -401,7 +401,7 @@ impl Machine for Skink {
     /// The disk written back to its file, a second after it's written, and
     /// as it's put away.
     fn keep_saved(&mut self, closing: bool) {
-        if !closing && self.frames % 60 != 0 {
+        if !closing && !self.frames.is_multiple_of(60) {
             return;
         }
         if let Some(disk) = &mut self.disk {

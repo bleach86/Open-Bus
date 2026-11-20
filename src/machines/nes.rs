@@ -546,7 +546,7 @@ impl Bus for Nes {
             }
         }
         // A write of $4016 only reaches the controllers as a put begins.
-        if self.cycles % 2 == 0 {
+        if self.cycles & 1 == 0 {
             self.strobe = self.strobe_written;
             if self.strobe {
                 self.latch();
@@ -709,7 +709,7 @@ impl Machine for Nes {
 
     /// Its battery's RAM, a second after it's written.
     fn keep_saved(&mut self, closing: bool) {
-        if closing || self.frames % 60 == 0 {
+        if closing || self.frames.is_multiple_of(60) {
             self.save_battery();
         }
     }

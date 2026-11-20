@@ -147,7 +147,7 @@ mod tests {
             for _ in 0..cycles {
                 self.card.tick();
                 self.cycles += 1;
-                if self.cycles % FRAME == 0 {
+                if self.cycles.is_multiple_of(FRAME) {
                     self.card.frame();
                     thread::sleep(Duration::from_millis(1));
                 }

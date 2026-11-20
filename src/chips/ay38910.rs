@@ -41,7 +41,7 @@ pub const LEVELS: [f32; 16] = [
     0.25,
     0.353_553,
     0.5,
-    0.707_107,
+    std::f32::consts::FRAC_1_SQRT_2,
     1.0,
 ];
 
@@ -211,5 +211,11 @@ impl Ay38910 {
             amplitude & 0x0F
         };
         LEVELS[level as usize]
+    }
+}
+
+impl Default for Ay38910 {
+    fn default() -> Self {
+        Self::new()
     }
 }

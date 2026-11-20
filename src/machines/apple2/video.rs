@@ -255,9 +255,8 @@ fn signal_line(
             }
             for bit in 0..7 {
                 let on = (byte >> bit) & 1 != 0;
-                for at in x + 2 * bit + shift..(x + 2 * bit + shift + 2).min(PICTURE_WIDTH) {
-                    signal[at] = on;
-                }
+                let at = x + 2 * bit + shift;
+                signal[at..(at + 2).min(PICTURE_WIDTH)].fill(on);
             }
         }
     } else {
@@ -280,8 +279,8 @@ fn signal_line(
                 ],
             };
             for (x, width, colour) in blocks {
-                for at in x..x + width {
-                    signal[at] = (colour >> (at % 4)) & 1 != 0;
+                for (at, lit) in (x..).zip(&mut signal[x..x + width]) {
+                    *lit = (colour >> (at % 4)) & 1 != 0;
                 }
             }
         }
@@ -447,10 +446,10 @@ fn hires_line(ram: &[u8], page2: bool, y: usize, out: &mut [u32]) {
             (true, true) => ORANGE,
         }
     };
-    for x in 0..WIDTH {
+    for (x, pixel) in out.iter_mut().enumerate().take(WIDTH) {
         let left = x > 0 && dot(x - 1);
         let right = x + 1 < WIDTH && dot(x + 1);
-        out[x] = match (dot(x), left || right) {
+        *pixel = match (dot(x), left || right) {
             (true, true) => WHITE,
             (true, false) => colour(x),
             (false, _) if left && right => colour(x - 1),

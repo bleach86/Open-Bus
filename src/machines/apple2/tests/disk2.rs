@@ -178,15 +178,13 @@ mod tests {
 
     #[test]
     fn a_woz_is_its_tracks_where_its_map_puts_them() {
-        let dsk: Vec<u8> = (0..143_360).map(|at| (at / 256 ^ at) as u8).collect();
+        let dsk: Vec<u8> = (0..143_360).map(|at| ((at / 256) ^ at) as u8).collect();
         let tracks = Disk::from_dsk(&dsk).unwrap().tracks;
         // Each track at its quarter-track and those either side, none
         // between; but track 2 at half-track 3 too.
         let mut tmap = [0xFF; 160];
         for track in 0..35usize {
-            for quarter in (4 * track).saturating_sub(1)..=4 * track + 1 {
-                tmap[quarter] = track as u8;
-            }
+            tmap[(4 * track).saturating_sub(1)..=4 * track + 1].fill(track as u8);
         }
         tmap[6] = 2;
         for version in [1, 2] {
@@ -197,7 +195,7 @@ mod tests {
                 disk.tracks[35..].iter().all(Vec::is_empty),
                 "WOZ{version}'s tracks past 35"
             );
-            for half in 0..70 {
+            for (half, &got) in disk.half_tracks.iter().enumerate().take(70) {
                 let want = if half % 2 == 0 {
                     Some(half / 2)
                 } else if half == 3 {
@@ -205,10 +203,7 @@ mod tests {
                 } else {
                     None
                 };
-                assert_eq!(
-                    disk.half_tracks[half], want,
-                    "WOZ{version}'s half-track {half}"
-                );
+                assert_eq!(got, want, "WOZ{version}'s half-track {half}");
             }
             let mut broken = woz(version, &tracks, &tmap, false);
             broken[100] ^= 1;
@@ -221,7 +216,7 @@ mod tests {
 
     #[test]
     fn each_image_saves_as_it_was_read() {
-        let dsk: Vec<u8> = (0..143_360).map(|at| (at / 256 * 7 ^ at) as u8).collect();
+        let dsk: Vec<u8> = (0..143_360).map(|at| ((at / 256 * 7) ^ at) as u8).collect();
         assert!(
             Disk::from_dsk(&dsk).unwrap().to_image().unwrap() == dsk,
             "the .dsk"
@@ -249,9 +244,7 @@ mod tests {
         let tracks = Disk::from_dsk(&dsk).unwrap().tracks;
         let mut tmap = [0xFF; 160];
         for track in 0..35usize {
-            for quarter in (4 * track).saturating_sub(1)..=4 * track + 1 {
-                tmap[quarter] = track as u8;
-            }
+            tmap[(4 * track).saturating_sub(1)..=4 * track + 1].fill(track as u8);
         }
         for (version, protected) in [(1, false), (2, true)] {
             let saved = Disk::from_woz(&woz(version, &tracks, &tmap, protected))
@@ -339,7 +332,7 @@ mod tests {
         let one = folder.join("Game disk 1A.woz");
         assert_eq!(
             disk_image::images(&one).unwrap(),
-            [one.clone()],
+            std::slice::from_ref(&one),
             "an image, itself"
         );
         std::fs::remove_dir_all(&folder).unwrap();
@@ -440,10 +433,10 @@ mod tests {
                 let sector = ((bytes[at + 7] << 1) | 1) & bytes[at + 8];
                 let data = (at + 14..bytes.len().saturating_sub(349))
                     .find(|&d| bytes[d..d + 3] == [0xD5, 0xAA, 0xAD]);
-                if let Some(data) = data.and_then(|d| decode(&bytes[d..d + 349])) {
-                    if !sectors.iter().any(|&(s, _)| s == sector) {
-                        sectors.push((sector, data));
-                    }
+                if let Some(data) = data.and_then(|d| decode(&bytes[d..d + 349]))
+                    && !sectors.iter().any(|&(s, _)| s == sector)
+                {
+                    sectors.push((sector, data));
                 }
             }
         }

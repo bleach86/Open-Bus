@@ -644,7 +644,7 @@ impl<M: Machine> Host<M> {
         }
         // Fast-forwarded, a picture of each FAST; late, one left out, but
         // never two in a row, or there'd be no telling it's still going.
-        let unseen = fast && self.fast % FAST != 0;
+        let unseen = fast && !self.fast.is_multiple_of(FAST);
         let leave_out =
             unseen || self.late && !self.left_out && self.notice.is_none() && !self.debug;
         self.left_out = self.cpu.memory.leave_out_picture(leave_out);

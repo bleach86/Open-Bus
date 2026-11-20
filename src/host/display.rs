@@ -253,7 +253,7 @@ impl Gamepad {
     /// As a machine's to have it, `frame` the host's count of them: its
     /// turbo pressing A and B for TURBO_FRAMES, and letting go for as many.
     pub fn turbo(self, frame: u32) -> Gamepad {
-        let pressed = frame / TURBO_FRAMES % 2 == 0;
+        let pressed = (frame / TURBO_FRAMES).is_multiple_of(2);
         Gamepad {
             a: self.a || self.turbo_a && pressed,
             b: self.b || self.turbo_b && pressed,

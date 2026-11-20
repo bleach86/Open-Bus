@@ -124,6 +124,12 @@ impl CPU {
     }
 }
 
+impl Default for CPU {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<B: Bus> CPU<B> {
     /// The CPU wired to `memory`, any machine's bus; at power-on.
     pub fn with_bus(memory: B) -> Self {
@@ -1140,14 +1146,14 @@ impl<B: Bus> CPU<B> {
         self.read_byte(zp_addr as u16); // the base, read before X is added
         let effective_addr_lo = zp_addr.wrapping_add(self.x);
         let lo = self.read_byte(effective_addr_lo as u16) as u16;
-        let hi = self.read_byte((effective_addr_lo.wrapping_add(1) & 0x00FF) as u16) as u16;
+        let hi = self.read_byte(effective_addr_lo.wrapping_add(1) as u16) as u16;
         (hi << 8) | lo
     }
 
     pub fn fetch_addr_indirect_y(&mut self) -> u16 {
         let zp_addr = self.fetch_byte();
         let lo = self.read_byte(zp_addr as u16) as u16;
-        let hi = self.read_byte((zp_addr.wrapping_add(1) & 0x00FF) as u16) as u16;
+        let hi = self.read_byte(zp_addr.wrapping_add(1) as u16) as u16;
         let base = (hi << 8) | lo;
         let addr = base.wrapping_add(self.y as u16);
 

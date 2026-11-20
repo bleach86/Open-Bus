@@ -436,7 +436,7 @@ impl Fds {
         format!(
             "Disk {} side {}",
             side / 2 + 1,
-            if side % 2 == 0 { 'A' } else { 'B' }
+            if side.is_multiple_of(2) { 'A' } else { 'B' }
         )
     }
 

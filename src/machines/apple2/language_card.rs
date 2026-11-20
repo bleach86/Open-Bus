@@ -106,3 +106,9 @@ impl LanguageCard {
         }
     }
 }
+
+impl Default for LanguageCard {
+    fn default() -> Self {
+        Self::new()
+    }
+}

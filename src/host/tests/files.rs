@@ -25,7 +25,7 @@ mod tests {
         assert!(files::is_folder(&folder) && !files::is_folder(&file));
         assert_eq!(
             files::list(&folder).unwrap(),
-            [file.clone()],
+            std::slice::from_ref(&file),
             "a file left beside it"
         );
         std::fs::remove_dir_all(&folder).unwrap();

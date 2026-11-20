@@ -361,7 +361,7 @@ impl Cartridge {
             0x8000 if !superchip(image) && tigervision(image) => Kind::Tigervision,
             0x8000 => Kind::F4,
             0x2800..=0x2900 => Kind::Dpc,
-            _ if size % supercharger::LOAD == 0 => Kind::Supercharger,
+            _ if size.is_multiple_of(supercharger::LOAD) => Kind::Supercharger,
             _ => return Err(format!("a {} byte ROM, of no type that's here", size)),
         };
         let kind = kind.unwrap_or(detected);
@@ -538,11 +538,11 @@ impl Cartridge {
     /// A read of $1000 to $1FFF, `console` the console's RAM, as the
     /// Supercharger's BIOS has a load put in it.
     pub fn read_on(&mut self, addr: u16, console: &mut [u8]) -> u8 {
-        if let Some(supercharger) = &mut self.supercharger {
-            if supercharger.loading(addr) {
-                supercharger.load(&self.rom, &mut self.ram, console);
-                return supercharger::bios(addr as usize & 0x7FF);
-            }
+        if let Some(supercharger) = &mut self.supercharger
+            && supercharger.loading(addr)
+        {
+            supercharger.load(&self.rom, &mut self.ram, console);
+            return supercharger::bios(addr as usize & 0x7FF);
         }
         self.read(addr)
     }

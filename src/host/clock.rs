@@ -209,8 +209,8 @@ pub fn rule_offset(rule: &str, utc: i64) -> Option<i64> {
         };
         let mut parts = digits.split(':').map(|part| part.parse::<i64>());
         let hours = parts.next()?.ok()?;
-        let minutes = parts.next().map_or(Ok(0), |part| part).ok()?;
-        let seconds = parts.next().map_or(Ok(0), |part| part).ok()?;
+        let minutes = parts.next().unwrap_or(Ok(0)).ok()?;
+        let seconds = parts.next().unwrap_or(Ok(0)).ok()?;
         Some(sign * (hours * 3600 + minutes * 60 + seconds))
     };
     name(&mut rest)?;

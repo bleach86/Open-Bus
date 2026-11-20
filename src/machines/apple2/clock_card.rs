@@ -72,3 +72,9 @@ impl ClockCard {
         }
     }
 }
+
+impl Default for ClockCard {
+    fn default() -> Self {
+        Self::new()
+    }
+}

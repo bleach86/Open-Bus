@@ -46,9 +46,13 @@ mod tests {
         );
     }
 
+    /// What a test's window keeps: function keys to press, its title, and
+    /// the last picture it showed.
+    type Kept = Rc<RefCell<(Vec<u8>, String, Vec<u32>)>>;
+
     /// A window of the test's: function keys pressed, as the test says;
     /// its title, and the last picture it showed, kept.
-    struct Keys(Rc<RefCell<(Vec<u8>, String, Vec<u32>)>>);
+    struct Keys(Kept);
 
     impl Display for Keys {
         fn show(&mut self, pixels: &[u32], _: usize, _: usize) {
@@ -116,10 +120,7 @@ mod tests {
             band()[..PICTURE_WIDTH].iter().all(|&dot| dot == 0),
             "no notice's band"
         );
-        assert!(
-            band().iter().any(|&dot| dot == 0xFFFFFF),
-            "no notice's text"
-        );
+        assert!(band().contains(&0xFFFFFF), "no notice's text");
         for _ in 0..180 {
             host.frame();
         }

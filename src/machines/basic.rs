@@ -108,10 +108,11 @@ impl Bus for Memory {
     fn read(&mut self, addr: u16) -> u8 {
         // The terminal's key: the next typed, once the last has been taken
         // (written back 0).
-        if addr == 0xFFF9 && self.data[0xFFF9] == 0 {
-            if let Some(key) = self.terminal.as_ref().and_then(|terminal| terminal.key()) {
-                self.data[0xFFF9] = key;
-            }
+        if addr == 0xFFF9
+            && self.data[0xFFF9] == 0
+            && let Some(key) = self.terminal.as_ref().and_then(|terminal| terminal.key())
+        {
+            self.data[0xFFF9] = key;
         }
 
         // The uptime registers: the uptime in milliseconds, low to high, at

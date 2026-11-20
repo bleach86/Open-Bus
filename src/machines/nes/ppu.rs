@@ -351,7 +351,7 @@ impl Ppu {
 
     /// A register read, by the CPU: $2000 to $2007, `register` 0 to 7.
     pub fn read_register(&mut self, register: u16, cart: &mut Cartridge) -> u8 {
-        let value = match register & 7 {
+        match register & 7 {
             2 => {
                 // Vblank's as the read begins, the sprites' as it ends, nearer
                 // 2 dots on: they've gone a dot before vblank's seen to.
@@ -391,8 +391,7 @@ impl Ppu {
                 value
             }
             _ => self.latch,
-        };
-        value
+        }
     }
 
     /// `value`'s `bits` driven on the registers' bus, the others as they
@@ -897,7 +896,7 @@ impl Ppu {
     /// tile on each 8, a line down at 256, back to the left at 257.
     fn scroll_dot(&mut self) {
         let dot = self.dot;
-        if dot % 8 == 0 && matches!(dot, 1..=256 | 321..=336) {
+        if dot & 7 == 0 && matches!(dot, 1..=256 | 321..=336) {
             self.next_tile();
         }
         if dot & !1 == 256 {
@@ -951,7 +950,7 @@ impl Ppu {
         match dot {
             1..=64 if seen => {
                 self.oam_buffer = 0xFF;
-                if dot % 2 == 0 {
+                if dot & 1 == 0 {
                     self.secondary[self.secondary_addr as usize] = 0xFF;
                     self.next_secondary();
                 }
@@ -971,7 +970,7 @@ impl Ppu {
             321..=340 => self.oam_buffer = self.secondary[self.secondary_addr as usize],
             _ => {}
         }
-        if (dot % 64 == 0 || dot == 340) && matches!(dot, 64 | 256 | 340) {
+        if (dot & 63 == 0 || dot == 340) && matches!(dot, 64 | 256 | 340) {
             self.secondary_addr = 0;
             self.secondary_full = false;
         }
@@ -1019,7 +1018,7 @@ impl Ppu {
                     addr.wrapping_add(4) & 0xFC
                 }
             }
-            0 | 1 | 2 => {
+            0..=2 => {
                 if self.sprite_byte == 0 {
                     if full && !self.overflow {
                         self.overflow = true;

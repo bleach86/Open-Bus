@@ -279,10 +279,7 @@ mod tests {
         host.frame();
         let width = ppu::WIDTH - 16;
         let band = seen.borrow().last[(ppu::HEIGHT - 16 - 12) * width..].to_vec();
-        assert!(
-            band.iter().any(|&dot| dot == 0xFFFFFF),
-            "no notice on its picture"
-        );
+        assert!(band.contains(&0xFFFFFF), "no notice on its picture");
 
         host.cpu.memory.ram[0x123] = 0x5A;
         seen.borrow_mut().function_keys.push(2);

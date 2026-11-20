@@ -360,16 +360,16 @@ impl Apple {
     /// The Apple `model`, its ROM, or its ROMs' folder, `rom`.
     fn run(self, model: machines::apple2::Model, rom: &str, fullscreen: bool) {
         let disks: Vec<&str> = self.disks.iter().map(String::as_str).collect();
-        machines::apple2::run(
+        let built = machines::apple2::build(
             model,
             rom,
             &disks,
             self.mockingboards as usize,
             self.cpu,
             self.monitor,
-            self.text,
-            fullscreen,
-        );
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        machines::apple2::run(model, built, self.text, fullscreen);
     }
 }
 

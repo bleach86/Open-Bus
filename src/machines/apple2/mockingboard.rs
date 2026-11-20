@@ -86,3 +86,9 @@ impl Mockingboard {
         (voices(&self.ays[0]), voices(&self.ays[1]))
     }
 }
+
+impl Default for Mockingboard {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -64,29 +64,26 @@ impl Terminal {
 
                 // Spawn a thread to read stdin asynchronously
                 thread::spawn(move || {
-                    let stdin = stdin();
-                    for byte in stdin.bytes() {
-                        if let Ok(b) = byte {
-                            if b == 0x04 {
-                                // Ctrl-D: off
-                                stty(&["icanon", "echo", "isig"]);
-                                std::process::exit(0);
-                            }
-                            let mut rx = rx_clone.lock().unwrap();
-                            rx.push_back(b);
-                            // A function key: not keys typed.
-                            for (n, sequence) in FUNCTION_KEYS.iter().enumerate() {
-                                if rx.len() >= sequence.len()
-                                    && rx
-                                        .iter()
-                                        .rev()
-                                        .take(sequence.len())
-                                        .eq(sequence.iter().rev())
-                                {
-                                    let typed = rx.len() - sequence.len();
-                                    rx.truncate(typed);
-                                    FUNCTION_KEYS_PRESSED.lock().unwrap().push_back(n as u8 + 1);
-                                }
+                    for b in stdin().lock().bytes().map_while(Result::ok) {
+                        if b == 0x04 {
+                            // Ctrl-D: off
+                            stty(&["icanon", "echo", "isig"]);
+                            std::process::exit(0);
+                        }
+                        let mut rx = rx_clone.lock().unwrap();
+                        rx.push_back(b);
+                        // A function key: not keys typed.
+                        for (n, sequence) in FUNCTION_KEYS.iter().enumerate() {
+                            if rx.len() >= sequence.len()
+                                && rx
+                                    .iter()
+                                    .rev()
+                                    .take(sequence.len())
+                                    .eq(sequence.iter().rev())
+                            {
+                                let typed = rx.len() - sequence.len();
+                                rx.truncate(typed);
+                                FUNCTION_KEYS_PRESSED.lock().unwrap().push_back(n as u8 + 1);
                             }
                         }
                     }

@@ -518,13 +518,17 @@ impl Disk {
             |bytes: &[u8], at: usize| u16::from_le_bytes([bytes[at], bytes[at + 1]]) as usize;
 
         let tracks: Option<Vec<Vec<u8>>> = if version == 1 {
-            trks.chunks_exact(WOZ1_TRACK)
+            trks.as_chunks::<WOZ1_TRACK>()
+                .0
+                .iter()
                 .map(|track| bits(&track[..6646], u16_at(track, 6648)))
                 .collect()
         } else {
             trks.get(..WOZ2_ENTRIES * 8)
                 .ok_or("its TRKS cut short")?
-                .chunks_exact(8)
+                .as_chunks::<8>()
+                .0
+                .iter()
                 .map(|entry| {
                     let (start, length) = (u16_at(entry, 0) * 512, u16_at(entry, 2) * 512);
                     let count = u32::from_le_bytes(entry[4..8].try_into().unwrap()) as usize;

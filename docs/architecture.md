@@ -290,7 +290,7 @@ windowless subcommands.
   which goes stale silently
 
 [`.github/workflows/check.yml`](../.github/workflows/check.yml) runs these on
-every push and pull request: formatting, the tests (with Klaus Dormann's,
+every push and pull request: formatting, clippy (no warnings allowed), the tests (with Klaus Dormann's,
 fetched), the WebAssembly build, and a check of the desktop app.
 
 ## Releases

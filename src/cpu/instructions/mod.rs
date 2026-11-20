@@ -69,7 +69,7 @@ pub mod stack_ops {
 }
 
 pub mod status_flag_changes {
-    mod status_flag_changes;
+    mod flags;
 }
 
 pub mod system_functions {

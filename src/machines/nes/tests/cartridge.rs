@@ -1427,10 +1427,10 @@ mod tests {
         active(&mut cart, 0, 0, 0, 0b1010, 0b11, 0);
         assert_eq!(
             cart.chr_read(0),
-            0b1010_11,
+            0b1010 << 2 | 0b11,
             "the address's four, the data's two"
         );
-        assert_eq!(cart.chr_read(0x1FFF), 0b1010_11, "8K of it");
+        assert_eq!(cart.chr_read(0x1FFF), 0b1010 << 2 | 0b11, "8K of it");
     }
 
     #[test]

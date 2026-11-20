@@ -61,6 +61,8 @@ enum Result {
     Connect,
     NoCarrier,
     Error,
+    /// Not on a web page, which never dials.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     NoAnswer,
 }
 

@@ -169,11 +169,12 @@ impl Bandai {
         match addr & 0x0F {
             bank @ 0..=7 => {
                 self.chr[bank as usize] = value;
-                if bank <= 3 && self.board == Board::Datach {
-                    if let Some(extra) = &mut self.extra {
-                        let at = self.eeprom.as_ref().map_or(0, |eeprom| eeprom.chip.size());
-                        written |= extra.write(value >> 3 & 1, extra.data_line, &mut ram[at..]);
-                    }
+                if bank <= 3
+                    && self.board == Board::Datach
+                    && let Some(extra) = &mut self.extra
+                {
+                    let at = self.eeprom.as_ref().map_or(0, |eeprom| eeprom.chip.size());
+                    written |= extra.write(value >> 3 & 1, extra.data_line, &mut ram[at..]);
                 }
             }
             0x8 => self.prg = value & 0x0F,

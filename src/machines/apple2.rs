@@ -389,7 +389,7 @@ impl Apple2 {
 
     /// Picture line `y`, drawn from RAM by the switches as they are now.
     fn draw_line(&mut self, y: usize) {
-        let flash_on = (self.frames / FLASH_FRAMES) % 2 == 0;
+        let flash_on = (self.frames / FLASH_FRAMES).is_multiple_of(2);
         let switches = self.switches();
         let source = video::Source {
             main: &self.ram,
@@ -482,10 +482,10 @@ impl Apple2 {
                 floating
             }
             0xC000 => {
-                if self.keyboard & 0x80 == 0 {
-                    if let Some(key) = self.keys.pop_front() {
-                        self.press(key);
-                    }
+                if self.keyboard & 0x80 == 0
+                    && let Some(key) = self.keys.pop_front()
+                {
+                    self.press(key);
                 }
                 self.keyboard
             }
@@ -519,10 +519,10 @@ impl Apple2 {
             // The annunciators: on a IIe, the third's, double high-res, on
             // at $C05E, off at $C05F.
             0xC050 => {
-                if let Some(iie) = &mut self.iie {
-                    if addr & 0x0E == 0x0E {
-                        iie.dhires = addr & 1 == 0;
-                    }
+                if let Some(iie) = &mut self.iie
+                    && addr & 0x0E == 0x0E
+                {
+                    iie.dhires = addr & 1 == 0;
                 }
                 floating
             }
@@ -606,10 +606,10 @@ impl Apple2 {
 /// A screen byte's character: the II+'s 64, upper case letters and
 /// symbols, whichever of its normal, inverse or flashing forms.
 fn glyph(byte: u8, lower: Option<bool>) -> char {
-    if let Some(altcharset) = lower {
-        if byte >= 0xE0 || (altcharset && (0x60..0x80).contains(&byte)) {
-            return (byte & 0x7F) as char;
-        }
+    if let Some(altcharset) = lower
+        && (byte >= 0xE0 || (altcharset && (0x60..0x80).contains(&byte)))
+    {
+        return (byte & 0x7F) as char;
     }
     let c = byte & 0x3F;
     (if c < 0x20 { c + 0x40 } else { c }) as char
@@ -625,10 +625,10 @@ impl Bus for Apple2 {
             // 5; the Disk II's ROM, in slot 6; the hard disk's, in 7; no
             // other cards.
             0xC100..=0xCFFF => {
-                if let Some(iie) = &mut self.iie {
-                    if iie.internal(addr) {
-                        return iie.internal_rom[addr as usize - 0xC000];
-                    }
+                if let Some(iie) = &mut self.iie
+                    && iie.internal(addr)
+                {
+                    return iie.internal_rom[addr as usize - 0xC000];
                 }
                 if let Some(card) = self.mockingboard(addr) {
                     return card.read(addr);
@@ -675,10 +675,10 @@ impl Bus for Apple2 {
             // A IIe's own ROM, as its MMU says, written to nothing; the
             // Mockingboards.
             0xC100..=0xCFFF => {
-                if let Some(iie) = &mut self.iie {
-                    if iie.internal(addr) {
-                        return;
-                    }
+                if let Some(iie) = &mut self.iie
+                    && iie.internal(addr)
+                {
+                    return;
                 }
                 if let Some(card) = self.mockingboard(addr) {
                     card.write(addr, value);
@@ -707,7 +707,7 @@ impl Bus for Apple2 {
         self.now += 1;
         self.cycle += 1;
         // A line ended: drawn, if it is one of those seen.
-        if self.cycle % CYCLES_PER_LINE == 0 {
+        if self.cycle.is_multiple_of(CYCLES_PER_LINE) {
             let y = (self.cycle / CYCLES_PER_LINE - 1) as usize;
             if y < video::HEIGHT {
                 self.draw_line(y);
@@ -752,7 +752,7 @@ impl Machine for Apple2 {
     /// The text screen: inverse in reverse video (below $40), and flashing
     /// (below $80) too while the flash is on; what's in the drives under it.
     fn text_screen(&self) -> Option<String> {
-        let flash_on = (self.frames / FLASH_FRAMES) % 2 == 0;
+        let flash_on = (self.frames / FLASH_FRAMES).is_multiple_of(2);
         let mut screen = String::from("\x1B[H");
         let lower = self.lower_case();
         for row in 0..24 {
@@ -1196,21 +1196,10 @@ pub fn build(
     Ok(Built { cpu, notice, state })
 }
 
-/// An Apple as `build` has it, run in a window, `fullscreen` or not; or
-/// `text`, its text screen in the terminal.
+/// An Apple `build` made, of `model`, run in a window, `fullscreen` or
+/// not; or `text`, its text screen in the terminal.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run(
-    model: Model,
-    roms: &str,
-    disks: &[&str],
-    mockingboards: usize,
-    variant: Option<Variant>,
-    monitor: video::Monitor,
-    text: bool,
-    fullscreen: bool,
-) {
-    let built = build(model, roms, disks, mockingboards, variant, monitor)
-        .unwrap_or_else(|e| panic!("{e}"));
+pub fn run(model: Model, built: Built, text: bool, fullscreen: bool) {
     let display: Box<dyn Display> = if text {
         Box::new(Terminal::new())
     } else {

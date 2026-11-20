@@ -154,7 +154,7 @@ mod tests {
         let mut header = vec![0u8; 0x100];
         header[..6].copy_from_slice(&[0x0E, 0x23, 0xF1, 24, 0, 7]);
         for page in 0..24 {
-            header[16 + page] = ((page % 8) << 2 | page / 8) as u8;
+            header[16 + page] = (((page % 8) << 2) | (page / 8)) as u8;
         }
         load.extend(vec![0xFF; 0x800]); // where the BIOS is, in a dump
         load.extend(header);

@@ -151,7 +151,9 @@ impl Supercharger {
     pub fn load(&mut self, tape: &[u8], ram: &mut [u8], console: &mut [u8]) {
         let number = console[0];
         let Some(load) = tape
-            .chunks_exact(LOAD)
+            .as_chunks::<LOAD>()
+            .0
+            .iter()
             .find(|load| load[HEADER + 5] == number)
         else {
             return;
@@ -180,5 +182,11 @@ impl Supercharger {
 
     pub fn write(&mut self, addr: u16, ram: &mut [u8]) {
         self.hotspot(addr, ram);
+    }
+}
+
+impl Default for Supercharger {
+    fn default() -> Self {
+        Self::new()
     }
 }

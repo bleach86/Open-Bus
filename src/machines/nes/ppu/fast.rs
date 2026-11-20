@@ -152,7 +152,7 @@ impl Ppu {
         let v = self.v;
         let watched = cart.watches_fetches();
         let pages = [0x2000, 0x2400, 0x2800, 0x2C00].map(|addr| cart.nametable_page(addr) * 0x400);
-        for (at, tile) in dots.chunks_exact_mut(8).enumerate() {
+        for (at, tile) in dots.as_chunks_mut::<8>().0.iter_mut().enumerate() {
             // All of a line's fetches being on one dot, a mapper counting
             // them sees no more in the first and last than in the lot.
             let told = watched || at == 0 || at == TILES - 1;
@@ -183,7 +183,7 @@ impl Ppu {
             };
             let colours = SPREAD[low as usize] | SPREAD[high as usize] << 1;
             let drawn = (colours | colours >> 1) & 0x0101_0101_0101_0101;
-            tile.copy_from_slice(&(colours | drawn * palette as u64).to_le_bytes());
+            tile.copy_from_slice(&(colours | (drawn * palette as u64)).to_le_bytes());
             self.next_tile();
         }
         self.v = v;

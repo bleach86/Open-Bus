@@ -96,6 +96,12 @@ pub fn read_part(name: &str, offset: u32) -> Option<Vec<u8>> {
 #[wasm_bindgen]
 pub struct RomSorter(Sorted);
 
+impl Default for RomSorter {
+    fn default() -> Self {
+        RomSorter::new()
+    }
+}
+
 #[wasm_bindgen]
 impl RomSorter {
     #[wasm_bindgen(constructor)]
@@ -122,12 +128,13 @@ impl RomSorter {
     }
 }
 
+/// Each machine's host, boxed: they're far apart in size, and only one's
+/// ever running.
 enum Running {
-    Apple(Host<Apple2>),
-    Nes(Host<Nes>),
-    Atari2600(Host<Atari2600>),
-    Atari7800(Host<Atari7800>),
-    /// Boxed, its host far bigger than the others'.
+    Apple(Box<Host<Apple2>>),
+    Nes(Box<Host<Nes>>),
+    Atari2600(Box<Host<Atari2600>>),
+    Atari7800(Box<Host<Atari7800>>),
     X16(Box<Host<X16>>),
 }
 
@@ -202,7 +209,7 @@ impl Emulator {
         let state = save_state::path(Path::new(rom));
         let host = Host::new(cpu, Box::new(Page(page.clone())), state);
         Ok(Emulator {
-            running: Running::Nes(host),
+            running: Running::Nes(Box::new(host)),
             page,
             size: nes::size(overscan, region),
         })
@@ -221,7 +228,7 @@ impl Emulator {
         let state = save_state::path(Path::new(rom));
         let host = Host::new(cpu, Box::new(Page(page.clone())), state);
         Ok(Emulator {
-            running: Running::Atari2600(host),
+            running: Running::Atari2600(Box::new(host)),
             page,
             size: atari2600::size(layout),
         })
@@ -240,7 +247,7 @@ impl Emulator {
         let state = save_state::path(Path::new(rom));
         let host = Host::new(cpu, Box::new(Page(page.clone())), state);
         Ok(Emulator {
-            running: Running::Atari7800(host),
+            running: Running::Atari7800(Box::new(host)),
             page,
             size: atari7800::size(region),
         })
@@ -264,7 +271,7 @@ impl Emulator {
             host.say(text);
         }
         Ok(Emulator {
-            running: Running::Apple(host),
+            running: Running::Apple(Box::new(host)),
             page,
             size: model.size(),
         })
@@ -437,7 +444,9 @@ impl Emulator {
 
     /// The controls as they are: each gamepad's a bit each, up, down, left,
     /// right, A, B, Select, Start, turbo A and turbo B; and whether
-    /// fast-forward's held, and rewind.
+    /// fast-forward's held, and rewind. A number each, as the page calls it
+    /// every frame, not an object to be made and taken apart.
+    #[allow(clippy::too_many_arguments)]
     pub fn controls(
         &self,
         gamepad: u16,

@@ -34,7 +34,7 @@ mod tests {
                 band.iter().all(|&dot| dot == 0x000000 || dot == 0xFFFFFF),
                 "{width}: not its band"
             );
-            assert!(band.iter().any(|&dot| dot == 0xFFFFFF), "{width}: no text");
+            assert!(band.contains(&0xFFFFFF), "{width}: no text");
         }
     }
 
@@ -65,7 +65,7 @@ mod tests {
                 (0x202020, 0x202020),
                 "{width}: the picture under it dimmed"
             );
-            let lit = |colour: u32| picture.iter().any(|&dot| dot == colour);
+            let lit = |colour: u32| picture.contains(&colour);
             assert!(lit(0xFF3020), "{width}: no lamp");
         }
     }

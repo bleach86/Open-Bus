@@ -15,7 +15,7 @@ impl<B: Bus> CPU<B> {
         self.status.negative = (result & 0x80) != 0;
         self.status.overflow = (self.a ^ operand) & (self.a ^ result) & 0x80 != 0;
 
-        self.a = result as u8;
+        self.a = result;
     }
 
     pub(crate) fn sbc_decimal(&mut self, operand: u8) {
