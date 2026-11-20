@@ -20,7 +20,7 @@
 //! keyboard, a key typed held KEYPAD_FRAMES, and on as it repeats. A gamepad's Start is the
 //! console's Reset switch, its Select the Select switch; and the Reset
 //! button the Reset switch too. The difficulty switches (as the properties
-//! set them, else B) and the colour switch, F5, F7 and F8, and in the menu.
+//! set them, else B) and the colour switch, F7, F8 and F9, and in the menu.
 //!
 //! Its picture's layout, a TV's: as its frames' lines come to in its first
 //! second, VSYNC to VSYNC, run before it starts, as Stella does, 312 a PAL
@@ -91,10 +91,11 @@ const KEYPAD_FRAMES: u8 = 6;
 const LOW_PASS: f32 = 15_000.0;
 const HIGH_PASS: f32 = 90.0;
 
-/// The function keys of its switches: the difficulties, and colour.
-const LEFT_DIFFICULTY_KEY: u8 = 5;
-const RIGHT_DIFFICULTY_KEY: u8 = 7;
-const COLOUR_KEY: u8 = 8;
+/// The function keys of its switches: the difficulties, and colour. Not F5,
+/// the library's.
+const LEFT_DIFFICULTY_KEY: u8 = 7;
+const RIGHT_DIFFICULTY_KEY: u8 = 8;
+const COLOUR_KEY: u8 = 9;
 
 /// The CPU's clock on a console of `region`.
 pub fn clock_hz(region: Region) -> u32 {
@@ -543,7 +544,7 @@ impl Machine for Atari2600 {
         ]
     }
 
-    /// F5 and F7, the difficulty switches; F8, colour or black and white.
+    /// F7 and F8, the difficulty switches; F9, colour or black and white.
     fn function_key(&mut self, key: u8) -> Option<String> {
         let switches = &mut self.switches;
         let said = match key {

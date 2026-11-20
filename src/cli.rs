@@ -120,7 +120,7 @@ pub(crate) enum Machine {
     },
     /// The Atari 2600.
     ///
-    /// F5 and F7 its difficulty switches, F8 its colour switch.
+    /// F7 and F8 its difficulty switches, F9 its colour switch.
     Atari2600 {
         /// A .a26, or a zip of one.
         rom: String,
@@ -129,7 +129,7 @@ pub(crate) enum Machine {
     },
     /// The Atari 7800, and the 2600's games as it plays them.
     ///
-    /// F5 and F7 its difficulty switches, F8 its Pause button; the High
+    /// F7 and F8 its difficulty switches, F9 its Pause button; the High
     /// Score Cartridge in it if highscre.bin's beside the game or in
     /// roms/atari7800/. A 2600's game played as a 2600, as the 7800 plays
     /// one.

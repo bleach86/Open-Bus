@@ -24,7 +24,7 @@
 //! TIA's INPT0 to INPT3, or INPT4 and INPT5 too as the game drives SWCHB
 //! for one button. A gamepad's Start is the console's Reset, its Select the
 //! Select button; and the Reset button the Reset switch too. The difficulty
-//! switches (A, as a7800 sets them) F5 and F7, and the Pause button F8, and
+//! switches (A, as a7800 sets them) F7 and F8, and the Pause button F9, and
 //! in the menu. Or in one port, if the game's one of those, a light gun
 //! (light_gun.rs), aimed by the pointer.
 //!
@@ -97,10 +97,10 @@ const LOW_PASS: f32 = 15_000.0;
 const HIGH_PASS: f32 = 90.0;
 
 /// The function keys of its switches: the difficulties, and Pause; and the
-/// frames Pause is held, pressed.
-const LEFT_DIFFICULTY_KEY: u8 = 5;
-const RIGHT_DIFFICULTY_KEY: u8 = 7;
-const PAUSE_KEY: u8 = 8;
+/// frames Pause is held, pressed. Not F5, the library's.
+const LEFT_DIFFICULTY_KEY: u8 = 7;
+const RIGHT_DIFFICULTY_KEY: u8 = 8;
+const PAUSE_KEY: u8 = 9;
 const PAUSE_FRAMES: u8 = 6;
 
 /// The CPU's clock on a console of `region`.
@@ -720,7 +720,7 @@ impl Machine for Atari7800 {
         ]
     }
 
-    /// F5 and F7, the difficulty switches; F8, the Pause button pressed.
+    /// F7 and F8, the difficulty switches; F9, the Pause button pressed.
     fn function_key(&mut self, key: u8) -> Option<String> {
         let said = match key {
             LEFT_DIFFICULTY_KEY | RIGHT_DIFFICULTY_KEY => {

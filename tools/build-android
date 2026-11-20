@@ -96,5 +96,9 @@ for abi in $ABIS; do
 done
 export ANDROID_HOME="$SDK" NDK_HOME="$NDK"
 cd desktop
+# The app's version, its Cargo.toml's: Tauri gives Android's APK one only from
+# its own config, and without it every build is 1.0, version code 1.
+version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
 # shellcheck disable=SC2086
-cargo tauri android build --apk $PROFILE --target $targets
+cargo tauri android build --apk $PROFILE --target $targets \
+    --config "{\"version\": \"$version\"}"
