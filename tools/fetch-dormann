@@ -25,8 +25,15 @@ cat > decimal.cfg <<'CFG'
 MEMORY { RAM: start = $0200, size = $7E00, file = %O; }
 SEGMENTS { CODE: load = RAM, type = rw; }
 CFG
-CC65_HOME=${CC65_HOME:-$(for d in "$HOME/cc65" /usr/share/cc65; do [ -d "$d" ] && echo "$d" && break; done)}
-BIN=$( [ -x "$CC65_HOME/bin/ca65" ] && echo "$CC65_HOME/bin/" )
+# cc65's tools: in $CC65_HOME/bin, or ~/cc65/bin, as a build of it from
+# source has them; else on the PATH, as a distribution's package has them.
+BIN=
+for home in "$CC65_HOME" "$HOME/cc65"; do
+    if [ -n "$home" ] && [ -x "$home/bin/ca65" ]; then
+        BIN=$home/bin/
+        break
+    fi
+done
 
 for test in 6502_decimal_test 65C02_decimal_test; do
 # AS65 to ca65: dotted directives, labels without colons, the zero page
