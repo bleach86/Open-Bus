@@ -32,7 +32,12 @@ pub fn game_facts(name: &str, bytes: Vec<u8>) -> String {
     facts::facts_of(Path::new(name), bytes)
 }
 
-/// A file put in by the page.
+/// Which Open Bus this is, as Settings shows it.
+#[wasm_bindgen]
+pub fn app_version() -> String {
+    env!("CARGO_PKG_VERSION").into()
+}
+
 /// Whether the machines started from now on can be rewound, as Settings
 /// has it: the page's `--no-rewind`.
 #[wasm_bindgen]
@@ -47,6 +52,7 @@ pub fn drive_light(on: bool) {
     run::DRIVE_LIGHT.store(on, Ordering::Relaxed);
 }
 
+/// A file put in by the page.
 #[wasm_bindgen]
 pub fn put_file(name: &str, bytes: Vec<u8>) {
     files::put(Path::new(name), bytes);

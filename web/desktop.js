@@ -126,6 +126,8 @@ export const hide = (path) => invoke('forget_path', { path });
 
 /// The folders, what's hidden, and where the app keeps its own.
 export const settings = () => invoke('library_settings');
+/// The app's version, as its Cargo.toml has it.
+export const appVersion = () => window.__TAURI__.app.getVersion();
 /// A folder no longer looked in, and its games gone from the library.
 export async function removeFolder(path) {
     await invoke('remove_folder', { path });

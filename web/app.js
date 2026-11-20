@@ -27,6 +27,7 @@ const {
     game_facts,
     rewind,
     drive_light,
+    app_version,
 } = native ? {} : await import('./pkg/cpu_emu.js');
 
 /// What's kept of the games, favourites, plays, their own settings and what's
@@ -3833,6 +3834,9 @@ page('frame').onpointermove = (event) => {
 if (!native) {
     await init();
 }
+// Which Open Bus this is, at the foot of Settings: the desktop app's own, or
+// this page's emulator's.
+page('app-version').textContent = `Open Bus ${native ? await native.appVersion() : app_version()}`;
 await loadArt();
 await refresh();
 // No games yet, and it starts in Settings, where they're added.
