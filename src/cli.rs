@@ -1,308 +1,400 @@
-//! The machine to run: `cpu_emu` for this one, with BASIC; `cpu_emu apple2
-//! ROM [DISK...]` for an Apple II+, ROM a dump of its ROM (its last 12K,
-//! $D000 up), the Disk II's ROMs (disk2-p5-341-0027.bin and
-//! disk2-p6-341-0028.bin) beside it; `cpu_emu apple2e ROMS [DISK...]` for
-//! an enhanced Apple IIe, or with `--unenhanced` the first, ROMS the folder
-//! its ROMs are in, by their names, and the Disk II's. The DISKs are .dsk,
-//! .do, .po, .nib or .woz images, or folders of them (in their names'
-//! order) or .m3u playlists, the first in drive 1, F9 and F10
-//! changing drive 1's and drive 2's; hard disk volumes among them (.hdv,
-//! .2mg, and .po bigger than a floppy), up to two, the hard disk card's,
-//! in slot 7, booted first; a Mockingboard in slot 4, or with
-//! `--mockingboards=N` none, or two (4 and 5); its CPU its own (the 6502,
-//! the enhanced IIe's 65C02), or with `--cpu=` a 6502 or a 65C02
-//! (`65c02`, the base one, as the enhanced IIe's; `r65c02`, Rockwell's;
-//! `w65c02`, WDC's); in a window, with `--fullscreen` fullscreen (F11 or a
-//! double click switching), its picture in colour or with
-//! `--monitor=white`, `green` or `amber` monochrome (F8 switching); or
-//! with `--text` its text screen in the terminal. F2 saves its state, F4
-//! loads it back: beside the first DISK, or the ROM, its name and .state.
-//! `cpu_emu nes ROM [--fullscreen] [--overscan=N]` for the NES, ROM an
-//! iNES image or a zip of one, its picture's edges hidden as a TV hides
-//! them, N dots or lines each (8, or 0 to see it all); or a Famicom Disk
-//! System's .fds image, or a zip of one, disksys.rom, its BIOS, beside it
-//! or in roms/nes/, and F9 changing the disk. `--fast` for performance mode,
-//! for what's too slow otherwise: a line at a time, and less exact for it.
-//! `cpu_emu atari2600 ROM [--fullscreen]` for the Atari 2600, ROM a .a26 or
-//! a zip of one, F5 and F7 its difficulty switches and F8 its colour
-//! switch; `cpu_emu atari7800 ROM [--fullscreen]` for the Atari 7800, ROM
-//! an .a78, or a dump without its header, or a zip of one, F5 and F7 its
-//! difficulty switches and F8 its Pause button, the High Score Cartridge
-//! in it if highscre.bin's beside the game or in roms/atari7800/; or a
-//! 2600's, played as a 2600, as the 7800 plays one. `cpu_emu skink [IMAGE]
-//! [--disk=DISK] [--fullscreen]` for Skink, a 6502 computer of our own for
-//! GeckOS, IMAGE its boot image, loaded to the top of its memory, and DISK
-//! a disk's image, a FAT floppy's, say, written back as it's written:
-//! roms/skink/rom.bin and roms/skink/geckos.img, if they're not given.
-//! `cpu_emu x16 [ROM] [--game=GAME] [--sd=IMAGE] [--fullscreen]` for the
-//! Commander X16, ROM its rom.bin, roms/x16/'s if it's not given (or its
-//! release folder's there), and IMAGE its SD card's, written back as it's
-//! written, made blank if it isn't there yet: roms/x16/sdcard.img, if it's
-//! not given and it's there. GAME,
-//! a game's zip, folder or program, is played from a card of its own,
-//! IMAGE or beside it, as GAME.img: made, if it isn't there, to start it
-//! as the X16's turned on, and kept. With any,
-//! `--window=X,Y,WIDTH,HEIGHT` opens its window there, that size, to be
-//! resized: as the desktop app has it, in place of its library.
-//! `--ram=zeros` or `--ram=random` for its RAM at power-on all 0s, or as
-//! random as a real console's, not all 1s ($FF). `--region=ntsc` or `pal`,
-//! `--console=nes` or `famicom`, and `--port2=controller` or `zapper` for
-//! those as chosen, not as the game's known to be.
-//! `--no-rewind` for no rewinding: a console's last 30 seconds aren't kept
-//! to go back to, held, as they are otherwise. `--no-drive-light` for no
-//! light at the corner of the picture while a disk drive's busy.
-//! `--no-vsync` for frames kept by the machine's clock alone, never in step
-//! with the display's refresh.
-//! `--launched` says that a launcher started it, as EmulationStation might,
-//! for Select and Start held together to go back to. `--resume` keeps its
-//! state as it's put away, beside it, and goes on from that next time.
-//! `--saves=FOLDER` keeps its saves (a battery's RAM, its states) in
-//! FOLDER, under each one's whole path, not beside the game: as the app on
-//! Android has them, its games' folders perhaps not to be written to.
-//! `cpu_emu controls` for only the screen that changes the controls, as F6
-//! has it in a game; they're for all of these.
-//! `cpu_emu pads` for no window, and what the gamepads hold told on standard
-//! output until standard input closes: the desktop app's library's.
-//! `cpu_emu bound` for the controls as they're bound, as they're kept, a
-//! line each: for the app's library to choose and go back by the menus'.
-//! `cpu_emu roms FOLDER` for the Apple's ROMs in the files named on standard
-//! input written into FOLDER, under the names they're looked for by.
-//! `cpu_emu facts` for what's known of each NES game named on standard
-//! input, a line each: the desktop app's library's.
+//! The emulator as a program: which machine to run, with what, as its
+//! command line says. `cpu_emu --help` says it all, and `cpu_emu MACHINE
+//! --help` all of a machine's; with no machine, this one's BASIC.
+//!
+//! The desktop app runs games so, its window's place given it, and asks it
+//! what the gamepads hold, what's bound, what's known of its games and
+//! where the Apple's ROMs are; Android's game screen gives it the same
+//! command line; a launcher, as EmulationStation, can too.
 
-use crate::{cpu, machines};
-use machines::apple2::video::Monitor;
+use crate::host::machine::PowerOnRam;
+use crate::machines::apple2::video::Monitor;
+use crate::machines::region::Region;
+use crate::{cpu, host, machines};
+use clap::builder::{PossibleValuesParser, TypedValueParser};
+use clap::{Args, Parser, Subcommand};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+
+#[derive(Debug, Parser)]
+#[command(name = "cpu_emu", version, about = "Open Bus: old machines, emulated")]
+pub(crate) struct Cli {
+    #[command(subcommand)]
+    pub(crate) machine: Option<Machine>,
+    #[command(flatten)]
+    pub(crate) host: Host,
+}
+
+/// What any machine has of the host's: its window, its saves, and what's
+/// kept and shown as it runs.
+#[derive(Debug, Args)]
+pub(crate) struct Host {
+    /// Fullscreen, not in a window: F11, or a double click, switches.
+    #[arg(long, global = true)]
+    pub(crate) fullscreen: bool,
+    /// Its window there, that size, to be resized: as the desktop app has
+    /// it, in place of its library.
+    #[arg(long, global = true, value_name = "X,Y,WIDTH,HEIGHT", value_parser = place)]
+    pub(crate) window: Option<[i32; 4]>,
+    /// Its state kept as it's put away, beside it, and gone on from next
+    /// time.
+    #[arg(long, global = true)]
+    pub(crate) resume: bool,
+    /// No rewinding: a console's last 30 seconds not kept to go back to.
+    #[arg(long, global = true)]
+    pub(crate) no_rewind: bool,
+    /// No light at the corner of the picture while a disk drive's busy.
+    #[arg(long, global = true)]
+    pub(crate) no_drive_light: bool,
+    /// Frames kept by the machine's clock alone, never in step with the
+    /// display's refresh.
+    #[arg(long, global = true)]
+    pub(crate) no_vsync: bool,
+    /// Started by a launcher, as EmulationStation might: Select and Start
+    /// held together go back to it.
+    #[arg(long, global = true)]
+    pub(crate) launched: bool,
+    /// Its saves (a battery's RAM, its states) kept in FOLDER, under each
+    /// one's whole path, not beside the game: as the app on Android has
+    /// them, its games' folders perhaps not to be written to.
+    #[arg(long, global = true, value_name = "FOLDER")]
+    pub(crate) saves: Option<PathBuf>,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum Machine {
+    /// This one, a 6502 computer of our own, with BASIC.
+    ///
+    /// Its terminal the one it's run in, unless it's said.
+    Basic {
+        /// Its ROM, for BASIC's own.
+        rom: Option<String>,
+        /// Its screen alone, not the terminal.
+        #[arg(long)]
+        no_terminal: bool,
+    },
+    /// An Apple II+, with its disks.
+    Apple2 {
+        /// A dump of its ROM, its last 12K, $D000 up; the Disk II's ROMs
+        /// (disk2-p5-341-0027.bin and disk2-p6-341-0028.bin) beside it.
+        rom: String,
+        #[command(flatten)]
+        apple: Apple,
+    },
+    /// An enhanced Apple IIe, with its disks.
+    Apple2e {
+        /// The folder its ROMs are in, by their names, and the Disk II's.
+        roms: String,
+        /// The first IIe, not the enhanced.
+        #[arg(long)]
+        unenhanced: bool,
+        #[command(flatten)]
+        apple: Apple,
+    },
+    /// The NES, or a Famicom: a cartridge's game, or the Disk System's.
+    Nes {
+        /// An iNES image, or a zip of one; or a Disk System's .fds image, or
+        /// a zip of one, disksys.rom, its BIOS, beside it or in roms/nes/,
+        /// F9 changing the disk.
+        rom: String,
+        /// The picture's edges hidden as a TV hides them, so many dots or
+        /// lines each, 0 to 32.
+        #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u8).range(0..=32))]
+        overscan: u8,
+        /// Performance mode, for what's too slow otherwise: a line drawn at
+        /// a time, less exact for it.
+        #[arg(long)]
+        fast: bool,
+        /// Its RAM at power-on: all 1s, $FF, as most have it; all 0s; or as
+        /// random as a real console's.
+        #[arg(long, value_parser = choice(["ones", "zeros", "random"], PowerOnRam::parse))]
+        ram: Option<PowerOnRam>,
+        #[command(flatten)]
+        region: TvRegion,
+        /// Its console, not as the game's known to be.
+        #[arg(long, value_parser = choice(["nes", "famicom"], |name| Some(name == "famicom")))]
+        console: Option<bool>,
+        /// What's in its second port, not as the game's known to be.
+        #[arg(long, value_parser = choice(["controller", "zapper"], |name| Some(name == "zapper")))]
+        port2: Option<bool>,
+    },
+    /// The Atari 2600.
+    ///
+    /// F5 and F7 its difficulty switches, F8 its colour switch.
+    Atari2600 {
+        /// A .a26, or a zip of one.
+        rom: String,
+        #[command(flatten)]
+        region: TvRegion,
+    },
+    /// The Atari 7800, and the 2600's games as it plays them.
+    ///
+    /// F5 and F7 its difficulty switches, F8 its Pause button; the High
+    /// Score Cartridge in it if highscre.bin's beside the game or in
+    /// roms/atari7800/. A 2600's game played as a 2600, as the 7800 plays
+    /// one.
+    Atari7800 {
+        /// An .a78, or a dump without its header, or a zip of one.
+        rom: String,
+        #[command(flatten)]
+        region: TvRegion,
+    },
+    /// Skink, a 6502 computer of our own for GeckOS.
+    Skink {
+        /// Its boot image, loaded to the top of its memory:
+        /// roms/skink/rom.bin, if it's not given.
+        image: Option<String>,
+        /// A disk's image, a FAT floppy's, say, written back as it's
+        /// written: roms/skink/geckos.img, if it's not given and it's
+        /// there.
+        #[arg(long)]
+        disk: Option<String>,
+    },
+    /// The Commander X16.
+    X16 {
+        /// Its rom.bin: roms/x16/'s, or its release folder's there, if it's
+        /// not given.
+        rom: Option<String>,
+        /// A game's zip, folder or program, played from a card of its own,
+        /// the SD card's or beside it as GAME.img: made, if it isn't there,
+        /// to start it as the X16's turned on, and kept.
+        #[arg(long)]
+        game: Option<String>,
+        /// Its SD card's image, written back as it's written, made blank if
+        /// it isn't there yet: roms/x16/sdcard.img, if it's not given and
+        /// it's there.
+        #[arg(long, value_name = "IMAGE")]
+        sd: Option<String>,
+    },
+    /// The screen that changes the controls, alone.
+    ///
+    /// As F6 has it in a game: they're for every machine.
+    Controls,
+    /// What the gamepads hold, told as it changes: for the app's library.
+    ///
+    /// No window: a line on standard output for each change, till standard
+    /// input closes.
+    Pads,
+    /// The controls as they're bound: for the app's library.
+    ///
+    /// As they're kept, a line each, for the library to choose and go back
+    /// by the menus'.
+    Bound,
+    /// What's known of games: for the app's library.
+    ///
+    /// Each named on standard input, a line each: its CRC, mapper or
+    /// system, console and controller, and anything that keeps it from
+    /// running.
+    Facts,
+    /// The Apple's ROMs sorted into a folder: for the app's library.
+    ///
+    /// Those among the files named on standard input, written into FOLDER
+    /// under the names they're looked for by.
+    Roms { folder: PathBuf },
+}
+
+/// An Apple's disks, cards, CPU and monitor.
+#[derive(Debug, Args)]
+pub(crate) struct Apple {
+    /// .dsk, .do, .po, .nib or .woz images, or folders of them (in their
+    /// names' order) or .m3u playlists: the first in drive 1, F9 and F10
+    /// changing drive 1's and drive 2's. Hard disk volumes among them
+    /// (.hdv, .2mg, and a .po bigger than a floppy), up to two, the hard
+    /// disk card's, in slot 7, booted first.
+    pub(crate) disks: Vec<String>,
+    /// Mockingboards: one, in slot 4; none; or two, in 4 and 5.
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(0..=2))]
+    pub(crate) mockingboards: u8,
+    /// Its CPU, not its own (a II+'s 6502, an enhanced IIe's 65C02): a
+    /// 6502; a 65C02, the base one, as the enhanced IIe's; Rockwell's; or
+    /// WDC's.
+    #[arg(long, value_parser = choice(["6502", "65c02", "r65c02", "w65c02"], cpu_named))]
+    pub(crate) cpu: Option<cpu::Variant>,
+    /// Its picture in colour, or a monochrome monitor's: F8 switches.
+    #[arg(long, default_value = "colour", value_parser = choice(Monitor::ALL.map(Monitor::name), monitor_named))]
+    pub(crate) monitor: Monitor,
+    /// Its text screen in the terminal, not a window.
+    #[arg(long)]
+    pub(crate) text: bool,
+}
+
+/// A console's TV standard, chosen.
+#[derive(Debug, Args)]
+pub(crate) struct TvRegion {
+    /// Its TV standard, not as the game's known to be.
+    #[arg(long, value_parser = choice(["ntsc", "pal"], Region::parse))]
+    pub(crate) region: Option<Region>,
+}
+
+/// A choice of `names`, each what `parse` makes of it: they're what's
+/// shown, and taken.
+fn choice<const N: usize, T: Clone + Send + Sync + 'static>(
+    names: [&'static str; N],
+    parse: fn(&str) -> Option<T>,
+) -> impl TypedValueParser<Value = T> {
+    PossibleValuesParser::new(names).map(move |name| parse(&name).expect("one of the names"))
+}
+
+fn cpu_named(name: &str) -> Option<cpu::Variant> {
+    match name {
+        "6502" => Some(cpu::Variant::Nmos6502),
+        "65c02" => Some(cpu::Variant::Synertek65C02),
+        "r65c02" => Some(cpu::Variant::Rockwell65C02),
+        "w65c02" => Some(cpu::Variant::Wdc65C02),
+        _ => None,
+    }
+}
+
+fn monitor_named(name: &str) -> Option<Monitor> {
+    Monitor::ALL
+        .into_iter()
+        .find(|monitor| monitor.name() == name)
+}
+
+/// `--window=`'s X,Y,WIDTH,HEIGHT.
+fn place(said: &str) -> Result<[i32; 4], String> {
+    let numbers: Result<Vec<i32>, _> = said.split(',').map(str::parse).collect();
+    numbers
+        .ok()
+        .and_then(|numbers| numbers.try_into().ok())
+        .ok_or_else(|| "four numbers, X,Y,WIDTH,HEIGHT".to_string())
+}
 
 /// The program run with `args`, its name first, as its command line has them.
+/// One that's wrong is told, and the program stopped; a panic, on Android,
+/// for its library to tell.
 pub fn run(args: Vec<String>) {
-    // Its saves kept in a folder of their own, not beside its games.
-    if let Some(folder) = args.iter().find_map(|arg| arg.strip_prefix("--saves=")) {
-        crate::host::saves::keep_in(std::path::Path::new(folder));
-    }
-    if let Some(place) = args.iter().find_map(|arg| arg.strip_prefix("--window=")) {
-        let numbers: Vec<i32> = place
-            .split(',')
-            .map_while(|number| number.parse().ok())
-            .collect();
-        let place: [i32; 4] = numbers.try_into().expect("--window=X,Y,WIDTH,HEIGHT");
-        crate::host::window::PLACE.set(place).expect("one --window");
-    }
-    if args.iter().any(|arg| arg == "--resume") {
-        crate::host::run::RESUME.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-    if args.iter().any(|arg| arg == "--no-rewind") {
-        crate::host::run::REWIND.store(false, std::sync::atomic::Ordering::Relaxed);
-    }
-    if args.iter().any(|arg| arg == "--no-drive-light") {
-        crate::host::run::DRIVE_LIGHT.store(false, std::sync::atomic::Ordering::Relaxed);
-    }
-    if args.iter().any(|arg| arg == "--no-vsync") {
-        crate::host::run::VSYNC.store(false, std::sync::atomic::Ordering::Relaxed);
-    }
-    if args.iter().any(|arg| arg == "--launched") {
-        crate::host::window::LAUNCHED.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-    let usage = "cpu_emu apple2 ROM | apple2e ROMS [--unenhanced] [DISK...] [--mockingboards=0|1|2] [--cpu=6502|65c02|r65c02|w65c02] [--monitor=colour|white|green|amber] [--fullscreen | --text] | nes ROM [--fullscreen] [--overscan=0..32] [--region=ntsc|pal] [--console=nes|famicom] [--port2=controller|zapper] | atari2600 ROM [--fullscreen] [--region=ntsc|pal] | atari7800 ROM [--fullscreen] [--region=ntsc|pal] | skink [IMAGE] [--disk=DISK] [--fullscreen]";
-    match args.get(1).map(String::as_str) {
-        Some("controls") => machines::nes::controls(),
-        Some("pads") => crate::host::pads::report(),
-        Some("bound") => print!("{}", crate::host::controls::Controls::load().text()),
-        Some("facts") => machines::facts::report(),
-        Some("roms") => {
-            let out = args.get(2).expect("cpu_emu roms FOLDER");
-            machines::apple2::rom_set::sort(std::path::Path::new(out))
-                .expect("couldn't sort the ROMs");
+    let cli = match Cli::try_parse_from(args) {
+        Ok(cli) => cli,
+        Err(error) if cfg!(target_os = "android") && error.use_stderr() => {
+            panic!("{}", error.render())
         }
-        Some("nes") => {
-            let rom = args[2..]
-                .iter()
-                .find(|arg| !arg.starts_with("--"))
-                .expect(usage);
-            let overscan = match args.iter().find_map(|arg| arg.strip_prefix("--overscan=")) {
-                Some(dots) => dots.parse().ok().filter(|&dots| dots <= 32).expect(usage),
-                None => 8,
+        Err(error) => error.exit(),
+    };
+    let host = cli.host;
+    if let Some(folder) = &host.saves {
+        host::saves::keep_in(folder);
+    }
+    if let Some(place) = host.window {
+        host::window::PLACE.set(place).expect("one --window");
+    }
+    host::run::RESUME.store(host.resume, Ordering::Relaxed);
+    host::run::REWIND.store(!host.no_rewind, Ordering::Relaxed);
+    host::run::DRIVE_LIGHT.store(!host.no_drive_light, Ordering::Relaxed);
+    host::run::VSYNC.store(!host.no_vsync, Ordering::Relaxed);
+    host::window::LAUNCHED.store(host.launched, Ordering::Relaxed);
+    let fullscreen = host.fullscreen;
+    match cli.machine {
+        None => machines::basic::run(None, true),
+        Some(Machine::Basic { rom, no_terminal }) => {
+            machines::basic::run(rom.as_deref(), !no_terminal)
+        }
+        Some(Machine::Apple2 { rom, apple }) => {
+            apple.run(machines::apple2::Model::IIPlus, &rom, fullscreen)
+        }
+        Some(Machine::Apple2e {
+            roms,
+            unenhanced,
+            apple,
+        }) => {
+            let model = if unenhanced {
+                machines::apple2::Model::IIe
+            } else {
+                machines::apple2::Model::IIeEnhanced
             };
-            let region = args
-                .iter()
-                .find_map(|arg| arg.strip_prefix("--region="))
-                .map(|name| machines::nes::region::Region::parse(name).expect(usage));
-            let either = |name: &str, no: &str, yes: &str| {
-                let prefix = format!("--{name}=");
-                args.iter()
-                    .find_map(|arg| arg.strip_prefix(&prefix))
-                    .map(|said| match said {
-                        _ if said == no => false,
-                        _ if said == yes => true,
-                        _ => panic!("{usage}"),
-                    })
-            };
+            apple.run(model, &roms, fullscreen)
+        }
+        Some(Machine::Nes {
+            rom,
+            overscan,
+            fast,
+            ram,
+            region,
+            console,
+            port2,
+        }) => {
             let chosen = machines::nes::Chosen {
-                region,
-                famicom: either("console", "nes", "famicom"),
-                zapper: either("port2", "controller", "zapper"),
+                region: region.region,
+                famicom: console,
+                zapper: port2,
             };
-            let fast = args.iter().any(|arg| arg == "--fast");
-            let ram = args
-                .iter()
-                .find_map(|arg| arg.strip_prefix("--ram="))
-                .map_or(Default::default(), |name| {
-                    crate::host::machine::PowerOnRam::parse(name).expect(usage)
-                });
-            machines::nes::run(
-                rom,
-                args.iter().any(|arg| arg == "--fullscreen"),
-                overscan,
-                chosen,
-                fast,
-                ram,
-            );
+            let ram = ram.unwrap_or_default();
+            machines::nes::run(&rom, fullscreen, overscan as usize, chosen, fast, ram);
         }
-        Some("atari2600") => {
-            let rom = args[2..]
-                .iter()
-                .find(|arg| !arg.starts_with("--"))
-                .expect(usage);
-            let region = args
-                .iter()
-                .find_map(|arg| arg.strip_prefix("--region="))
-                .map(|name| crate::machines::region::Region::parse(name).expect(usage));
-            machines::atari2600::run(rom, args.iter().any(|arg| arg == "--fullscreen"), region);
+        Some(Machine::Atari2600 { rom, region }) => {
+            machines::atari2600::run(&rom, fullscreen, region.region)
         }
-        Some("atari7800") => {
-            let rom = args[2..]
-                .iter()
-                .find(|arg| !arg.starts_with("--"))
-                .expect(usage);
-            let region = args
-                .iter()
-                .find_map(|arg| arg.strip_prefix("--region="))
-                .map(|name| crate::machines::region::Region::parse(name).expect(usage));
-            let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
+        Some(Machine::Atari7800 { rom, region }) => {
             // A 2600's cartridge played as the 7800 plays one, as a 2600.
-            let path = std::path::Path::new(rom);
-            let bytes = crate::host::files::read(path).unwrap_or_default();
+            let path = Path::new(&rom);
+            let bytes = host::files::read(path).unwrap_or_default();
             match machines::facts::system_of(path, &bytes) {
                 machines::facts::System::Atari2600 => {
-                    machines::atari2600::run(rom, fullscreen, region)
+                    machines::atari2600::run(&rom, fullscreen, region.region)
                 }
-                _ => machines::atari7800::run(rom, fullscreen, region),
+                _ => machines::atari7800::run(&rom, fullscreen, region.region),
             }
         }
-        Some("skink") => {
+        Some(Machine::Skink { image, disk }) => {
             // Its boot image and disk as they're given, else as GeckOS's
             // "make install" puts them, in roms/skink/.
-            let image = args[2..]
-                .iter()
-                .find(|arg| !arg.starts_with("--"))
-                .map_or(machines::skink::IMAGE_FILE, String::as_str);
-            let disk = args
-                .iter()
-                .find_map(|arg| arg.strip_prefix("--disk="))
-                .or_else(|| {
-                    let disk = machines::skink::DISK_FILE;
-                    std::path::Path::new(disk).exists().then_some(disk)
-                });
-            machines::skink::run(image, disk, args.iter().any(|arg| arg == "--fullscreen"));
+            let image = image.as_deref().unwrap_or(machines::skink::IMAGE_FILE);
+            let disk = disk.as_deref().or_else(|| {
+                let disk = machines::skink::DISK_FILE;
+                Path::new(disk).exists().then_some(disk)
+            });
+            machines::skink::run(image, disk, fullscreen);
         }
-        Some("x16") => {
-            // Its ROM as it's given, else as it's found in roms/x16/.
-            let rom = args[2..]
-                .iter()
-                .find(|arg| !arg.starts_with("--"))
-                .cloned()
-                .or_else(|| machines::x16::rom_file().map(|rom| rom.to_string_lossy().into_owned()))
-                .expect("cpu_emu x16 ROM: no rom.bin in roms/x16/");
-            let said = |name: &str| {
-                let prefix = format!("--{name}=");
-                args[2..]
-                    .iter()
-                    .find_map(|arg| arg.strip_prefix(&prefix).map(str::to_string))
-            };
-            let game = said("game");
-            let sd_card = match &game {
-                Some(game) => {
-                    let game = std::path::Path::new(&game);
-                    let card = said("sd").unwrap_or_else(|| {
-                        let plain = game.to_string_lossy();
-                        format!("{}.img", plain.trim_end_matches(['/', '\\']))
-                    });
-                    machines::x16::make_card(game, std::path::Path::new(&card))
-                        .unwrap_or_else(|e| panic!("{e}"));
-                    Some(card)
-                }
-                None => match said("sd") {
-                    Some(card) => {
-                        machines::x16::blank_card(std::path::Path::new(&card))
-                            .unwrap_or_else(|e| panic!("{e}"));
-                        Some(card)
-                    }
-                    None => machines::x16::sd_card_file()
-                        .map(|image| image.to_string_lossy().into_owned()),
-                },
-            };
-            let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
-            machines::x16::run(&rom, sd_card.as_deref(), game.as_deref(), fullscreen);
+        Some(Machine::X16 { rom, game, sd }) => x16(rom, game, sd, fullscreen),
+        Some(Machine::Controls) => machines::nes::controls(),
+        Some(Machine::Pads) => host::pads::report(),
+        Some(Machine::Bound) => print!("{}", host::controls::Controls::load().text()),
+        Some(Machine::Facts) => machines::facts::report(),
+        Some(Machine::Roms { folder }) => {
+            machines::apple2::rom_set::sort(&folder).expect("couldn't sort the ROMs")
         }
-        Some(machine @ ("apple2" | "apple2e")) => {
-            let files: Vec<&String> = args[2..]
-                .iter()
-                .filter(|arg| !arg.starts_with("--"))
-                .collect();
-            let rom = files.first().expect(usage);
-            let text = args.iter().any(|arg| arg == "--text");
-            let mockingboards = match args
-                .iter()
-                .find_map(|arg| arg.strip_prefix("--mockingboards="))
-            {
-                Some(count) => count.parse().ok().filter(|&count| count <= 2).expect(usage),
-                None => 1,
-            };
-            let variant = match args.iter().find_map(|arg| arg.strip_prefix("--cpu=")) {
-                None => None,
-                Some("6502") => Some(cpu::Variant::Nmos6502),
-                Some("65c02") => Some(cpu::Variant::Synertek65C02),
-                Some("r65c02") => Some(cpu::Variant::Rockwell65C02),
-                Some("w65c02") => Some(cpu::Variant::Wdc65C02),
-                Some(_) => panic!("{usage}"),
-            };
-            let model = match (machine, args.iter().any(|arg| arg == "--unenhanced")) {
-                ("apple2", _) => machines::apple2::Model::IIPlus,
-                (_, true) => machines::apple2::Model::IIe,
-                (_, false) => machines::apple2::Model::IIeEnhanced,
-            };
-            let disks: Vec<&str> = files[1..].iter().map(|disk| disk.as_str()).collect();
-            let fullscreen = args.iter().any(|arg| arg == "--fullscreen");
-            let monitor = match args.iter().find_map(|arg| arg.strip_prefix("--monitor=")) {
-                Some(name) => *Monitor::ALL
-                    .iter()
-                    .find(|monitor| monitor.name() == name)
-                    .expect(usage),
-                None => Monitor::Colour,
-            };
-            machines::apple2::run(
-                model,
-                rom,
-                &disks,
-                mockingboards,
-                variant,
-                monitor,
-                text,
-                fullscreen,
-            );
-        }
-        Some("basic") => {
-            let files: Vec<&String> = args[2..]
-                .iter()
-                .filter(|arg| !arg.starts_with("--"))
-                .collect();
-            let rom = files.first().expect(usage);
-
-            let with_terminal = !args.iter().any(|arg| arg == "--no-terminal");
-
-            machines::basic::run(Some(rom), with_terminal);
-        }
-        _ => machines::basic::run(None, true),
     }
+}
+
+impl Apple {
+    /// The Apple `model`, its ROM, or its ROMs' folder, `rom`.
+    fn run(self, model: machines::apple2::Model, rom: &str, fullscreen: bool) {
+        let disks: Vec<&str> = self.disks.iter().map(String::as_str).collect();
+        machines::apple2::run(
+            model,
+            rom,
+            &disks,
+            self.mockingboards as usize,
+            self.cpu,
+            self.monitor,
+            self.text,
+            fullscreen,
+        );
+    }
+}
+
+/// The X16: its ROM as it's given, else as it's found in roms/x16/; its SD
+/// card a game's own, made from it, or as it's given, or roms/x16/'s.
+fn x16(rom: Option<String>, game: Option<String>, sd: Option<String>, fullscreen: bool) {
+    let rom = rom
+        .or_else(|| machines::x16::rom_file().map(|rom| rom.to_string_lossy().into_owned()))
+        .expect("cpu_emu x16 ROM: no rom.bin in roms/x16/");
+    let sd_card = match &game {
+        Some(game) => {
+            let card = sd.unwrap_or_else(|| format!("{}.img", game.trim_end_matches(['/', '\\'])));
+            machines::x16::make_card(Path::new(game), Path::new(&card))
+                .unwrap_or_else(|e| panic!("{e}"));
+            Some(card)
+        }
+        None => match sd {
+            Some(card) => {
+                machines::x16::blank_card(Path::new(&card)).unwrap_or_else(|e| panic!("{e}"));
+                Some(card)
+            }
+            None => machines::x16::sd_card_file().map(|image| image.to_string_lossy().into_owned()),
+        },
+    };
+    machines::x16::run(&rom, sd_card.as_deref(), game.as_deref(), fullscreen);
 }
 
 /// Android's way in: SDL's activity calls this, with the arguments it's

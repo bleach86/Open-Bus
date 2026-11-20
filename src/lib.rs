@@ -30,6 +30,11 @@ pub mod chips {
 #[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    mod cli;
+}
+
 /// The host's side: what drives a machine, a frame at a time, and all that
 /// any machine shares: its window, sound and controls, its terminal, its
 /// notices, its save states.
