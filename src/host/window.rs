@@ -1,25 +1,26 @@
 //! The host's window, by SDL2: a machine's frames, scaled up; the keys
 //! typed in it; and a joystick, a gamepad's (its left stick or D-pad, A and
-//! B its buttons) or the numeric keypad's (8, 2, 4 and 6 and the corners;
-//! 0 and . its buttons), the Alt keys buttons too; a console's gamepads,
-//! the host's first (its D-pad or left stick; its south button A, its
-//! west B; Back and Start) or the keyboard's (the arrows; X and Z, A and
-//! B; Right Shift or Tab, Select; Return, Start), and the host's second,
-//! each keeping its place if the other's taken out; F1 to F10, for the
-//! machine's own uses, and F12, its Reset key; and the machine's sound, in
-//! stereo, through an audio queue. F11 or a double click (but for a machine
-//! that's aimed at or has a mouse) switches it to fullscreen and back, the
-//! picture its shape still, bars at its sides if the screen is wider. The
-//! mouse on the picture, for a machine that's aimed at, its pointer cross
-//! hairs then, and its clicks the machine's. For a machine with a mouse, a
-//! click on the picture captures it, its cursor gone, its moves the
-//! machine's however far they go; Ctrl+M, or another window, lets it go,
-//! as the title says. For a machine that takes the keyboard's keys, each
-//! key's pressed and let go, by its place on the keyboard, but those it
-//! keeps for its own (F11, F12, the clipboard's, Ctrl+M), and let go as
-//! another window's chosen; none of them a gamepad's. Ctrl+Shift+V or Shift+Insert, the clipboard pasted, and Ctrl+Shift+C or
-//! Ctrl+Insert, the screen copied to it, for a machine with a keyboard.
-//! Closed, it tells the machine, to turn itself off.
+//! B its buttons) or the numeric keypad's (8, 2, 4 and 6 and the corners; 0
+//! and . its buttons), the Alt keys buttons too; a console's gamepads, the
+//! host's first (its D-pad or left stick; its south button A, its west B;
+//! Back and Start) or the keyboard's (the arrows; X and Z, A and B; Right
+//! Shift or Tab, Select; Return, Start), and the host's second, each
+//! keeping its place if the other's taken out; F1 to F10, for the machine's
+//! own uses, and F12, its Reset key; and the machine's sound, in stereo,
+//! through an audio queue. F11 (on a Mac, Ctrl+Cmd+F) or a double click
+//! (but for a machine that's aimed at or has a mouse) switches it to
+//! fullscreen and back, the picture its shape still, bars at its sides if
+//! the screen is wider. The mouse on the picture, for a machine that's
+//! aimed at, its pointer cross hairs then, and its clicks the machine's.
+//! For a machine with a mouse, a click on the picture captures it, its
+//! cursor gone, its moves the machine's however far they go; Ctrl+M, or
+//! another window, lets it go, as the title says. For a machine that takes
+//! the keyboard's keys, each key's pressed and let go, by its place on the
+//! keyboard, but those it keeps for its own (F11, F12, the clipboard's,
+//! Ctrl+M), and let go as another window's chosen; none of them a
+//! gamepad's. Ctrl+Shift+V or Shift+Insert, the clipboard pasted, and
+//! Ctrl+Shift+C or Ctrl+Insert, the screen copied to it, for a machine with
+//! a keyboard. Closed, it tells the machine, to turn itself off.
 
 use crate::host::controls::{Action, Controls, said};
 use crate::host::display::{
@@ -35,7 +36,7 @@ use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::{Keycode, Mod};
 use sdl2::mouse::{Cursor, MouseButton, MouseUtil, SystemCursor};
 use sdl2::pixels::PixelFormatEnum;
-use sdl2::render::{Canvas, Texture};
+use sdl2::render::{Canvas, Texture, TextureCreator};
 use sdl2::video::FullscreenType;
 use std::collections::{HashSet, VecDeque};
 use std::sync::OnceLock;
@@ -60,7 +61,7 @@ pub struct Window {
     /// The mouse: its pointer hidden in fullscreen.
     mouse: MouseUtil,
     clipboard: ClipboardUtil,
-    texture: Texture,
+    texture: Texture<'static>,
     events: EventPump,
     keys: VecDeque<Key>,
     /// F1 to F10 pressed, by number, and PASTE_KEY and COPY_KEY, not yet
@@ -232,8 +233,11 @@ impl Window {
         canvas
             .set_logical_size(size.0, size.1)
             .expect("the picture's shape");
-        let texture = canvas
-            .texture_creator()
+        // The picture's texture, borrowing what made it: that kept for good,
+        // the one window being the process's, as long as it runs.
+        let creator: &'static TextureCreator<sdl2::video::WindowContext> =
+            Box::leak(Box::new(canvas.texture_creator()));
+        let texture = creator
             .create_texture_streaming(PixelFormatEnum::RGB888, width as u32, height as u32)
             .expect("a texture");
         // Typed text, for the machines with keyboards. On Android, starting
@@ -488,7 +492,8 @@ impl Window {
                         self.capture(None);
                         continue;
                     }
-                    let own = matches!(keycode, Keycode::F11 | Keycode::F12)
+                    let own = fullscreen_key(keycode, keymod)
+                        || keycode == Keycode::F12
                         || clipboard_key(keycode, keymod).is_some();
                     if let (true, false, Some(scancode)) = (self.raw_keys, own, scancode) {
                         let key = Scancode(scancode as i32 as u16);
@@ -502,7 +507,8 @@ impl Window {
                     self.held.insert(name);
                     if !is_modifier(keycode)
                         && function_key(keycode).is_none()
-                        && !matches!(keycode, Keycode::F11 | Keycode::F12)
+                        && !fullscreen_key(keycode, keymod)
+                        && keycode != Keycode::F12
                     {
                         self.keys_held.insert(keycode);
                     }
@@ -518,9 +524,9 @@ impl Window {
                         Keycode::F12 => self.reset_held = true,
                         _ => {}
                     }
-                    // F11 and the function keys, a press each, not repeating
-                    // while held.
-                    if keycode == Keycode::F11 {
+                    // Fullscreen's key and the function keys, a press each,
+                    // not repeating while held.
+                    if fullscreen_key(keycode, keymod) {
                         toggle ^= !repeat;
                         continue;
                     }
@@ -724,12 +730,23 @@ fn is_modifier(keycode: Keycode) -> bool {
     )
 }
 
-/// F1 to F10's numbers.
 /// Whether it's a key that's always what it is, not to be bound.
 fn is_fixed(keycode: Keycode) -> bool {
     function_key(keycode).is_some() || matches!(keycode, Keycode::F11 | Keycode::F12)
 }
 
+/// Whether it's the key that switches fullscreen: F11; or on a Mac, where
+/// F11 shows the desktop and never gets here, Ctrl+Cmd+F, as its own apps
+/// have it.
+fn fullscreen_key(keycode: Keycode, keymod: Mod) -> bool {
+    keycode == Keycode::F11
+        || cfg!(target_os = "macos")
+            && keycode == Keycode::F
+            && keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD)
+            && keymod.intersects(Mod::LGUIMOD | Mod::RGUIMOD)
+}
+
+/// F1 to F10's numbers.
 fn function_key(keycode: Keycode) -> Option<u8> {
     let keys = [
         Keycode::F1,

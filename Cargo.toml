@@ -24,19 +24,23 @@ postcard = { version = "1.1.3", default-features = false, features = [
 serde = { version = "1.0.229", features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-sdl2 = { version = "0.38.0", features = ["unsafe_textures"] }
+sdl2 = "0.39.0"
 # The program's command line.
 clap = { version = "4.6.7", features = ["derive"] }
 
-# Windows and Macs have no SDL of their own to link to: theirs is built with
-# the program, and in it. That wants CMake, and a C compiler.
-[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
-sdl2 = { version = "0.38.0", features = ["bundled", "static-link", "unsafe_textures"] }
+# Windows and Macs have no SDL of their own to link to, and a desktop Linux's
+# may be older than this one wants (2.28 up): theirs is built with the
+# program, and in it, SDL 2.32. That wants CMake, a C compiler, and on Linux
+# the X11, Wayland and sound headers (libsdl2-dev brings them), for SDL to
+# load those at run time. A Linux handheld's own SDL, with its screen's
+# drivers in it, is linked to as it is.
+[target.'cfg(any(windows, target_os = "macos", all(target_os = "linux", target_arch = "x86_64")))'.dependencies]
+sdl2 = { version = "0.39.0", features = ["bundled", "static-link"] }
 
 # Nor has Android: built with the NDK, but shared, for SDL's activity to
 # load before the emulator.
 [target.'cfg(target_os = "android")'.dependencies]
-sdl2 = { version = "0.38.0", features = ["bundled", "unsafe_textures"] }
+sdl2 = { version = "0.39.0", features = ["bundled"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.130"

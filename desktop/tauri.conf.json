@@ -27,11 +27,7 @@
     "category": "Game",
     "shortDescription": "Old machines, emulated cycle by cycle: the NES, the Apple II, the Atari 2600 and 7800, and the Commander X16",
     "license": "GPL-3.0-or-later",
-    "macOS": { "minimumSystemVersion": "11.0" },
-    "linux": {
-      "deb": { "depends": ["libsdl2-2.0-0"] },
-      "rpm": { "depends": ["SDL2"] }
-    },
+    "macOS": { "minimumSystemVersion": "11.0", "signingIdentity": "-" },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

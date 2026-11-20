@@ -41,6 +41,16 @@ const SHOULDERS: [(&str, &str); 4] = [
     ("righttrigger", "pagedown"),
 ];
 
+/// 8BitDo's SN30 Pro on a Mac, as Apple's GameController framework has it,
+/// by its buttons' labels, Nintendo's, which SDL doesn't know it for: by
+/// where they are, as every other pad's, A and B and X and Y swapped back.
+#[cfg(target_os = "macos")]
+const SN30_PRO_MAC: &str = "0500d640ac05000004000000209f6d04,8Bitdo SN30 Pro,\
+    a:b1,b:b0,x:b6,y:b5,back:b4,guide:b2,start:b3,leftstick:b12,rightstick:b15,\
+    leftshoulder:b11,rightshoulder:b14,dpup:b10,dpdown:b7,dpleft:b8,dpright:b9,\
+    leftx:a0,lefty:a1~,rightx:a2,righty:a3~,lefttrigger:b13,righttrigger:b16,\
+    platform:Mac OS X,";
+
 /// To be said before SDL starts, by anything using it for gamepads: that
 /// buttons go by where they are; and SDL's own driver for Switch
 /// controllers, closing, leaves one in a mode Linux's driver doesn't read,
@@ -50,6 +60,8 @@ pub fn prepare() {
     // Buttons by where they are, not what they're labelled: a Nintendo
     // pad's A, on the right, is an Xbox pad's B. The defaults are by where.
     sdl2::hint::set("SDL_GAMECONTROLLER_USE_BUTTON_LABELS", "0");
+    #[cfg(target_os = "macos")]
+    sdl2::hint::set("SDL_GAMECONTROLLERCONFIG", SN30_PRO_MAC);
     if Path::new("/sys/module/hid_nintendo").exists() {
         sdl2::hint::set("SDL_JOYSTICK_HIDAPI_SWITCH", "0");
         sdl2::hint::set("SDL_JOYSTICK_HIDAPI_JOY_CONS", "0");
@@ -318,7 +330,16 @@ impl Pads {
 pub fn report() {
     prepare();
     sdl2::hint::set("SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1");
+    // On a Mac, its video too, with no window, kept in the background, with
+    // no icon in the Dock and never the focus: Apple's GameController
+    // framework tells of pads through the program's event loop, which only
+    // SDL's video runs. Without it, a pad's found once, if that, and not
+    // again after a game.
+    #[cfg(target_os = "macos")]
+    sdl2::hint::set("SDL_MAC_BACKGROUND_APP", "1");
     let sdl = sdl2::init().expect("SDL");
+    #[cfg(target_os = "macos")]
+    let _video = sdl.video().expect("SDL's video");
     let mut pads = Pads::new(sdl.game_controller().expect("SDL's game controllers"));
     let mut events = sdl.event_pump().expect("SDL's events");
     let controls = Controls::load();
