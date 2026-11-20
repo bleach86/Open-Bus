@@ -4,6 +4,9 @@ Old machines, emulated cycle by cycle from the 6502 up. One Rust emulator runs
 every machine, and a game library sits in front of it. The library works on
 the desktop, on Android TV, and in a web browser.
 
+**[Play it in your browser](https://obus.tuxprint.com/)**: nothing to
+install. Add your own games and it runs them.
+
 | Machine               | What's there                                                                                                                                                                                           |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **NES and Famicom**   | NTSC and PAL, over 70 iNES mappers, the Famicom Disk System, the Zapper, and expansion sound (VRC6, Namco 163, MMC5, FDS)                                                                              |
@@ -63,8 +66,9 @@ onto one tile. Games run in the native emulator, in a window of their own.
   `desktop/`.
 - **Android TV**: the same app, built for Android. It's made for a gamepad and
   the TV remote.
-- **Web**: the emulator compiled to WebAssembly, with the library as a page.
-  It runs everything except Skink and BASIC.
+- **Web**: the emulator compiled to WebAssembly, with the library as a page,
+  at [obus.tuxprint.com](https://obus.tuxprint.com/). It runs everything
+  except Skink and BASIC.
 
 Some systems need files of your own, which you add in Settings → System:
 
