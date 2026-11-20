@@ -14,6 +14,16 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// The release key, as keystore.properties beside this project has it, kept
+// out of git: storeFile, storePassword, keyAlias and keyPassword. Without the
+// file, release builds are signed with the debug key, for trying them here.
+val keystoreProperties = Properties().apply {
+    val propFile = rootProject.file("keystore.properties")
+    if (propFile.exists()) {
+        propFile.inputStream().use { load(it) }
+    }
+}
+
 android {
     compileSdk = 35
     namespace = "app.openbus"
@@ -24,6 +34,16 @@ android {
         targetSdk = 35
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    signingConfigs {
+        if (!keystoreProperties.isEmpty) {
+            create("release") {
+                storeFile = rootProject.file(keystoreProperties.getProperty("storeFile"))
+                storePassword = keystoreProperties.getProperty("storePassword")
+                keyAlias = keystoreProperties.getProperty("keyAlias")
+                keyPassword = keystoreProperties.getProperty("keyPassword")
+            }
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -39,9 +59,8 @@ android {
             }
         }
         getByName("release") {
-            // Signed as the debug build is, for it to be installed over it,
-            // by hand: an app store would want a key of its own.
-            signingConfig = signingConfigs.getByName("debug")
+            // The release key, if it's here; else the debug key's.
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             // Not shrunk: the Java side's small, and what's called by name,
             // from native code or by reflection, would go.
             isMinifyEnabled = false

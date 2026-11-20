@@ -302,8 +302,37 @@ fetched), the WebAssembly build, and a check of the desktop app.
 [`release.yml`](../.github/workflows/release.yml) refuses a tag that doesn't
 match `desktop/Cargo.toml`. It builds the desktop installers on Linux, Windows
 and macOS and the Android APK, then puts them all on a GitHub release for the
-tag. The APK is signed with the debug key from the `ANDROID_DEBUG_KEYSTORE`
-secret, so it installs over earlier builds.
+tag.
+
+### The Android release key
+
+Android only installs an update signed with the same key as the app already
+there, so every release's APK must be signed with the one release key. Losing
+the key means no update can install over the app again, so keep a backup of
+it somewhere safe.
+
+Locally, `tools/build-android` signs with the key that
+`desktop/gen/android/keystore.properties` names. That file is gitignored:
+
+```properties
+storeFile=/absolute/path/to/open-bus-release.jks
+storePassword=...
+keyAlias=open-bus
+keyPassword=...
+```
+
+Without the file, release builds are signed with the debug key and won't
+install over a released APK. The script warns when that happens.
+
+In CI, `release.yml` writes that file from four repository secrets:
+
+- `ANDROID_KEYSTORE`: the keystore, as `base64 -w0 open-bus-release.jks`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+A tag's release fails without them, rather than publish an APK signed with
+some other key.
 
 [`pages.yml`](../.github/workflows/pages.yml) publishes the web build to
 GitHub Pages whenever `main` moves.

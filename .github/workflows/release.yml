@@ -3,11 +3,11 @@
 # tag. Run by hand (Actions → Release → Run workflow), it builds them all as
 # artifacts of the run, without a release.
 #
-# The APK is signed with the debug key, as tools/build-android signs it. For
-# a release to install over the app already on a device, that has to be the
-# same key: the repository's ANDROID_DEBUG_KEYSTORE secret, the keystore in
-# base64 (`base64 -w0 ~/.android/debug.keystore`, or ~/.config/.android/'s).
-# Without it, the APK is signed with a key made for the run.
+# The APK is signed with the release key, from four of the repository's
+# secrets: ANDROID_KEYSTORE, the keystore in base64 (`base64 -w0 FILE`);
+# ANDROID_KEYSTORE_PASSWORD; ANDROID_KEY_ALIAS; and ANDROID_KEY_PASSWORD.
+# Without them, a tag's release fails rather than ship an APK that won't
+# install over the last; run by hand, it's signed with a key made for the run.
 name: Release
 
 on:
@@ -97,16 +97,28 @@ jobs:
             .
             desktop
       - run: cargo install tauri-cli --version 2.12.4 --locked
-      - name: The debug key
+      - name: The release key
         env:
-          KEYSTORE: ${{ secrets.ANDROID_DEBUG_KEYSTORE }}
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE" ]; then
-            mkdir -p ~/.android
-            echo "$KEYSTORE" | base64 -d > ~/.android/debug.keystore
-          else
-            echo "::warning::no ANDROID_DEBUG_KEYSTORE: this APK won't install over one signed with yours"
+          if [ -z "$KEYSTORE" ]; then
+            if [ "${GITHUB_REF#refs/tags/}" != "$GITHUB_REF" ]; then
+              echo "::error::no ANDROID_KEYSTORE secret: a release's APK has to be signed with the release key"
+              exit 1
+            fi
+            echo "::warning::no ANDROID_KEYSTORE secret: this APK won't install over a release"
+            exit 0
           fi
+          echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/release.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > desktop/gen/android/keystore.properties
       - run: tools/build-android
       - name: Named for its version
         run: |

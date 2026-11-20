@@ -151,7 +151,10 @@ JAVA_HOME=/path/to/jdk-17 tools/build-android arm64-v8a
 
 You need the Android SDK in `~/Android/Sdk` and an NDK older than 27. The
 script's header lists the rest. The APK lands in
-`desktop/gen/android/app/build/outputs/apk/universal/`.
+`desktop/gen/android/app/build/outputs/apk/universal/`. Release builds are
+signed with the key that `desktop/gen/android/keystore.properties` names, or
+the debug key without it; see
+[the release key](docs/architecture.md#the-android-release-key).
 
 ### Handhelds
 

@@ -7,7 +7,8 @@
 # desktop/gen/android/app/src/main/jniLibs/<ABI>/, where the app picks them
 # up, beside the library app's own, as Tauri builds it. arm64-v8a is the
 # NVIDIA Shield's; x86 an Android TV emulator's. Then the app itself, by
-# Tauri: release, signed as the debug build is, to be installed by hand;
+# Tauri: release, signed with the release key that
+# desktop/gen/android/keystore.properties names, or the debug key without it;
 # with --debug first, debuggable (run-as, the webview's inspector). Its APK
 # is in desktop/gen/android/app/build/outputs/apk/universal/.
 #
@@ -58,6 +59,10 @@ for abi in $ABIS; do
     esac
 done
 export ANDROID_HOME="$SDK" NDK_HOME="$NDK"
+if [ -z "$PROFILE" ] && [ ! -f desktop/gen/android/keystore.properties ]; then
+    echo "build-android: no keystore.properties, so signed with the debug key:" \
+        "it won't install over a release" >&2
+fi
 cd desktop
 # The app's version, its Cargo.toml's: Tauri gives Android's APK one only from
 # its own config, and without it every build is 1.0, version code 1.
