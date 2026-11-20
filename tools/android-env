@@ -37,6 +37,14 @@ android_target() {
     export "CC_${lower}=$TOOLS/$clang"
     export "CXX_${lower}=$TOOLS/$clang++"
     export "AR_${lower}=$TOOLS/llvm-ar"
+    # SDL's bindings, where they're made as it's built (32-bit Android's),
+    # from the NDK's own headers, not this computer's; and without the CPU's
+    # vector intrinsics, which they don't use, and which a 32-bit x86's
+    # through another clang's headers won't parse.
+    no_intrinsics="-DSDL_DISABLE_MMINTRIN_H -DSDL_DISABLE_XMMINTRIN_H"
+    no_intrinsics="$no_intrinsics -DSDL_DISABLE_EMMINTRIN_H -DSDL_DISABLE_PMMINTRIN_H"
+    no_intrinsics="$no_intrinsics -DSDL_DISABLE_IMMINTRIN_H"
+    export "BINDGEN_EXTRA_CLANG_ARGS_${lower}=--sysroot=$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot $no_intrinsics"
     # SDL's CMake, by the NDK's own toolchain file, as this ABI's.
     toolchain="$target_dir/android-$1.cmake"
     cat > "$toolchain" <<CMAKE

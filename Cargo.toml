@@ -42,6 +42,12 @@ sdl2 = { version = "0.39.0", features = ["bundled", "static-link"] }
 [target.'cfg(target_os = "android")'.dependencies]
 sdl2 = { version = "0.39.0", features = ["bundled"] }
 
+# On 32-bit Android, as many TVs' apps are, SDL's bindings made for it as it's
+# built (by bindgen, which wants libclang): those sdl2-sys comes with are a
+# 64-bit machine's, every struct the wrong size.
+[target.'cfg(all(target_os = "android", target_pointer_width = "32"))'.dependencies]
+sdl2 = { version = "0.39.0", features = ["bundled", "use-bindgen"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.130"
 
