@@ -119,9 +119,19 @@ All file access goes through `host/files.rs`. The web build swaps in
 `files_web.rs`, which has the same functions over files held in memory, so a
 machine never knows the difference.
 
-`host/saves.rs` decides where battery RAM, save states and resume files go:
-beside the game, or under `--saves FOLDER`. The folder option is for Android,
-where a game's own folder may be read-only.
+`host/saves.rs` decides where battery RAM, save states, resume files, X16
+game cards and the X16's clock RAM go. They never go beside the games, so the
+user's game folders stay as they are. Instead they go in the app's own saves
+folder: whatever `--saves FOLDER` names, which the desktop and Android apps
+always pass, or by default the desktop app's data folder (for example
+`~/.local/share/app.openbus.desktop/saves` on Linux). Each save sits under its
+game's whole path there, so two games with the same name don't share saves.
+
+Saves made beside games by older versions are still read, until a new one is
+written to the saves folder. Disk images are the exception to all this: a disk
+is written back into its own image, as a real disk is. It only goes to the
+saves folder when the image can't be written, such as on a read-only network
+share.
 
 ## Save states and rewind
 

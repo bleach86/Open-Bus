@@ -365,7 +365,7 @@ mod tests {
         let file = std::env::temp_dir().join(format!("cpu_emu_{}_nvram.bin", std::process::id()));
         std::fs::write(&file, [0x5A; 64]).unwrap();
         let mut x16 = x16();
-        x16.keep_nvram(&file);
+        x16.keep_nvram(&file, &file);
         assert_eq!(x16.i2c.rtc.ram, [0x5A; 64]);
         x16.keep_saved(false);
         files::all_saved();
@@ -377,7 +377,7 @@ mod tests {
         assert_eq!(std::fs::read(&file).unwrap()[3], 0x33);
         std::fs::remove_file(&file).unwrap();
         let mut x16 = self::x16();
-        x16.keep_nvram(&file);
+        x16.keep_nvram(&file, &file);
         assert_eq!(x16.i2c.rtc.ram, [0; 64], "no file yet: as it was");
     }
 

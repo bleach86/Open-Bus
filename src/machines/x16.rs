@@ -45,8 +45,9 @@
 //! it's given, or roms/x16/sdcard.img, if that's there; its light's the
 //! SMC's activity light, or the card being read or written. Its clock's
 //! the host's time as it's turned on, kept by its battery since; its
-//! clock's RAM is kept in roms/x16/nvram.bin, read as it's run and saved
-//! as it's written.
+//! clock's RAM is kept where saves are (`saves::machine`), read as it's run
+//! and saved as it's written; or, from before, read from
+//! roms/x16/nvram.bin.
 
 #[cfg(test)]
 mod tests {
@@ -79,6 +80,8 @@ use crate::host::machine::{Input, Machine, Picture};
 use crate::host::run::Host;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::save_state;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::host::saves;
 use crate::host::sound::Sampler;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::window::Window;
@@ -102,6 +105,8 @@ const VOLUME: f32 = 0.7;
 pub const ROM_FOLDER: &str = "roms/x16";
 /// The RTC's 64 bytes of RAM, kept by its battery, as they're kept here.
 pub const NVRAM_FILE: &str = "roms/x16/nvram.bin";
+/// Its name where saves are kept apart, as they are, but in the tests.
+pub const NVRAM_SAVE: &str = "Commander X16 nvram.bin";
 
 /// The KERNAL's keyboard buffer, KEYD, in RAM bank 0, and NDX, how many
 /// it holds, as they've been since R41, and as x16emu has them.
@@ -437,9 +442,10 @@ impl X16 {
     }
 
     /// Its clock's RAM kept in the file at `path`: read from it, if it's
-    /// there, and saved to it as it's written.
-    pub fn keep_nvram(&mut self, path: &Path) {
-        if let Ok(saved) = files::read(path) {
+    /// there, else from where it was kept `before`; and saved to `path` as
+    /// it's written.
+    pub fn keep_nvram(&mut self, path: &Path, before: &Path) {
+        if let Ok(saved) = files::read(path).or_else(|_| files::read(before)) {
             let ram = &mut self.i2c.rtc.ram;
             let len = saved.len().min(ram.len());
             ram[..len].copy_from_slice(&saved[..len]);
@@ -1025,7 +1031,9 @@ pub fn size() -> (u32, u32) {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run(rom: &str, sd_card: Option<&str>, game: Option<&str>, fullscreen: bool) {
     let mut cpu = build(rom, sd_card).unwrap_or_else(|e| panic!("{e}"));
-    cpu.memory.keep_nvram(Path::new(NVRAM_FILE));
+    let before = Path::new(NVRAM_FILE);
+    cpu.memory
+        .keep_nvram(&saves::machine(NVRAM_SAVE, before), before);
     if let Some(game) = game {
         cpu.memory.name = game_name(Path::new(game));
     }

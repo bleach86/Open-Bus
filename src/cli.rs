@@ -54,9 +54,13 @@ pub(crate) struct Host {
     /// held together go back to it.
     #[arg(long, global = true)]
     pub(crate) launched: bool,
-    /// Its saves (a battery's RAM, its states) kept in FOLDER, under each
-    /// one's whole path, not beside the game: as the app on Android has
-    /// them, its games' folders perhaps not to be written to.
+    /// Its saves (a battery's RAM, its states, a game resumed) kept in
+    /// FOLDER, under each one's whole path, not beside the game; the
+    /// desktop app's folder of saves if it's not given.
+    ///
+    /// On Linux, ~/.local/share/app.openbus.desktop/saves; on a Mac,
+    /// ~/Library/Application Support/app.openbus.desktop/saves; on Windows,
+    /// %APPDATA%\app.openbus.desktop\saves.
     #[arg(long, global = true, value_name = "FOLDER")]
     pub(crate) saves: Option<PathBuf>,
 }
@@ -156,8 +160,9 @@ pub(crate) enum Machine {
         /// not given.
         rom: Option<String>,
         /// A game's zip, folder or program, played from a card of its own,
-        /// the SD card's or beside it as GAME.img: made, if it isn't there,
-        /// to start it as the X16's turned on, and kept.
+        /// the SD card's or GAME.img where saves are kept (or beside it, if
+        /// one was made there before): made, if it isn't there, to start it
+        /// as the X16's turned on, and kept, with what the game saves.
         #[arg(long)]
         game: Option<String>,
         /// Its SD card's image, written back as it's written, made blank if
@@ -272,8 +277,9 @@ pub fn run(args: Vec<String>) {
         Err(error) => error.exit(),
     };
     let host = cli.host;
-    if let Some(folder) = &host.saves {
-        host::saves::keep_in(folder);
+    // Saves never beside the games, whose folders are left as they are.
+    if let Some(folder) = host.saves.clone().or_else(host::saves::default_folder) {
+        host::saves::keep_in(&folder);
     }
     if let Some(place) = host.window {
         host::window::PLACE.set(place).expect("one --window");
@@ -381,7 +387,15 @@ fn x16(rom: Option<String>, game: Option<String>, sd: Option<String>, fullscreen
         .expect("cpu_emu x16 ROM: no rom.bin in roms/x16/");
     let sd_card = match &game {
         Some(game) => {
-            let card = sd.unwrap_or_else(|| format!("{}.img", game.trim_end_matches(['/', '\\'])));
+            let card = sd.unwrap_or_else(|| {
+                let beside = PathBuf::from(format!("{}.img", game.trim_end_matches(['/', '\\'])));
+                let card = if beside.exists() {
+                    beside
+                } else {
+                    host::saves::place(&beside)
+                };
+                card.to_string_lossy().into_owned()
+            });
             machines::x16::make_card(Path::new(game), Path::new(&card))
                 .unwrap_or_else(|e| panic!("{e}"));
             Some(card)

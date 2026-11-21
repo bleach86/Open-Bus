@@ -1121,6 +1121,13 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
             .map(str::to_string),
         )
         .collect();
+    // Its saves in the app's own folder, never beside the games: their
+    // folders are left as they are (and may be a network share's, not to be
+    // written to).
+    line.push(format!(
+        "--saves={}",
+        folder(&app, "saves")?.to_string_lossy()
+    ));
     let began = (SystemTime::now(), Instant::now());
     #[cfg(desktop)]
     {
@@ -1159,12 +1166,6 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
             .map_err(|e| e.to_string())?
             .join("game.log");
         let _ = fs::remove_file(&log);
-        // Its saves in the app's own folder: a game's own may be a network
-        // share's, not to be written to.
-        line.push(format!(
-            "--saves={}",
-            folder(&app, "saves")?.to_string_lossy()
-        ));
         android::start(&window, line, &library, &log)?;
         thread::spawn(move || {
             let ran = android::wait(&window, &log);

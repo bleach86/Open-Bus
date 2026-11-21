@@ -291,7 +291,8 @@ impl Emulator {
             x16::make_card(Path::new(game), card_path)?;
         }
         let mut cpu = x16::build(rom, Some(card))?;
-        cpu.memory.keep_nvram(Path::new(X16_NVRAM));
+        cpu.memory
+            .keep_nvram(Path::new(X16_NVRAM), Path::new(X16_NVRAM));
         if !game.is_empty() {
             cpu.memory.name = x16::game_name(Path::new(game));
         }

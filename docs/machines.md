@@ -22,6 +22,24 @@ command line, put them where each section below says.
 | Atari 7800 high scores | `highscre.bin` (optional)                                         |
 | Commander X16          | `rom.bin` from an official release. The desktop app can fetch it. |
 
+## Where saves go
+
+Battery saves, save states, resume points and X16 game cards are kept in the
+app's own folder, never in your game folders:
+
+| System  | Folder                                                    |
+| ------- | --------------------------------------------------------- |
+| Linux   | `~/.local/share/app.openbus.desktop/saves`                |
+| macOS   | `~/Library/Application Support/app.openbus.desktop/saves` |
+| Windows | `%APPDATA%\app.openbus.desktop\saves`                     |
+| Android | the app's own storage                                     |
+
+The command line uses the same folder, or another one given with
+`--saves FOLDER`. Saves left beside games by older versions are still loaded.
+
+Disks are different: an Apple II disk or hard disk, or an X16 SD card, is
+written back into its own image, as the real hardware writes to its disk.
+
 ## NES and Famicom
 
 Cartridges are `.nes` files (iNES or NES 2.0), or zips of one. Disk System
@@ -142,8 +160,8 @@ desktop app can download it. On the command line it's read from `roms/x16/`.
 - **Mouse.** Click the picture to capture the mouse, and press Ctrl+M to let it
   go.
 - **Controllers.** Gamepads are its SNES controllers 1 and 2.
-- **Clock.** It starts from the host's time. Its NVRAM is kept in
-  `roms/x16/nvram.bin`.
+- **Clock.** It starts from the host's time. Its NVRAM is kept with your
+  saves.
 
 **Not yet supported:** NTSC and 240p video output. VGA output works.
 

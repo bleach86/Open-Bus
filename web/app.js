@@ -3108,7 +3108,7 @@ async function fillFolders() {
         }),
     );
     page('restore-all').onclick = () => restoring(hidden, [...page('hidden-games').children]);
-    page('data-place').textContent = `Covers and system files are kept in ${data}`;
+    page('data-place').textContent = `Covers, saves and system files are kept in ${data}`;
 }
 
 /// The desktop app's own way of looking: a window of its own, not a page.
@@ -3163,10 +3163,8 @@ if (native) {
         }
     });
     page('quit-app').hidden = false;
-    // On Android, the games' folders perhaps not to be written to; and all
-    // of it fullscreen, and big enough for a TV, already.
+    // On Android, all of it fullscreen, and big enough for a TV, already.
     if (native.android) {
-        page('saves-where').textContent = 'and saves are kept in the app.';
         for (const setting of ['start-fullscreen', 'tv-layout']) {
             page(setting).closest('.setting').hidden = true;
         }
