@@ -119,9 +119,28 @@ All file access goes through `host/files.rs`. The web build swaps in
 `files_web.rs`, which has the same functions over files held in memory, so a
 machine never knows the difference.
 
-`host/saves.rs` decides where battery RAM, save states and resume files go:
-beside the game, or under `--saves FOLDER`. The folder option is for Android,
-where a game's own folder may be read-only.
+`host/saves.rs` decides where battery RAM, save states, resume files, X16
+game cards and the X16's clock RAM go. They never go beside the games, so the
+user's game folders stay as they are. They go under a root folder, laid out
+the way a MiSTer does it: `saves/<system>/<game>.srm` for what a game saves,
+`states/<system>/<game>.state` and `.resume` for states. The root is whatever
+`--saves FOLDER` names, which the desktop and Android apps always pass (the
+app's data folder, or the folder chosen in Settings → Saves), or by default the
+desktop app's data folder. The program sets the system as it starts, from its
+subcommand.
+
+A save is named by its game's file without that file's extension, so
+`Zelda.nes` gives `Zelda.srm` and `Zelda.state`. Saves made beside games by
+older versions, and the Android app's older layout under the whole of a game's
+path, are still read until a new one is written.
+
+Disk images are the exception: a disk is written back into its own image, as a
+real disk is. It only goes under the root when the image can't be written, such
+as on a read-only network share.
+
+`cpu_emu saves` lists or clears saves by kind, for one game (`--system` and its
+files) or all of them. The desktop app's Settings → Saves and each game's
+details use it.
 
 ## Save states and rewind
 

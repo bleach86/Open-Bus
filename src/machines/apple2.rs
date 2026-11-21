@@ -351,7 +351,7 @@ impl Apple2 {
         };
         disk.written = false;
         match disk.to_image() {
-            Ok(image) => files::save_later(&saves::place(&path), image),
+            Ok(image) => files::save_later(&saves::place_disk(&path), image),
             Err(e) => eprintln!("{}: not saved: {e}", path.display()),
         }
     }

@@ -143,7 +143,11 @@ mod tests {
         frames(&mut modem, 60);
         modem.send(b"+++");
         frames(&mut modem, 59);
-        assert_eq!(said(&mut modem), "", "a second, not yet");
+        assert_eq!(
+            said(&mut modem),
+            "+++",
+            "echoed, the place not echoing; a second, not yet the command mode"
+        );
         frames(&mut modem, 1);
         assert_eq!(said(&mut modem), "\r\nOK\r\n");
         assert!(modem.carrier(), "still connected");
@@ -154,7 +158,7 @@ mod tests {
         // Not quiet a second before: the place's.
         modem.send(b"x+++");
         frames(&mut modem, 120);
-        assert_eq!(said(&mut modem), "");
+        assert_eq!(said(&mut modem), "x+++", "echoed, and online still");
         frames(&mut modem, 60);
         modem.send(b"+++");
         frames(&mut modem, 60);
@@ -164,6 +168,118 @@ mod tests {
         assert!(!modem.carrier(), "hung up");
         let got = place.join().unwrap();
         assert_eq!(got, b"+++x++++++", "the +s sent on, as a modem's are");
+    }
+
+    #[test]
+    fn xoff_holds_what_comes_and_xon_lets_it_go_neither_sent_on() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            caller.write_all(b"banner").unwrap();
+            let mut got = Vec::new();
+            let mut buffer = [0; 64];
+            while let Ok(read) = caller.read(&mut buffer) {
+                if read == 0 {
+                    break;
+                }
+                got.extend_from_slice(&buffer[..read]);
+            }
+            got
+        });
+        let mut modem = Modem::new();
+        modem.send(format!("ATE0D127.0.0.1:{port}\r").as_bytes());
+        until(&mut modem, |modem| modem.carrier());
+        // A pause asked for as it goes online, as ProTERM asks, the place's
+        // banner pouring in: held here.
+        modem.send(&[0x13]);
+        until(&mut modem, |modem| {
+            modem
+                .to_machine
+                .iter()
+                .rev()
+                .take(6)
+                .eq(b"banner".iter().rev())
+        });
+        assert!(modem.for_machine(1000).is_empty(), "held by the XOFF");
+        modem.send(&[0x11]);
+        let came = String::from_utf8_lossy(&modem.for_machine(1000)).into_owned();
+        assert!(
+            came.ends_with("CONNECT 9600\r\nbanner"),
+            "let go by the XON: {came:?}"
+        );
+        // Neither sent on to the place.
+        modem.send(b"a\x13b\x11c");
+        frames(&mut modem, 10);
+        drop(modem);
+        assert_eq!(place.join().unwrap(), b"abc");
+    }
+
+    #[test]
+    fn what_s_typed_online_is_echoed_till_the_place_says_it_echoes() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let (go_on, step) = std::sync::mpsc::channel::<()>();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            step.recv().unwrap();
+            // A password's coming: the place echoes (nothing), not the
+            // client.
+            caller.write_all(&[255, 251, 1]).unwrap();
+            caller.write_all(b"password:").unwrap();
+            step.recv().unwrap();
+            caller.write_all(&[255, 252, 1]).unwrap();
+            caller.write_all(b"name:").unwrap();
+            step.recv().unwrap();
+        });
+        let mut modem = Modem::new();
+        modem.send(format!("ATE0D127.0.0.1:{port}\r").as_bytes());
+        wait_for(&mut modem, "CONNECT");
+        modem.send(b"ab\r");
+        assert_eq!(said(&mut modem), "ab\r\n", "a name, shown as it's typed");
+        go_on.send(()).unwrap();
+        wait_for(&mut modem, "password:");
+        modem.send(b"secret");
+        assert_eq!(said(&mut modem), "", "the place's to echo, and it doesn't");
+        go_on.send(()).unwrap();
+        wait_for(&mut modem, "name:");
+        modem.send(b"c");
+        assert_eq!(said(&mut modem), "c", "WONT ECHO, the client's again");
+        // ATF1: never, whatever telnet says.
+        frames(&mut modem, 60);
+        modem.send(b"+++");
+        frames(&mut modem, 60);
+        modem.send(b"ATF1O\r");
+        wait_for(&mut modem, "CONNECT");
+        modem.send(b"d");
+        assert_eq!(said(&mut modem), "", "ATF1");
+        go_on.send(()).unwrap();
+        place.join().unwrap();
+    }
+
+    #[test]
+    fn xon_and_xoff_hold_results_too_and_at_k0_passes_them_as_they_are() {
+        let mut modem = Modem::new();
+        modem.send(b"\x13AT\r");
+        assert!(modem.for_machine(100).is_empty(), "held");
+        modem.send(b"\x11");
+        assert_eq!(
+            String::from_utf8_lossy(&modem.for_machine(100)),
+            "AT\r\r\nOK\r\n",
+            "neither echoed"
+        );
+        modem.send(b"AT&K0\r");
+        said(&mut modem);
+        modem.send(b"\x13");
+        assert_eq!(
+            modem.for_machine(100),
+            [0x13],
+            "echoed as typed, nothing held"
+        );
+        modem.send(b"\rAT&K4\r");
+        said(&mut modem);
+        modem.send(b"\x13AT\r");
+        assert!(modem.for_machine(100).is_empty(), "&K4, held again");
     }
 
     #[test]

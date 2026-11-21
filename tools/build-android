@@ -3,14 +3,16 @@
 # SDL's libSDL2.so (SDL built from sdl2-sys's own source, with the NDK); and
 # the emulator's program, as the library app runs it for what it asks
 # without a window, named libcpu_emu_exe.so for Android to install it with
-# them. For each of Android's CPUs given (all four if none are), into
+# them. For each of Android's CPUs given, into
 # desktop/gen/android/app/src/main/jniLibs/<ABI>/, where the app picks them
-# up, beside the library app's own, as Tauri builds it. arm64-v8a is the
-# NVIDIA Shield's; x86 an Android TV emulator's. Then the app itself, by
-# Tauri: release, signed with the release key that
-# desktop/gen/android/keystore.properties names, or the debug key without it;
-# with --debug first, debuggable (run-as, the webview's inspector). Its APK
-# is in desktop/gen/android/app/build/outputs/apk/universal/.
+# up, beside the library app's own, as Tauri builds it; and only those. If
+# none are given, the two ARM ones, every phone's and TV box's: arm64-v8a,
+# as the NVIDIA Shield is, and armeabi-v7a, as a TV stick's apps often are.
+# x86 and x86_64, an emulator's or a Chromebook's, only when they're named.
+# Then the app itself, by Tauri: release, signed with the release key that
+# desktop/gen/android/keystore.properties names, or the debug key without
+# it; with --debug first, debuggable (run-as, the webview's inspector). Its
+# APK is in desktop/gen/android/app/build/outputs/apk/universal/.
 #
 # Gradle wants JAVA_HOME a JDK 17. The SDK, NDK and CMake: as
 # tools/android-env says.
@@ -26,7 +28,9 @@ fi
 . tools/android-env
 OUT=desktop/gen/android/app/src/main/jniLibs
 
-ABIS=${*:-arm64-v8a armeabi-v7a x86 x86_64}
+ABIS=${*:-arm64-v8a armeabi-v7a}
+# What an earlier build left for other CPUs gone, or the APK would have it.
+rm -rf "$OUT"
 for abi in $ABIS; do
     android_target "$abi" || exit 1
     # Built; and SDL's library where its build made it, as Cargo says: the

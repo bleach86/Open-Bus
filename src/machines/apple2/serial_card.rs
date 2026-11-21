@@ -87,7 +87,12 @@ impl SerialCard {
         self.modem.rate = self.acia.rate();
         self.modem.send(&sent);
         self.modem.frame();
-        self.acia.incoming.extend(self.modem.to_machine.drain(..));
+        // What's come, as the port has room for it: two frames' worth at
+        // its rate, the rest left with the modem, for the machine's XOFF
+        // to hold there, as a modem's buffer does.
+        let room =
+            (self.acia.rate() as usize / 10 / 60 * 2 + 4).saturating_sub(self.acia.incoming.len());
+        self.acia.incoming.extend(self.modem.for_machine(room));
         self.acia.ready = true;
         self.acia.connected = self.modem.carrier();
     }

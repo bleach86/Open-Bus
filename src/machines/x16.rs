@@ -45,8 +45,9 @@
 //! it's given, or roms/x16/sdcard.img, if that's there; its light's the
 //! SMC's activity light, or the card being read or written. Its clock's
 //! the host's time as it's turned on, kept by its battery since; its
-//! clock's RAM is kept in roms/x16/nvram.bin, read as it's run and saved
-//! as it's written.
+//! clock's RAM is kept where saves are (`saves::machine`), read as it's run
+//! and saved as it's written; or, from before, read from
+//! roms/x16/nvram.bin.
 
 #[cfg(test)]
 mod tests {
@@ -79,6 +80,8 @@ use crate::host::machine::{Input, Machine, Picture};
 use crate::host::run::Host;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::save_state;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::host::saves;
 use crate::host::sound::Sampler;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::host::window::Window;
@@ -102,6 +105,8 @@ const VOLUME: f32 = 0.7;
 pub const ROM_FOLDER: &str = "roms/x16";
 /// The RTC's 64 bytes of RAM, kept by its battery, as they're kept here.
 pub const NVRAM_FILE: &str = "roms/x16/nvram.bin";
+/// Its name where saves are kept apart, as they are, but in the tests.
+pub const NVRAM_SAVE: &str = "nvram.bin";
 
 /// The KERNAL's keyboard buffer, KEYD, in RAM bank 0, and NDX, how many
 /// it holds, as they've been since R41, and as x16emu has them.
@@ -437,9 +442,10 @@ impl X16 {
     }
 
     /// Its clock's RAM kept in the file at `path`: read from it, if it's
-    /// there, and saved to it as it's written.
-    pub fn keep_nvram(&mut self, path: &Path) {
-        if let Ok(saved) = files::read(path) {
+    /// there, else from where it was kept `before`; and saved to `path` as
+    /// it's written.
+    pub fn keep_nvram(&mut self, path: &Path, before: &Path) {
+        if let Ok(saved) = files::read(path).or_else(|_| files::read(before)) {
             let ram = &mut self.i2c.rtc.ram;
             let len = saved.len().min(ram.len());
             ram[..len].copy_from_slice(&saved[..len]);
@@ -963,18 +969,62 @@ pub fn game_name(path: &Path) -> String {
 /// The card at `card` for the game at `game` (a zip, a folder, or a
 /// program, `game_of`), made if it isn't there yet: its files, and
 /// AUTOBOOT.X16 to run it. Once made, it's kept, and what the game saves on
-/// it with it.
+/// it with it; made again when the game's files change, the game's new ones
+/// on it and the rest of what was on it kept. A card Open Bus didn't make
+/// is left as it is.
 pub fn make_card(game: &Path, card: &Path) -> Result<(), String> {
-    if files::exists(card) {
-        return Ok(());
-    }
     let game = &game_of(game);
     let name = game
         .file_stem()
         .map_or(String::new(), |name| name.to_string_lossy().into_owned());
-    let made = card::game(&name, game_files(game)?)?;
-    let image = card::card(&made.files, clock::now())?;
-    files::save(card, &image).map_err(|e| format!("{}: {e}", card.display()))
+    let made = game_files(game).and_then(|files| card::game(&name, files));
+    let shown = card.display();
+    let mut files = match made {
+        Ok(made) => made.files,
+        // The game gone, or broken: its card, as it is, if there's one.
+        Err(_) if files::exists(card) => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let fingerprint = card::fingerprint(&files);
+    if files::exists(card) {
+        // Who made it, as its first megabyte, its MBR and boot sector, say.
+        let head = files::read_at(card, 0, card::HEAD).map_err(|e| format!("{shown}: {e}"))?;
+        let made = card::made(&head);
+        if matches!(made, card::Made::Game(was) if was == fingerprint) || made == card::Made::Other
+        {
+            return Ok(());
+        }
+        let mut image = files::read(card).map_err(|e| format!("{shown}: {e}"))?;
+        let kept = match card::files_of(&image) {
+            Ok(kept) => {
+                // A card from before fingerprints: made again only if
+                // its game's programs have changed, so a file it came
+                // with and has saved over (its high scores, say) stays.
+                let same = |(path, bytes): &card::CardFile| {
+                    kept.iter()
+                        .any(|(on, was)| on.eq_ignore_ascii_case(path) && was == bytes)
+                };
+                let programs = files
+                    .iter()
+                    .filter(|(path, bytes)| card::is_program(path, bytes));
+                if made == card::Made::Before && programs.clone().all(same) {
+                    card::stamp(&mut image, fingerprint);
+                    return files::save(card, &image).map_err(|e| format!("{shown}: {e}"));
+                }
+                kept
+            }
+            // Not to be read: kept as it is, rather than lose what's
+            // saved on it.
+            Err(e) => {
+                eprintln!("{shown}: {e}; it's kept as it is");
+                return Ok(());
+            }
+        };
+        files = card::with_kept(files, kept);
+    }
+    let mut image = card::card(&files, clock::now())?;
+    card::stamp(&mut image, fingerprint);
+    files::save(card, &image).map_err(|e| format!("{shown}: {e}"))
 }
 
 /// A card at `card`, blank, as a new one's formatted, if there isn't one
@@ -1025,7 +1075,9 @@ pub fn size() -> (u32, u32) {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run(rom: &str, sd_card: Option<&str>, game: Option<&str>, fullscreen: bool) {
     let mut cpu = build(rom, sd_card).unwrap_or_else(|e| panic!("{e}"));
-    cpu.memory.keep_nvram(Path::new(NVRAM_FILE));
+    let before = Path::new(NVRAM_FILE);
+    cpu.memory
+        .keep_nvram(&saves::machine(NVRAM_SAVE, before), before);
     if let Some(game) = game {
         cpu.memory.name = game_name(Path::new(game));
     }

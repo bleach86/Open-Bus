@@ -121,6 +121,19 @@ export const bytes = async (name) => asBytes(await invoke('file_bytes', { path: 
 
 /// A folder chosen: its path. Its files and sizes. A file of one left out.
 export const pickFolder = () => invoke('pick_folder');
+
+/// The saves: where they're kept, whether that's been chosen, and of each
+/// kind (save, state, resume, card, disk) how many and how big. Each kind's
+/// cleared; and where they're kept changed (`null`, back to the default),
+/// what's there moved. Each `{ folder, chosen, kinds }` after.
+export const savesOverview = () => invoke('saves_overview');
+export const clearSaves = (kinds) => invoke('clear_saves', { kinds });
+export const setSavesFolder = (path) => invoke('set_saves_folder', { path });
+
+/// A game's saves, each `{ kind, bytes, written, path }`; and those of
+/// `kinds` deleted, what's left after.
+export const gameSaves = (machine) => invoke('game_saves', { machine: pathed(machine) });
+export const clearGameSaves = (machine, kinds) => invoke('clear_game_saves', { machine: pathed(machine), kinds });
 export const folderFiles = (folder) => invoke('folder_files', { folder });
 export const hide = (path) => invoke('forget_path', { path });
 

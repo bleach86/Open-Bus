@@ -11,8 +11,12 @@
 //! numbers. Its commands: `D` (`DT`, `DP`) and the place, dialling; `H`,
 //! hanging up; `O`, back online; `Z` and `&F`, as it was; `E`, its echo;
 //! `V`, words or numbers; `Q`, quiet; `NET`, telnet's or plain TCP's; `I`,
-//! what it is; and the rest it's given, as a modem takes them, `M`, `L`,
-//! `X`, `&C`, `&D`, `S` registers, done as nothing. `A/` again, the last.
+//! what it is; `&K`, flow control, `&K4` the machine's XON and XOFF (as it
+//! starts), `&K0` none; `F`, online echo, `F0` always, `F1` never, else as
+//! telnet says (what's typed echoed till the place says it echoes, as a
+//! telnet client shows it); and the rest it's given, as a modem takes them,
+//! `M`, `L`, `X`, `&C`, `&D`, `S` registers, done as nothing. `A/` again,
+//! the last.
 //! A key pressed as it dials gives up.
 //!
 //! Online, what the machine sends goes to the place, and what comes back
@@ -40,6 +44,10 @@ const GUARD_FRAMES: u32 = 60;
 /// Longer than this dialling, and there's no answer.
 #[cfg(not(target_arch = "wasm32"))]
 const DIAL_TIME: Duration = Duration::from_secs(20);
+
+/// Software flow control's pause and go on: Ctrl-S and Ctrl-Q.
+const XOFF: u8 = 0x13;
+const XON: u8 = 0x11;
 
 const IAC: u8 = 255;
 const DONT: u8 = 254;
@@ -136,6 +144,18 @@ pub struct Modem {
     escaped_frames: Option<u32>,
     /// The rate it connects at: the machine's port's.
     pub rate: u32,
+    /// Local XON/XOFF flow control (`&K4`, as it starts; `&K0` or `&K3`
+    /// off): the machine's XOFF holding what's come for it here, its XON
+    /// letting it go, neither sent on. Terminal programs such as ProTERM
+    /// ask for a pause as they go online, a place's banner pouring in.
+    xon_xoff: bool,
+    held: bool,
+    /// Whether the place echoes what's sent, as telnet's `WILL ECHO` says.
+    /// Until it does, what's typed online is echoed here, as a telnet client
+    /// shows what it types: a MUD's name prompt, say. `ATF0` always, `ATF1`
+    /// never, as a Hayes modem's online echo; else as telnet has it.
+    far_echoes: bool,
+    online_echo: Option<bool>,
 }
 
 impl Default for Modem {
@@ -162,6 +182,10 @@ impl Modem {
             pluses: 0,
             escaped_frames: None,
             rate: 9600,
+            xon_xoff: true,
+            held: false,
+            far_echoes: false,
+            online_echo: None,
         }
     }
 
@@ -183,6 +207,10 @@ impl Modem {
     /// Bytes from the machine's serial port.
     pub fn send(&mut self, bytes: &[u8]) {
         for &byte in bytes {
+            if self.xon_xoff && matches!(byte, XON | XOFF) {
+                self.held = byte == XOFF;
+                continue;
+            }
             if self.online {
                 self.send_online(byte);
             } else {
@@ -204,6 +232,13 @@ impl Modem {
             self.escaped_frames = None;
         }
         self.quiet_frames = 0;
+        let echo = self.online_echo.unwrap_or(self.telnet && !self.far_echoes);
+        if echo {
+            self.to_machine.push_back(byte);
+            if byte == b'\r' {
+                self.to_machine.push_back(b'\n');
+            }
+        }
         if self.telnet && byte == IAC {
             self.to_place.push(IAC);
         }
@@ -312,9 +347,14 @@ impl Modem {
                 b'&' => {
                     let what = line.get(at).copied();
                     at += 1;
-                    number(&mut at);
-                    if what == Some(b'F') {
-                        self.settings_as_they_were();
+                    let value = number(&mut at);
+                    match what {
+                        Some(b'F') => self.settings_as_they_were(),
+                        Some(b'K') => {
+                            self.xon_xoff = value == Some(4);
+                            self.held &= self.xon_xoff;
+                        }
+                        _ => {}
                     }
                 }
                 b'S' => {
@@ -331,6 +371,9 @@ impl Modem {
                         _ => {}
                     }
                 }
+                b'F' => {
+                    self.online_echo = Some(number(&mut at).unwrap_or(0) == 0);
+                }
                 b'M' | b'L' | b'X' | b'B' | b'C' | b'N' | b'W' | b'Y' => {
                     number(&mut at);
                 }
@@ -345,6 +388,19 @@ impl Modem {
 
     fn settings_as_they_were(&mut self) {
         (self.echo, self.words, self.quiet, self.telnet) = (true, true, false, true);
+        self.xon_xoff = true;
+        self.held = false;
+        self.online_echo = None;
+    }
+
+    /// What's come for the machine, `most` of it at most, as its port has
+    /// room: none while it's held by an XOFF.
+    pub fn for_machine(&mut self, most: usize) -> Vec<u8> {
+        if self.held {
+            return Vec::new();
+        }
+        let take = most.min(self.to_machine.len());
+        self.to_machine.drain(..take).collect()
     }
 
     /// Dialling `place`, `host` or `host:port`, the connection made on a
@@ -385,6 +441,7 @@ impl Modem {
     fn hang_up(&mut self) {
         self.line = None;
         self.online = false;
+        self.held = false;
         self.to_place.clear();
         self.taking = Telnet::Data;
     }
@@ -441,6 +498,7 @@ impl Modem {
                     let _ = stream.set_nodelay(true);
                     self.line = Some(Line::Up(stream));
                     self.online = true;
+                    self.far_echoes = false;
                     self.quiet_frames = 0;
                     self.result(Result::Connect);
                 }
@@ -542,6 +600,9 @@ impl Modem {
     /// said back, as that could go back and forth for ever.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn answer(&mut self, asked: u8, option: u8) {
+        if option == ECHO && matches!(asked, WILL | WONT) {
+            self.far_echoes = asked == WILL;
+        }
         let does = matches!(option, BINARY | SUPPRESS_GO_AHEAD);
         let reply = match asked {
             DO if does => WILL,

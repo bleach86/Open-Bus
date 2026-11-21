@@ -274,4 +274,124 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"kept", "not made again");
         std::fs::remove_file(&path).unwrap();
     }
+
+    #[test]
+    fn a_card_is_read_back_as_it_was_made() {
+        let big: Vec<u8> = (0..70_000).map(|n| (n % 251) as u8).collect();
+        let mut files = vec![
+            file("HELLO.PRG", &[0x01, 0x08, 0, 0]),
+            file("BlueShips.bin", &big),
+            file("EMPTY", b""),
+            file("maps/level one.map", b"level"),
+            file("maps/deeper/X.BIN", b"x"),
+        ];
+        let image = card::card(&files, WHEN).unwrap();
+        let mut read = card::files_of(&image).unwrap();
+        read.sort();
+        files.sort();
+        assert_eq!(read, files);
+        assert_eq!(card::made(&image), card::Made::Before, "no fingerprint");
+        assert_eq!(card::made(&[0; 512]), card::Made::Other);
+    }
+
+    #[test]
+    fn a_kept_file_keeps_its_place_but_not_a_new_version_of_the_games() {
+        let game = vec![file("GAME.PRG", b"new"), file("Data/LEVELS.BIN", b"2")];
+        let kept = vec![
+            file("game.prg", b"old"),
+            file("DATA/SAVE.DAT", b"saved"),
+            file("SCORES", b"99"),
+        ];
+        let mut both = card::with_kept(game, kept);
+        both.sort();
+        assert_eq!(
+            both,
+            [
+                file("Data/LEVELS.BIN", b"2"),
+                file("Data/SAVE.DAT", b"saved"),
+                file("GAME.PRG", b"new"),
+                file("SCORES", b"99"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_games_card_is_made_again_when_the_game_changes_its_saves_kept() {
+        use crate::machines::x16;
+        let root = std::env::temp_dir().join(format!("cpu_emu_{}_x16_again", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let game = root.join("Galaxy");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::write(game.join("GALAXY.PRG"), [0x01, 0x08, 1]).unwrap();
+        std::fs::write(game.join("SCORES"), b"none").unwrap();
+        let path = root.join("Galaxy.img");
+        x16::make_card(&game, &path).unwrap();
+        let on = |path: &Path| {
+            let mut files = card::files_of(&std::fs::read(path).unwrap()).unwrap();
+            files.sort();
+            files
+        };
+        assert!(matches!(
+            card::made(&std::fs::read(&path).unwrap()),
+            card::Made::Game(_)
+        ));
+        // The game saves on it, as its DOS would: the boot sector as it was.
+        let saved = |path: &Path, file: CardFile| {
+            let image = std::fs::read(path).unwrap();
+            let mut files = card::files_of(&image).unwrap();
+            files.retain(|(name, _)| *name != file.0);
+            files.push(file);
+            let mut again = card::card(&files, WHEN).unwrap();
+            let start = 2048 * 512;
+            again[start..start + 512].copy_from_slice(&image[start..start + 512]);
+            std::fs::write(path, again).unwrap();
+        };
+        saved(&path, file("SAVE.DAT", b"level 3"));
+        saved(&path, file("SCORES", b"1000"));
+        let before = std::fs::read(&path).unwrap();
+        x16::make_card(&game, &path).unwrap();
+        assert!(
+            std::fs::read(&path).unwrap() == before,
+            "the game the same: left as it is"
+        );
+        // A new version: its files, and what was saved.
+        std::fs::write(game.join("GALAXY.PRG"), [0x01, 0x08, 2]).unwrap();
+        x16::make_card(&game, &path).unwrap();
+        assert_eq!(
+            on(&path),
+            [
+                file("AUTOBOOT.X16", &card::autoboot("GALAXY.PRG")),
+                file("GALAXY.PRG", &[0x01, 0x08, 2]),
+                file("SAVE.DAT", b"level 3"),
+                file("SCORES", b"none"),
+            ],
+            "the game's own files its new ones"
+        );
+        // A card from before fingerprints, its program the game's: stamped,
+        // its files as they were, its scores kept.
+        let old = vec![
+            file("AUTOBOOT.X16", &card::autoboot("GALAXY.PRG")),
+            file("GALAXY.PRG", &[0x01, 0x08, 2]),
+            file("SCORES", b"500"),
+        ];
+        std::fs::write(&path, card::card(&old, WHEN).unwrap()).unwrap();
+        x16::make_card(&game, &path).unwrap();
+        assert!(matches!(
+            card::made(&std::fs::read(&path).unwrap()),
+            card::Made::Game(_)
+        ));
+        assert_eq!(on(&path), old);
+        // Its program not the game's: made again.
+        let old = vec![file("GALAXY.PRG", &[0x01, 0x08, 1]), file("SCORES", b"500")];
+        std::fs::write(&path, card::card(&old, WHEN).unwrap()).unwrap();
+        x16::make_card(&game, &path).unwrap();
+        assert_eq!(on(&path)[1], file("GALAXY.PRG", &[0x01, 0x08, 2]));
+        // Someone else's card: left alone.
+        let mut other = card::card(&old, WHEN).unwrap();
+        other[2048 * 512 + 71..2048 * 512 + 82].copy_from_slice(b"MINE       ");
+        std::fs::write(&path, &other).unwrap();
+        x16::make_card(&game, &path).unwrap();
+        assert!(std::fs::read(&path).unwrap() == other);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

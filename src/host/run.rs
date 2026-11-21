@@ -20,6 +20,7 @@ use crate::host::files;
 use crate::host::machine::{Input, Machine};
 use crate::host::notice;
 use crate::host::save_state;
+use crate::host::saves;
 use crate::host::stats::Stats;
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -825,7 +826,8 @@ impl<M: Machine> Host<M> {
         }
     }
 
-    /// Where the state to resume from is: beside the one F2 saves.
+    /// The state to resume from, as it would be beside the game: by the one
+    /// F2 saves, kept where saves are.
     fn resume_file(&self) -> PathBuf {
         self.state.with_extension("resume")
     }
@@ -835,10 +837,10 @@ impl<M: Machine> Host<M> {
     /// is told of, and it starts afresh.
     pub fn resume(&mut self) {
         let file = self.resume_file();
-        if !files::exists(&file) {
+        if !saves::exists(&file) {
             return;
         }
-        let loaded = files::read(&file)
+        let loaded = saves::read(&file)
             .map_err(|e| e.to_string())
             .and_then(|state| save_state::restore(&mut self.cpu, &state));
         match loaded {
@@ -849,7 +851,7 @@ impl<M: Machine> Host<M> {
 
     /// Its state kept, as it's put away, to resume from.
     pub fn keep_for_resuming(&mut self) {
-        let file = self.resume_file();
+        let file = saves::place(&self.resume_file());
         let kept = save_state::state(&self.cpu)
             .and_then(|state| files::save(&file, &state).map_err(|e| e.to_string()));
         if let Err(e) = kept {
@@ -969,7 +971,7 @@ impl<M: Machine> Host<M> {
 
     /// F2: the machine's state saved to its file.
     fn save_state(&mut self) {
-        let path = &self.state;
+        let path = &saves::place(&self.state);
         let saved = save_state::state(&self.cpu)
             .and_then(|state| files::save(path, &state).map_err(|e| e.to_string()));
         match saved {
@@ -983,10 +985,10 @@ impl<M: Machine> Host<M> {
 
     /// F4: the machine put back as its file has it, if it can be.
     fn load_state(&mut self) {
-        if !files::exists(&self.state) {
+        if !saves::exists(&self.state) {
             return self.say("No state saved");
         }
-        let loaded = files::read(&self.state)
+        let loaded = saves::read(&self.state)
             .map_err(|e| e.to_string())
             .and_then(|state| save_state::restore(&mut self.cpu, &state));
         match loaded {

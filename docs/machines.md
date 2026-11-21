@@ -22,6 +22,40 @@ command line, put them where each section below says.
 | Atari 7800 high scores | `highscre.bin` (optional)                                         |
 | Commander X16          | `rom.bin` from an official release. The desktop app can fetch it. |
 
+## Where saves go
+
+Saves are kept in the app's own folder, never in your game folders, laid out
+by system, as a MiSTer keeps them:
+
+```
+saves/nes/Super Mario Bros. 3 (USA).srm       what the game saves
+states/nes/Super Mario Bros. 3 (USA).state    a save state (F2)
+states/nes/Super Mario Bros. 3 (USA).resume   where it was left off
+saves/x16/Wumpus.img                          an X16 game's card
+```
+
+By default the `saves` and `states` folders are in:
+
+| System  | Folder                                              |
+| ------- | --------------------------------------------------- |
+| Linux   | `~/.local/share/app.openbus.desktop`                |
+| macOS   | `~/Library/Application Support/app.openbus.desktop` |
+| Windows | `%APPDATA%\app.openbus.desktop`                     |
+| Android | the app's own storage                               |
+
+**Settings → Saves** moves them somewhere else, shows how many of each kind
+there are, and clears a kind. A game's details list its own saves, each to be
+deleted. From the command line, `--saves FOLDER` keeps them under another
+folder, and `cpu_emu saves` lists or clears them.
+
+Saves are named by the game's file, without its extension. Two games with the
+same name in different folders share their saves. Saves left beside games by
+older versions are still loaded.
+
+Disks are different: an Apple II disk or hard disk, or an SD card you give the
+X16, is written back into its own image, as the real hardware writes to its
+disk.
+
 ## NES and Famicom
 
 Cartridges are `.nes` files (iNES or NES 2.0), or zips of one. Disk System
@@ -132,9 +166,11 @@ It needs the X16's `rom.bin` from an
 [official release](https://github.com/X16Community/x16-rom/releases). The
 desktop app can download it. On the command line it's read from `roms/x16/`.
 
-- **Games.** A `.zip`, a folder, or a `.PRG`. In the library each game gets an
-  SD card image of its own, made the first time it runs, which boots straight
-  into it.
+- **Games.** A `.zip`, a folder, or a `.PRG`. Each game gets an SD card image
+  of its own, made the first time it runs, which boots straight into it. What
+  the game saves goes on its card. When the game's files change, say for a new
+  version, the card is made again: the game's new files, plus everything else
+  that was on it. Deleting the card in the game's saves starts it afresh.
 - **SD card.** `--sd IMAGE` uses a card image of your own, written back as the
   machine writes to it. `tools/make-x16-sd` makes one or adds files to it.
 - **Keyboard.** Keys go to the X16 by position, so its own layout applies.
@@ -142,8 +178,8 @@ desktop app can download it. On the command line it's read from `roms/x16/`.
 - **Mouse.** Click the picture to capture the mouse, and press Ctrl+M to let it
   go.
 - **Controllers.** Gamepads are its SNES controllers 1 and 2.
-- **Clock.** It starts from the host's time. Its NVRAM is kept in
-  `roms/x16/nvram.bin`.
+- **Clock.** It starts from the host's time. Its NVRAM is kept with your
+  saves.
 
 **Not yet supported:** NTSC and 240p video output. VGA output works.
 

@@ -96,6 +96,7 @@
           <button data-section="look">Look</button>
           <button data-section="controls">Controls</button>
           <button data-section="system">System files</button>
+          <button data-section="saves" class="for-desktop">Saves</button>
         </nav>
 
         <div id="pane-library" class="pane">
@@ -103,7 +104,9 @@
           <div class="for-desktop">
             <p class="about">
               The games in these folders. Nothing is copied or moved,
-              <span id="saves-where">and saves go beside each game.</span>
+              <span id="saves-where"
+                >and saves are kept in the app, not in them.</span
+              >
             </p>
             <ul id="folders" class="rows"></ul>
             <p class="actions" id="folder-actions">
@@ -280,6 +283,19 @@
           </p>
           <p class="about for-desktop" id="data-place"></p>
           <p class="about" id="app-version"></p>
+        </div>
+        <div id="pane-saves" class="pane for-desktop" hidden>
+          <h2>Saves</h2>
+          <p class="about">
+            What games save, their save states and where they were left off,
+            kept apart from your games: in <span id="saves-where-now"></span>,
+            in a folder for each system.
+          </p>
+          <p class="actions">
+            <button id="saves-change">Change folder…</button>
+            <button id="saves-default" hidden>Back to the default</button>
+          </p>
+          <ul id="saves-kinds" class="rows"></ul>
         </div>
       </section>
 
@@ -592,6 +608,10 @@
                 <option value="off">Off</option>
               </select></label
             >
+          </div>
+          <div class="for-desktop">
+            <h3 class="details-heading">Its saves</h3>
+            <ul id="game-saves" class="rows"></ul>
           </div>
         </div>
       </div>
