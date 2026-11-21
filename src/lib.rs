@@ -11,6 +11,7 @@ pub mod chips {
     pub mod pokey;
     pub mod riot6532;
     pub mod tia_sound;
+    pub mod uart16550;
     pub mod via6522;
     pub mod ym2151;
 
@@ -20,6 +21,7 @@ pub mod chips {
         mod ay38910;
         mod pokey;
         mod riot6532;
+        mod uart16550;
         mod via6522;
         mod ym2151;
     }

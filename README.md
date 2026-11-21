@@ -17,7 +17,7 @@ install. Add your own games and it runs them.
 | **Apple II+ and IIe** | Original or enhanced IIe; Disk II with `.dsk`, `.do`, `.po`, `.nib` and `.woz`; a hard disk card; Mockingboards; a clock card; a Super Serial Card with a Hayes modem that dials BBSes on the internet |
 | **Atari 2600**        | The common bank-switching schemes, NTSC and PAL                                                                                                                                                        |
 | **Atari 7800**        | MARIA, POKEY cartridges, and 2600 games as the 7800 plays them                                                                                                                                         |
-| **Commander X16**     | 65C02 at 8 MHz, VERA video and sound, the YM2151, an SD card, the mouse, the RTC, and SNES pads                                                                                                        |
+| **Commander X16**     | 65C02 at 8 MHz, VERA video and sound, the YM2151, an SD card, the mouse, the RTC, SNES pads, and TexElec's network card with a Zimodem WiFi modem that dials BBSes                                     |
 | **Skink**             | A small 6502 computer of our own, built to run GeckOS                                                                                                                                                  |
 | **BASIC**             | A bare 6502 with Microsoft BASIC in a terminal                                                                                                                                                         |
 
@@ -188,6 +188,10 @@ tools/fetch-dormann && cargo test dormann          # Klaus Dormann's 6502 tests
   [x16emu](https://github.com/X16Community/x16-emulator) (BSD-2).
 - The 7800 follows a7800, and the Super Serial Card's switches follow MAME
   (BSD-3).
+- The X16's network card follows TexElec's notes and the TL16C2550's data
+  sheet, and its modem follows Bo Zimmerman's
+  [Zimodem](https://github.com/bozimmerman/Zimodem), the firmware on the
+  card's ESP32.
 - Covers and game details come from
   [libretro](https://github.com/libretro)'s thumbnails and database. Apple II
   title screens come from the Internet Archive. They're fetched when asked

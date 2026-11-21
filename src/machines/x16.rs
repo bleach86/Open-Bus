@@ -10,7 +10,7 @@
 //! | `$9F10-$9F1F` | VIA 2: the user port, nothing on it            |
 //! | `$9F20-$9F3F` | VERA                                           |
 //! | `$9F40-$9F41` | the YM2151                                     |
-//! | `$9F60-$9FFF` | the expansion cards', none                     |
+//! | `$9F60-$9FFF` | the expansion cards': at `$9FE0`, the network card |
 //! | `$A000-$BFFF` | RAM, its bank of 64                            |
 //! | `$C000-$FFFF` | ROM, its bank of 32; 32 and up a cartridge's   |
 //!
@@ -48,12 +48,19 @@
 //! clock's RAM is kept where saves are (`saves::machine`), read as it's run
 //! and saved as it's written; or, from before, read from
 //! roms/x16/nvram.bin.
+//!
+//! In its expansion slot, TexElec's Serial & ESP32 Network Card
+//! (`network_card`), its UARTs at `$9FE0` and `$9FE8`, and on the first a
+//! WiFi modem, Zimodem's, for terminal programs to go online with. It's
+//! not in a save state: its connection's the host's, and its UARTs as the
+//! program running has them set.
 
 #[cfg(test)]
 mod tests {
     mod card;
     mod i2c;
     mod machine;
+    mod network_card;
     mod sd_card;
     mod vera;
     mod vera_audio;
@@ -63,6 +70,7 @@ mod tests {
 pub mod card;
 pub mod i2c;
 pub mod keyboard;
+pub mod network_card;
 pub mod sd_card;
 pub mod vera;
 pub mod vera_audio;
@@ -87,6 +95,7 @@ use crate::host::sound::Sampler;
 use crate::host::window::Window;
 use crate::host::zip::crc32;
 use i2c::{Asked, I2c};
+use network_card::NetworkCard;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -180,6 +189,9 @@ pub struct X16 {
     latch: bool,
     clock: bool,
     ym: Ym2151,
+    /// The network card, in its expansion slot.
+    #[serde(skip)]
+    pub network: NetworkCard,
     /// The YM2151's clock, in 8ths of a microsecond: its next tick due as
     /// this passes the CPU's.
     ym_clock: u32,
@@ -267,6 +279,7 @@ impl X16 {
             latch: false,
             clock: false,
             ym: Ym2151::new(),
+            network: NetworkCard::new(CLOCK_HZ),
             ym_clock: 0,
             gone: 0,
             until: 0,
@@ -304,6 +317,7 @@ impl X16 {
         }
         self.vera.reset();
         self.ym = Ym2151::new();
+        self.network.reset();
         self.port_a_changed();
         self.port_b_changed();
         self.count();
@@ -388,6 +402,7 @@ impl X16 {
             }
             self.vera.run(gone);
             self.i2c.run(gone);
+            self.network.run(gone);
             let ym_clock = self.ym_clock as u64 + gone as u64 * YM_CLOCK_HZ as u64;
             self.ym_clock = (ym_clock % CLOCK_HZ as u64) as u32;
             let ym_ticks = (ym_clock / CLOCK_HZ as u64) as u32;
@@ -415,6 +430,7 @@ impl X16 {
             .vera
             .due()
             .min(self.i2c.due())
+            .min(self.network.due())
             .min(ym_due.min(u32::MAX as u64) as u32);
     }
 
@@ -539,6 +555,13 @@ impl Bus for X16 {
                 }
             }
             0x9F60..=0x9F9F => open,
+            network_card::BASE..=network_card::END => {
+                self.slow();
+                self.catch_up();
+                let value = self.network.read(addr);
+                self.count();
+                value
+            }
             0x9FA0..=0x9FFF => {
                 self.slow();
                 open
@@ -583,6 +606,12 @@ impl Bus for X16 {
                 self.count();
             }
             0x9F60..=0x9F9F => {}
+            network_card::BASE..=network_card::END => {
+                self.slow();
+                self.catch_up();
+                self.network.write(addr, value);
+                self.count();
+            }
             0x9FA0..=0x9FFF => self.slow(),
             0xA000..=0xBFFF => {
                 if let bank @ 0..RAM_BANKS = self.ram[0] as usize {
@@ -639,7 +668,11 @@ impl Bus for X16 {
     }
 
     fn irq(&self) -> bool {
-        self.vera.irq() || self.vias[0].irq() || self.vias[1].irq() || self.ym.irq()
+        self.vera.irq()
+            || self.vias[0].irq()
+            || self.vias[1].irq()
+            || self.ym.irq()
+            || self.network.irq()
     }
 
     fn nmi(&self) -> bool {
@@ -735,10 +768,15 @@ impl Machine for X16 {
         Some(rows[first..=last].join("\n"))
     }
 
+    /// The controllers, the keys and the mouse; the network card's frame,
+    /// its modem's I/O.
     fn input(&mut self, input: Input) {
         self.gamepads = [input.gamepad, input.gamepad_2];
         self.type_on();
         self.move_mouse(input.pointer);
+        self.catch_up();
+        self.network.frame();
+        self.count();
     }
 
     fn light(&mut self) -> bool {
@@ -793,6 +831,7 @@ impl Machine for X16 {
     fn keep(&mut self, running: &mut X16) {
         use std::mem::take;
         self.rom = take(&mut running.rom);
+        self.network = take(&mut running.network);
         self.vera.sd_card().image = running.vera.sd_card().image.take();
         self.typing = take(&mut running.typing);
         self.pasting = take(&mut running.pasting);

@@ -180,8 +180,34 @@ desktop app can download it. On the command line it's read from `roms/x16/`.
 - **Controllers.** Gamepads are its SNES controllers 1 and 2.
 - **Clock.** It starts from the host's time. Its NVRAM is kept with your
   saves.
+- **Network card.** TexElec's Serial & ESP32 Network Card is in its expansion
+  slot, at `$9FE0` (below).
 
 **Not yet supported:** NTSC and 240p video output. VGA output works.
+
+### The network card
+
+The card has two 16550 UARTs. The one at `$9FE0` goes to its WiFi modem, and
+the one at `$9FE8` is its RS-232 port, with nothing plugged in. The modem runs
+Zimodem's commands, as the real card's ESP32 does, and its WiFi is your
+computer's network, so there's nothing to set up.
+
+[ROMTERM](https://texelec.com/product/commander-x16-serial-network-card/),
+David Murray's terminal for the card, finds it by itself: press Return at its
+setup screen to keep 115,200 baud and port `$9FE0`, then dial:
+
+```
+atdt"bbs.example.org:23"
+```
+
+The address goes in quotes. `atdt` speaks telnet, which most BBSes want, and
+`atd` opens a plain TCP connection. `+++` hangs up, as it does on Zimodem.
+`ati` says which modem it is. Programs that use the card directly, such as
+[x16net](https://github.com/retrodores/x16net), work too.
+
+Zimodem's own extras aren't there: its phone book, listening for calls, its
+packet commands, `AT&G` downloads, SSH and PETSCII translation. The web
+version can't open network connections, so there the modem never connects.
 
 ## Skink and BASIC
 
