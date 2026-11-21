@@ -216,8 +216,10 @@ mod tests {
         );
         let status = terminal.card.io(STATUS, None).unwrap();
         assert_eq!(status & 0x60, 0, "DSR and the carrier");
+        // Echoed by the modem, the place not saying it echoes; then the
+        // place's.
         terminal.send(b"HELLO");
-        assert_eq!(terminal.wait_for("HELLO"), "HELLO");
+        assert_eq!(terminal.wait_for("HELLOHELLO"), "HELLOHELLO");
         drop(place.join().unwrap());
         terminal.wait_for("NO CARRIER");
         let status = terminal.card.io(STATUS, None).unwrap();
