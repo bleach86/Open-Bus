@@ -27,6 +27,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 sdl2 = "0.39.0"
 # The program's command line.
 clap = { version = "4.6.7", features = ["derive"] }
+# The modem's socket, its receive buffer set small before it connects: what
+# a place sends held back in the network, as a modem's flow control holds it.
+socket2 = "0.6"
 
 # Windows and Macs have no SDL of their own to link to, and a desktop Linux's
 # may be older than this one wants (2.28 up): theirs is built with the

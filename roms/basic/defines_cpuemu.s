@@ -34,6 +34,7 @@ RAMSTART2       := $0300
 
 TERM_OUT        := $FFF8
 TERM_IN         := $FFF9
+POWER_OFF       := $FFF7        ; written: the machine turned off
 
 ; the line editor
 ED_BUF          := $0200        ; the line, LINE_MAX at most
@@ -190,9 +191,44 @@ EDITLINE:
         jmp     @next
 @enter:
         jsr     ED_END          ; the cursor past the line, for BASIC's CR LF
+        jsr     QUITLINE
         lda     #1
         sta     ED_HANDING
         rts
+
+; Q or QUIT typed at BASIC's prompt, not to a program's INPUT (BASIC in
+; direct mode, the high byte of CURLIN $FF): the machine turned off, as
+; Ctrl-D turns it off. Either is ?SN ERROR to BASIC, so nothing is lost.
+QUITLINE:
+        lda     z:CURLIN+1
+        cmp     #$FF
+        bne     @no
+        ldx     ED_LEN
+        cpx     #1
+        beq     @q
+        cpx     #4
+        bne     @no
+        dex
+@quit:
+        lda     ED_BUF,x
+        jsr     UPPER
+        cmp     QUITWORD,x
+        bne     @no
+        dex
+        bpl     @quit
+        bmi     @off
+@q:
+        lda     ED_BUF
+        jsr     UPPER
+        cmp     #'Q'
+        bne     @no
+@off:
+        lda     #1
+        sta     POWER_OFF
+@no:
+        rts
+QUITWORD:
+        .byte   "QUIT"
 
 ; After an ESC, the rest of the terminal's sequence for a key: ESC [ or
 ; ESC O, then any parameters, up to a byte from $40, which is returned,

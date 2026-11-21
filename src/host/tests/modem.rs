@@ -2,7 +2,8 @@
 //! echoed or not; dialling a place (a server of the test's own, here),
 //! connecting, telnet's commands answered and taken out, what's sent and
 //! what comes back; `+++` to the command mode and `ATO` back; hanging up;
-//! the place gone, or never there. Zimodem's: x16net's setting up taken,
+//! the place gone, or never there. What comes held to a few frames' worth,
+//! the rest left in the network. Zimodem's: x16net's setting up taken,
 //! a place dialled in quotes over plain TCP or telnet, `+++` and DTR
 //! hanging up, its S registers, flow control and the ends of its lines.
 
@@ -411,5 +412,31 @@ mod tests {
         drop(closed);
         modem.send(format!("ATD\"127.0.0.1:{port}\"\r").as_bytes());
         assert_eq!(wait_for(&mut modem, "ANSWER\r\n"), "NO ANSWER\r\n");
+    }
+
+    #[test]
+    fn what_comes_is_held_back_in_the_network_past_a_few_frames_worth() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            //  far more than the modem holds: the rest waits in the network
+            let _ = caller.write_all(&vec![b'x'; 100_000]);
+            caller
+        });
+        let mut modem = Modem::new();
+        modem.send(format!("ATE0NET0DT127.0.0.1:{port}\r").as_bytes());
+        until(&mut modem, |modem| modem.carrier());
+        modem.to_machine.clear();
+        for _ in 0..200 {
+            modem.frame();
+            thread::sleep(Duration::from_millis(1));
+        }
+        //  9600 baud: four frames' worth is 64 bytes, so the least, 512
+        let held = modem.to_machine.len();
+        assert!((256..=512).contains(&held), "{held} held");
+        modem.to_machine.drain(..);
+        until(&mut modem, |modem| !modem.to_machine.is_empty());
+        drop(place);
     }
 }

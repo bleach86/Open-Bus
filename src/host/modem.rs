@@ -45,6 +45,8 @@
 //! nothing; its phone book, listening (`ATA`), packets (`ATC`, `ATT`),
 //! downloads (`AT&G`), SSH and PETSCII aren't here.
 
+#[cfg(not(target_arch = "wasm32"))]
+use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::VecDeque;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{ErrorKind, Read, Write};
@@ -62,6 +64,17 @@ const GUARD_FRAMES: u32 = 60;
 /// Longer than this dialling, and there's no answer.
 #[cfg(not(target_arch = "wasm32"))]
 const DIAL_TIME: Duration = Duration::from_secs(20);
+
+/// What a modem's buffer holds of what's come for the machine: frames'
+/// worth at the port's rate, or this many bytes, if that's more.
+#[cfg(not(target_arch = "wasm32"))]
+const RECEIVE_BUFFER_FRAMES: usize = 4;
+#[cfg(not(target_arch = "wasm32"))]
+const RECEIVE_BUFFER_LEAST: usize = 512;
+/// The network's receive buffer for the modem's socket, in bytes: small,
+/// enough for 80K a second over a tenth of a second's round trip.
+#[cfg(not(target_arch = "wasm32"))]
+const SOCKET_RECEIVE_BUFFER: usize = 8192;
 
 /// Software flow control's pause and go on: Ctrl-S and Ctrl-Q.
 const XOFF: u8 = 0x13;
@@ -737,7 +750,18 @@ impl Modem {
                     let address = addresses
                         .next()
                         .ok_or_else(|| std::io::Error::from(ErrorKind::NotFound))?;
-                    TcpStream::connect_timeout(&address, DIAL_TIME)
+                    // Its receive buffer small, set before it connects (the
+                    // window it offers is set then): what the modem hasn't
+                    // room for waits at the other end, not in this
+                    // computer's network buffers, a hundred K or more.
+                    let socket = Socket::new(
+                        Domain::for_address(address),
+                        Type::STREAM,
+                        Some(Protocol::TCP),
+                    )?;
+                    let _ = socket.set_recv_buffer_size(SOCKET_RECEIVE_BUFFER);
+                    socket.connect_timeout(&address.into(), DIAL_TIME)?;
+                    Ok(TcpStream::from(socket))
                 });
                 let _ = sent.send(connected);
             });
@@ -861,10 +885,22 @@ impl Modem {
                 Err(_) => gone = true,
             }
         }
+        // What's come, as its buffer has room: a few frames of it at the
+        // port's rate, the rest left in the network, for its flow control to
+        // hold back at the other end. A machine slower than its port (a
+        // terminal program drawing its screen) takes it slower still; with
+        // more held, a place's output could be minutes ahead of the
+        // machine, a break or a key answered only once it was all through.
+        let most = (self.rate as usize / 10 / 60 * RECEIVE_BUFFER_FRAMES).max(RECEIVE_BUFFER_LEAST);
+        let room = most.saturating_sub(self.to_machine.len());
         let mut buffer = [0; 4096];
         let mut came = Vec::new();
         loop {
-            match stream.read(&mut buffer) {
+            let want = (room - came.len()).min(buffer.len());
+            if want == 0 {
+                break;
+            }
+            match stream.read(&mut buffer[..want]) {
                 Ok(0) => {
                     gone = true;
                     break;

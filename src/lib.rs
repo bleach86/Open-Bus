@@ -78,6 +78,8 @@ pub mod host {
         mod sound;
         mod stats;
         #[cfg(not(target_arch = "wasm32"))]
+        mod terminal;
+        #[cfg(not(target_arch = "wasm32"))]
         mod window;
         mod zip;
     }
