@@ -1964,7 +1964,7 @@ function navigate(now) {
         return;
     }
     if (pageDialog()) {
-        padInDialog(pageDialog(), pressed);
+        padInDialog(pageDialog(), pressed, now);
         wasPressed = pressed;
         return;
     }
@@ -2983,15 +2983,21 @@ function browseFolders() {
 }
 
 /// A dialog of the page's own gone round by a gamepad: its buttons by its
-/// directions, the browser's focus moved; A presses the one there, and B
-/// goes back.
-function padInDialog(dialog, pressed) {
+/// directions, the browser's focus moved, held directions repeating as
+/// they do on the shelf; A presses the one there, and B goes back.
+function padInDialog(dialog, pressed, now) {
     const newly = (name) => pressed[name] && !wasPressed[name];
     const buttons = [...dialog.querySelectorAll('button:not([disabled])')].filter(
         (button) => button.checkVisibility?.() ?? button.getClientRects().length > 0,
     );
     const from = buttons.includes(document.activeElement) ? document.activeElement : null;
-    const way = ['up', 'down', 'left', 'right'].find(newly);
+    const held = ['up', 'down', 'left', 'right'].find((direction) => pressed[direction]) ?? '';
+    let way = '';
+    if (held !== moving) {
+        [moving, moveAgainAt, way] = [held, now + FIRST_REPEAT, held];
+    } else if (held && now >= moveAgainAt) {
+        [moveAgainAt, way] = [now + NEXT_REPEAT, held];
+    }
     if (way) {
         const next = from ? nearest(from, way, buttons) : buttons[0];
         next?.focus();
