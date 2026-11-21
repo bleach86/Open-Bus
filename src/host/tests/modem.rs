@@ -2,7 +2,9 @@
 //! echoed or not; dialling a place (a server of the test's own, here),
 //! connecting, telnet's commands answered and taken out, what's sent and
 //! what comes back; `+++` to the command mode and `ATO` back; hanging up;
-//! the place gone, or never there.
+//! the place gone, or never there. Zimodem's: x16net's setting up taken,
+//! a place dialled in quotes over plain TCP or telnet, `+++` and DTR
+//! hanging up, its S registers, flow control and the ends of its lines.
 
 #[cfg(test)]
 mod tests {
@@ -302,5 +304,112 @@ mod tests {
         frames(&mut modem, 10);
         modem.send(b"AT\r");
         assert_eq!(said(&mut modem), "\r\nOK\r\n");
+    }
+
+    #[test]
+    fn zimodem_takes_x16nets_setting_up_and_keeps_its_registers() {
+        let mut modem = Modem::zimodem();
+        assert!(
+            modem.hardware_flow(),
+            "RTS and CTS, as the X16 card's has it"
+        );
+        modem.send(b"ATE0V1Q0X0F0R0&P0S62=0S63=2S46=0S48=0S50=0S54=0N0H\r");
+        assert_eq!(
+            said(&mut modem),
+            "ATE0V1Q0X0F0R0&P0S62=0S63=2S46=0S48=0S50=0S54=0N0H\r\nOK\r",
+            "its return echoed as a line's end, before R0; its results, after"
+        );
+        modem.send(b"ATS63?\r");
+        assert_eq!(said(&mut modem), "2\rOK\r");
+        modem.send(b"ATR1F4\r");
+        assert_eq!(said(&mut modem), "OK\r\n");
+        assert!(!modem.hardware_flow());
+        modem.send(b"AT&K3\r");
+        assert!(modem.hardware_flow(), "&K3, RTS and CTS too");
+        said(&mut modem);
+        modem.send(b"ATW\"home,secret\"B115200\r");
+        assert_eq!(said(&mut modem), "OK\r\n", "its WiFi the host's");
+        modem.send(b"AT&G\"example.org/x\"\r");
+        assert_eq!(said(&mut modem), "ERROR\r\n", "no downloads");
+        modem.send(b"ATZ\r");
+        said(&mut modem);
+        modem.send(b"ATS62?\r");
+        assert_eq!(
+            said(&mut modem),
+            "ATS62?\r\n1\r\nOK\r\n",
+            "as it was, its echo on"
+        );
+        assert!(modem.dcd(true) && !modem.dcd(false) && modem.cts());
+        modem.send(b"ATS46=1S48=3\r");
+        assert!(!modem.dcd(true) && modem.dcd(false) && !modem.cts());
+    }
+
+    #[test]
+    fn zimodem_dials_in_quotes_over_plain_tcp_and_plus_plus_plus_hangs_up() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            // Not telnet's: as it is, $FF and all.
+            caller.write_all(&[255, 253, 24, b'H', b'I']).unwrap();
+            let mut got = Vec::new();
+            let mut buffer = [0; 64];
+            while let Ok(read) = caller.read(&mut buffer) {
+                if read == 0 {
+                    break;
+                }
+                got.extend_from_slice(&buffer[..read]);
+            }
+            got
+        });
+        let mut modem = Modem::zimodem();
+        modem.send(format!("ATE0D\"127.0.0.1:{port}\"\r").as_bytes());
+        let came = wait_for(&mut modem, "HI");
+        assert!(
+            came.ends_with("CONNECT 1\r\n\u{FFFD}\u{FFFD}\u{18}HI"),
+            "{came:?}"
+        );
+        modem.send(&[b'A', 255]);
+        frames(&mut modem, 60);
+        modem.send(b"+++");
+        frames(&mut modem, 60);
+        assert_eq!(said(&mut modem), "NO CARRIER\r\n", "no echo; hung up");
+        assert!(!modem.carrier());
+        assert_eq!(place.join().unwrap(), [b'A', 255, b'+', b'+', b'+']);
+    }
+
+    #[test]
+    fn zimodem_dials_telnet_with_t_and_a_dropped_dtr_hangs_up_with_s63_2() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            caller.write_all(&[255, 251, 1, b'O', b'K']).unwrap();
+            let mut answer = [0; 3];
+            caller.read_exact(&mut answer).unwrap();
+            let mut rest = Vec::new();
+            let _ = caller.read_to_end(&mut rest);
+            answer
+        });
+        let mut modem = Modem::zimodem();
+        modem.dtr(true);
+        modem.send(format!("ATE0X0S63=2DT\"127.0.0.1:{port}\"\r").as_bytes());
+        let came = wait_for(&mut modem, "OK");
+        assert!(
+            came.ends_with("\"\r\nCONNECT\r\nOK"),
+            "X0: CONNECT alone: {came:?}"
+        );
+        // Its telnet answer sent; then DTR dropped.
+        frames(&mut modem, 1);
+        modem.dtr(false);
+        assert_eq!(said(&mut modem), "NO CARRIER\r\n");
+        assert!(!modem.carrier());
+        assert_eq!(place.join().unwrap(), [255, 253, 1], "telnet's, DO ECHO");
+        // Nobody there: no answer.
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = closed.local_addr().unwrap().port();
+        drop(closed);
+        modem.send(format!("ATD\"127.0.0.1:{port}\"\r").as_bytes());
+        assert_eq!(wait_for(&mut modem, "ANSWER\r\n"), "NO ANSWER\r\n");
     }
 }

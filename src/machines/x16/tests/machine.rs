@@ -388,6 +388,18 @@ mod tests {
     }
 
     #[test]
+    fn its_screen_is_read_as_iso_8859_in_iso_mode() {
+        let Some(mut cpu) = booting() else { return };
+        frames(&mut cpu, 300);
+        cpu.memory.type_text("print chr$(15);\n");
+        frames(&mut cpu, 60);
+        cpu.memory.type_text("print 6*7\n");
+        frames(&mut cpu, 60);
+        let text = cpu.memory.screen_text().unwrap_or_default();
+        assert!(text.ends_with(" 42\n\nREADY."), "the screen:\n{text}");
+    }
+
+    #[test]
     fn its_clock_is_the_hosts_time_as_basic_has_it() {
         let Some(mut cpu) = booting() else { return };
         frames(&mut cpu, 300);

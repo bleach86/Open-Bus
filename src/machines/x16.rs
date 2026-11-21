@@ -10,7 +10,7 @@
 //! | `$9F10-$9F1F` | VIA 2: the user port, nothing on it            |
 //! | `$9F20-$9F3F` | VERA                                           |
 //! | `$9F40-$9F41` | the YM2151                                     |
-//! | `$9F60-$9FFF` | the expansion cards', none                     |
+//! | `$9F60-$9FFF` | the expansion cards': at `$9FE0`, the network card |
 //! | `$A000-$BFFF` | RAM, its bank of 64                            |
 //! | `$C000-$FFFF` | ROM, its bank of 32; 32 and up a cartridge's   |
 //!
@@ -48,12 +48,19 @@
 //! clock's RAM is kept where saves are (`saves::machine`), read as it's run
 //! and saved as it's written; or, from before, read from
 //! roms/x16/nvram.bin.
+//!
+//! In its expansion slot, TexElec's Serial & ESP32 Network Card
+//! (`network_card`), its UARTs at `$9FE0` and `$9FE8`, and on the first a
+//! WiFi modem, Zimodem's, for terminal programs to go online with. It's
+//! not in a save state: its connection's the host's, and its UARTs as the
+//! program running has them set.
 
 #[cfg(test)]
 mod tests {
     mod card;
     mod i2c;
     mod machine;
+    mod network_card;
     mod sd_card;
     mod vera;
     mod vera_audio;
@@ -63,6 +70,7 @@ mod tests {
 pub mod card;
 pub mod i2c;
 pub mod keyboard;
+pub mod network_card;
 pub mod sd_card;
 pub mod vera;
 pub mod vera_audio;
@@ -87,6 +95,7 @@ use crate::host::sound::Sampler;
 use crate::host::window::Window;
 use crate::host::zip::crc32;
 use i2c::{Asked, I2c};
+use network_card::NetworkCard;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -113,6 +122,11 @@ pub const NVRAM_SAVE: &str = "nvram.bin";
 const KEYD: usize = 0xA800 - 0xA000;
 const KEYD_SIZE: usize = 10;
 const NDX: usize = 0xA80A - 0xA000;
+/// The KERNAL's screen editor's mode (R49's): bit 6, ISO's character set,
+/// its screen codes ISO-8859's, not PETSCII's. A program with a font of its
+/// own may have them so without it (ROMTERM).
+const MODE: usize = 0x0372;
+const ISO: u8 = 0x40;
 const RAM_TOP: usize = 0x9F00;
 const BANK: usize = 0x2000;
 const RAM_BANKS: usize = 64;
@@ -180,6 +194,9 @@ pub struct X16 {
     latch: bool,
     clock: bool,
     ym: Ym2151,
+    /// The network card, in its expansion slot.
+    #[serde(skip)]
+    pub network: NetworkCard,
     /// The YM2151's clock, in 8ths of a microsecond: its next tick due as
     /// this passes the CPU's.
     ym_clock: u32,
@@ -267,6 +284,7 @@ impl X16 {
             latch: false,
             clock: false,
             ym: Ym2151::new(),
+            network: NetworkCard::new(CLOCK_HZ),
             ym_clock: 0,
             gone: 0,
             until: 0,
@@ -304,6 +322,7 @@ impl X16 {
         }
         self.vera.reset();
         self.ym = Ym2151::new();
+        self.network.reset();
         self.port_a_changed();
         self.port_b_changed();
         self.count();
@@ -388,6 +407,7 @@ impl X16 {
             }
             self.vera.run(gone);
             self.i2c.run(gone);
+            self.network.run(gone);
             let ym_clock = self.ym_clock as u64 + gone as u64 * YM_CLOCK_HZ as u64;
             self.ym_clock = (ym_clock % CLOCK_HZ as u64) as u32;
             let ym_ticks = (ym_clock / CLOCK_HZ as u64) as u32;
@@ -415,6 +435,7 @@ impl X16 {
             .vera
             .due()
             .min(self.i2c.due())
+            .min(self.network.due())
             .min(ym_due.min(u32::MAX as u64) as u32);
     }
 
@@ -493,13 +514,41 @@ impl X16 {
         self.mouse.at = Some((from.0 + sent.0 as f32, from.1 - sent.1 as f32));
     }
 
+    /// Whether the text map at `base` has ISO-8859's codes, not PETSCII's
+    /// screen codes: as the KERNAL's in ISO mode, or with letters where
+    /// ISO's are, far more than where PETSCII's are.
+    fn iso_text(&self, base: usize, width: usize, across: usize, down: usize) -> bool {
+        if self.ram[MODE] & ISO != 0 {
+            return true;
+        }
+        let (mut iso, mut petscii) = (0, 0);
+        for row in 0..down {
+            for column in 0..across {
+                match self.vera.peek(base + (row * width + column) * 2) {
+                    0x41..=0x5A | 0x61..=0x7A => iso += 1,
+                    code if (1..=26).contains(&(code & 0x7F)) => petscii += 1,
+                    _ => {}
+                }
+            }
+        }
+        iso > petscii * 4
+    }
+
     /// Row `row` of a text map at `base`, `width` cells to a row, its first
     /// `across` as text: their screen codes as upper case and graphics have
-    /// them, the graphics as spaces.
-    fn row_text(&self, base: usize, width: usize, row: usize, across: usize) -> String {
+    /// them, the graphics as spaces; or, `iso`, as ISO-8859 has them, what
+    /// isn't printable as spaces.
+    fn row_text(&self, base: usize, width: usize, row: usize, across: usize, iso: bool) -> String {
         (0..across)
             .map(|column| {
-                let code = self.vera.peek(base + (row * width + column) * 2) & 0x7F;
+                let code = self.vera.peek(base + (row * width + column) * 2);
+                if iso {
+                    return match code {
+                        0x20..=0x7E | 0xA0..=0xFF => code as char,
+                        _ => ' ',
+                    };
+                }
+                let code = code & 0x7F;
                 match code {
                     0x00 => '@',
                     0x01..=0x1A => (b'A' + code - 1) as char,
@@ -539,6 +588,13 @@ impl Bus for X16 {
                 }
             }
             0x9F60..=0x9F9F => open,
+            network_card::BASE..=network_card::END => {
+                self.slow();
+                self.catch_up();
+                let value = self.network.read(addr);
+                self.count();
+                value
+            }
             0x9FA0..=0x9FFF => {
                 self.slow();
                 open
@@ -583,6 +639,12 @@ impl Bus for X16 {
                 self.count();
             }
             0x9F60..=0x9F9F => {}
+            network_card::BASE..=network_card::END => {
+                self.slow();
+                self.catch_up();
+                self.network.write(addr, value);
+                self.count();
+            }
             0x9FA0..=0x9FFF => self.slow(),
             0xA000..=0xBFFF => {
                 if let bank @ 0..RAM_BANKS = self.ram[0] as usize {
@@ -639,7 +701,11 @@ impl Bus for X16 {
     }
 
     fn irq(&self) -> bool {
-        self.vera.irq() || self.vias[0].irq() || self.vias[1].irq() || self.ym.irq()
+        self.vera.irq()
+            || self.vias[0].irq()
+            || self.vias[1].irq()
+            || self.ym.irq()
+            || self.network.irq()
     }
 
     fn nmi(&self) -> bool {
@@ -727,18 +793,24 @@ impl Machine for X16 {
 
     fn screen_text(&self) -> Option<String> {
         let (base, width, across, down) = self.vera.text_map(1)?;
+        let iso = self.iso_text(base, width, across, down);
         let rows: Vec<String> = (0..down)
-            .map(|row| self.row_text(base, width, row, across))
+            .map(|row| self.row_text(base, width, row, across, iso))
             .collect();
         let first = rows.iter().position(|row| !row.is_empty())?;
         let last = rows.iter().rposition(|row| !row.is_empty())?;
         Some(rows[first..=last].join("\n"))
     }
 
+    /// The controllers, the keys and the mouse; the network card's frame,
+    /// its modem's I/O.
     fn input(&mut self, input: Input) {
         self.gamepads = [input.gamepad, input.gamepad_2];
         self.type_on();
         self.move_mouse(input.pointer);
+        self.catch_up();
+        self.network.frame();
+        self.count();
     }
 
     fn light(&mut self) -> bool {
@@ -793,6 +865,7 @@ impl Machine for X16 {
     fn keep(&mut self, running: &mut X16) {
         use std::mem::take;
         self.rom = take(&mut running.rom);
+        self.network = take(&mut running.network);
         self.vera.sd_card().image = running.vera.sd_card().image.take();
         self.typing = take(&mut running.typing);
         self.pasting = take(&mut running.pasting);
