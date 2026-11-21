@@ -353,6 +353,34 @@ impl Library {
         .map_err(said)
     }
 
+    /// One of the app's own settings, by `name`, if it's been set: kept in
+    /// the games' settings' table, under a key no game's can be.
+    pub fn app_setting(&self, name: &str) -> Result<Option<String>, String> {
+        self.lock()?
+            .query_row(
+                "SELECT settings FROM settings WHERE key = ?1",
+                [format!("app {name}")],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(said)
+    }
+
+    /// One of the app's own settings set, or, `None`, back to its default.
+    pub fn set_app_setting(&self, name: &str, value: Option<&str>) -> Result<(), String> {
+        let db = self.lock()?;
+        let key = format!("app {name}");
+        match value {
+            Some(value) => db.execute(
+                "INSERT OR REPLACE INTO settings (key, settings) VALUES (?1, ?2)",
+                params![key, value],
+            ),
+            None => db.execute("DELETE FROM settings WHERE key = ?1", [&key]),
+        }
+        .map(|_| ())
+        .map_err(said)
+    }
+
     /// What's chosen of `machine`'s game for itself: its settings, as
     /// CHOICES has them, an object of those it has.
     pub fn settings(&self, machine: &Value) -> Result<Value, String> {

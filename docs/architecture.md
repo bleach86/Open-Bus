@@ -121,17 +121,26 @@ machine never knows the difference.
 
 `host/saves.rs` decides where battery RAM, save states, resume files, X16
 game cards and the X16's clock RAM go. They never go beside the games, so the
-user's game folders stay as they are. Instead they go in the app's own saves
-folder: whatever `--saves FOLDER` names, which the desktop and Android apps
-always pass, or by default the desktop app's data folder (for example
-`~/.local/share/app.openbus.desktop/saves` on Linux). Each save sits under its
-game's whole path there, so two games with the same name don't share saves.
+user's game folders stay as they are. They go under a root folder, laid out
+the way a MiSTer does it: `saves/<system>/<game>.srm` for what a game saves,
+`states/<system>/<game>.state` and `.resume` for states. The root is whatever
+`--saves FOLDER` names, which the desktop and Android apps always pass (the
+app's data folder, or the folder chosen in Settings → Saves), or by default the
+desktop app's data folder. The program sets the system as it starts, from its
+subcommand.
 
-Saves made beside games by older versions are still read, until a new one is
-written to the saves folder. Disk images are the exception to all this: a disk
-is written back into its own image, as a real disk is. It only goes to the
-saves folder when the image can't be written, such as on a read-only network
-share.
+A save is named by its game's file without that file's extension, so
+`Zelda.nes` gives `Zelda.srm` and `Zelda.state`. Saves made beside games by
+older versions, and the Android app's older layout under the whole of a game's
+path, are still read until a new one is written.
+
+Disk images are the exception: a disk is written back into its own image, as a
+real disk is. It only goes under the root when the image can't be written, such
+as on a read-only network share.
+
+`cpu_emu saves` lists or clears saves by kind, for one game (`--system` and its
+files) or all of them. The desktop app's Settings → Saves and each game's
+details use it.
 
 ## Save states and rewind
 

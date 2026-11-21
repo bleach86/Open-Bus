@@ -1056,6 +1056,9 @@ async function openGameSettings(name) {
     page('game-settings-title').textContent = title;
     page('game-settings-about').textContent = shortName(name);
     page('game-cover').replaceChildren(cover(nesArt(name), title));
+    if (native) {
+        fillGameSaves(machine);
+    }
     const known = nesKnown(name);
     const keptOf = kept.find((game) => game.machine.kind === system && game.machine.game === name);
     const played =
@@ -3054,7 +3057,112 @@ async function fillSettings() {
     );
     if (native) {
         fillFolders();
+        fillSaves();
     }
+}
+
+/// The kinds of save, as Settings and a game's details name them: all of a
+/// kind, and one.
+const SAVE_KINDS = {
+    save: ['Game saves', 'Game save'],
+    state: ['Save states', 'Save state'],
+    resume: ['Resume points', 'Resume point'],
+    card: ['X16 cards', 'X16 card, with what it saves'],
+    disk: ['Disk changes', 'Disk changes'],
+};
+
+/// `bytes` as a person reads them.
+const sizeOf = (bytes) =>
+    bytes < 1024
+        ? `${bytes} bytes`
+        : bytes < 1048576
+          ? `${Math.round(bytes / 1024)} KB`
+          : `${(bytes / 1048576).toFixed(1)} MB`;
+
+/// Settings' saves: where they're kept, to be changed; and how many of each
+/// kind there are, each kind to be cleared, asked first.
+async function fillSaves(overview) {
+    let saves = overview;
+    try {
+        saves ??= await native.savesOverview();
+    } catch (problem) {
+        page('saves-where-now').textContent = "a folder that can't be read";
+        say(`Saves: ${problem}`);
+        return;
+    }
+    page('saves-where-now').textContent = saves.folder;
+    page('saves-default').hidden = !saves.chosen;
+    const counted = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
+    page('saves-kinds').replaceChildren(
+        ...Object.entries(SAVE_KINDS)
+            .filter(([kind]) => ['save', 'state', 'resume'].includes(kind) || saves.kinds[kind])
+            .map(([kind, [name]]) => {
+                const { count = 0, bytes = 0 } = saves.kinds[kind] ?? {};
+                if (!count) {
+                    return row(name, 'None');
+                }
+                return row(name, `${counted(count, 'file')}, ${sizeOf(bytes)}`, 'Clear', async () => {
+                    const sure = await native.ask(
+                        `Delete all ${counted(count, name.toLowerCase().replace(/s$/, ''))}? This can't be undone.`,
+                    );
+                    if (sure) {
+                        fillSaves(await native.clearSaves([kind]));
+                    }
+                });
+            }),
+    );
+}
+
+/// The folder saves are kept in changed, what's there moved, asked first.
+async function moveSaves(path) {
+    const where = path ?? "the app's own folder";
+    if (!(await native.ask(`Keep saves in ${where} from now on? Those there are now are moved there.`))) {
+        return;
+    }
+    try {
+        fillSaves(await native.setSavesFolder(path));
+        say('Saves moved');
+    } catch (problem) {
+        say(`Saves not moved: ${problem}`);
+    }
+}
+if (native) {
+    page('saves-change').onclick = async () => {
+        const path = await (native.android ? browseFolders() : native.pickFolder());
+        if (path) {
+            moveSaves(path);
+        }
+    };
+    page('saves-default').onclick = () => moveSaves(null);
+}
+
+/// A game's own saves, in its details: each, with when it was saved, to be
+/// deleted, asked first.
+async function fillGameSaves(machine) {
+    const list = page('game-saves');
+    let saves;
+    try {
+        saves = await native.gameSaves(machine);
+    } catch (problem) {
+        list.replaceChildren(row("Its saves can't be read", String(problem)));
+        return;
+    }
+    if (!saves.length) {
+        list.replaceChildren(row('None yet'));
+        return;
+    }
+    list.replaceChildren(
+        ...saves.map((save) => {
+            const [, name] = SAVE_KINDS[save.kind] ?? [save.kind, save.kind];
+            const when = whenPlayed(save.written).toLowerCase();
+            return row(name, `${sizeOf(save.bytes)}, saved ${when}`, 'Delete', async () => {
+                if (await native.ask(`Delete this game's ${name.toLowerCase()}? This can't be undone.`)) {
+                    await native.clearGameSaves(machine, [save.kind]);
+                    fillGameSaves(machine);
+                }
+            });
+        }),
+    );
 }
 
 /// Which release the X16's ROM is, as its KERNAL says, at $FF80 in its

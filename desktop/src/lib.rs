@@ -982,21 +982,17 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
     }
     if text("kind")? == "x16" {
         // Its ROM, as it's been sorted into the library; the game on a card
-        // of its own, in `x16 cards`, made the first time and kept, with
+        // of its own, with the saves, made the first time and kept, with
         // what it saves. With no game, the X16 itself, to BASIC, with a card
         // of its own, blank to start with.
-        let cards = folder(app, "x16 cards")?;
         let rom = folder(app, "library")?.join("x16-rom.bin");
         let mut line = vec!["x16".to_string(), rom.to_string_lossy().into_owned()];
-        match machine["game"].as_str() {
-            Some(game) => {
-                let game = file(game)?;
-                let card = cards.join(card_name(&game));
-                line.push(format!("--game={game}"));
-                line.push(format!("--sd={}", card.to_string_lossy()));
-            }
-            None => line.push(format!("--sd={}", cards.join(X16_CARD).to_string_lossy())),
+        if let Some(game) = machine["game"].as_str() {
+            line.push(format!("--game={}", file(game)?));
         }
+        // Its card where the emulator keeps it, one from before moved there.
+        let card = x16_card(app, machine)?;
+        line.push(format!("--sd={}", card.to_string_lossy()));
         return Ok(line);
     }
     let library = folder(app, "library")?.to_string_lossy().into_owned();
@@ -1037,6 +1033,260 @@ fn card_name(game: &str) -> String {
         })
         .collect();
     format!("{name} {:08x}.img", hash as u32)
+}
+
+/// The root saves are kept under, in its `saves` and `states` folders: where
+/// Settings has put them, else the app's own folder.
+fn saves_root(app: &AppHandle) -> Result<PathBuf, String> {
+    let root = match library(app).app_setting("saves")? {
+        Some(chosen) => PathBuf::from(chosen),
+        None => app.path().app_data_dir().map_err(|e| e.to_string())?,
+    };
+    fs::create_dir_all(&root).map_err(|e| format!("{}: {e}", root.display()))?;
+    Ok(root)
+}
+
+/// The extensions of games' files, left out of what's saved of them, as the
+/// emulator has them (`host::saves`).
+const GAME_EXTENSIONS: [&str; 16] = [
+    "nes", "fds", "a26", "a78", "bin", "zip", "prg", "rom", "img", "dsk", "do", "po", "nib", "woz",
+    "hdv", "2mg",
+];
+
+/// The X16's card `machine`'s played from, as the emulator keeps it, with
+/// what's saved on it: its game's, by the game's name, its extension left
+/// out; or, with no game, the X16's own, for BASIC. One made before saves
+/// had a place of their own, in the app's `x16 cards`, moved there the
+/// first time it's wanted.
+fn x16_card(app: &AppHandle, machine: &Value) -> Result<PathBuf, String> {
+    let (name, before) = match machine["game"].as_str() {
+        Some(game) => {
+            let game = allowed(app, game)?;
+            let named = game
+                .file_name()
+                .map_or("game".into(), |name| name.to_string_lossy());
+            let inner = Path::new(named.as_ref());
+            let known = inner.extension().is_some_and(|extension| {
+                GAME_EXTENSIONS.contains(&extension.to_string_lossy().to_ascii_lowercase().as_str())
+            });
+            let name = match inner.file_stem() {
+                Some(stem) if known => stem.to_string_lossy().into_owned(),
+                _ => named.into_owned(),
+            };
+            (format!("{name}.img"), card_name(&game.to_string_lossy()))
+        }
+        None => (X16_CARD.to_string(), X16_CARD.to_string()),
+    };
+    let card = saves_root(app)?.join("saves").join("x16").join(name);
+    let before = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("x16 cards")
+        .join(before);
+    if !card.exists() && before.exists() {
+        move_file(&before, &card)?;
+    }
+    Ok(card)
+}
+
+/// `from` moved to `to`: renamed, or, from one disk to another, copied and
+/// the first removed.
+fn move_file(from: &Path, to: &Path) -> Result<(), String> {
+    let said = |e: std::io::Error| format!("{}: {e}", from.display());
+    if let Some(folder) = to.parent() {
+        fs::create_dir_all(folder).map_err(said)?;
+    }
+    if fs::rename(from, to).is_ok() {
+        return Ok(());
+    }
+    fs::copy(from, to).map_err(said)?;
+    fs::remove_file(from).map_err(said)
+}
+
+/// Everything in the folder `from` moved into `to`, as it's laid out; of
+/// two of a place, the one last written kept. The folders left empty, gone.
+fn move_folder(from: &Path, to: &Path) -> Result<(), String> {
+    let Ok(entries) = fs::read_dir(from) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let (path, there) = (entry.path(), to.join(entry.file_name()));
+        if path.is_dir() {
+            move_folder(&path, &there)?;
+            let _ = fs::remove_dir(&path);
+            continue;
+        }
+        let written = |path: &Path| fs::metadata(path).and_then(|about| about.modified()).ok();
+        if there.exists() && written(&there) >= written(&path) {
+            let _ = fs::remove_file(&path);
+        } else {
+            move_file(&path, &there)?;
+        }
+    }
+    Ok(())
+}
+
+/// The system `machine`'s saves are kept under, as the emulator names it.
+fn save_system(machine: &Value) -> Option<&'static str> {
+    Some(match machine["kind"].as_str()? {
+        "nes" => "nes",
+        "atari2600" => "atari2600",
+        "atari7800" => "atari7800",
+        "apple" => "apple2",
+        "x16" => "x16",
+        _ => return None,
+    })
+}
+
+/// The files of `machine`'s game its saves are named for: its ROM, its
+/// disks, or, the X16 with no game, its own card.
+fn game_files(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String> {
+    let file = |path: &str| Ok::<_, String>(allowed(app, path)?.to_string_lossy().into_owned());
+    Ok(match machine["kind"].as_str().unwrap_or_default() {
+        "nes" | "atari2600" | "atari7800" => {
+            vec![file(machine["game"].as_str().ok_or("no game")?)?]
+        }
+        // Its card moved from where it was kept before, as it's played, so
+        // it's found with the rest.
+        "x16" => {
+            let card = x16_card(app, machine)?;
+            match machine["game"].as_str() {
+                Some(game) => vec![file(game)?],
+                None => vec![card.to_string_lossy().into_owned()],
+            }
+        }
+        "apple" => machine["disks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(file)
+            .collect::<Result<_, _>>()?,
+        _ => Vec::new(),
+    })
+}
+
+/// The saves of a game of `system` whose files are `files`, or, with none,
+/// all of them, as the emulator finds them: each `{ kind, bytes, written,
+/// path }`; those of the kinds `clear` names deleted first.
+fn saves_listed(
+    app: &AppHandle,
+    system: Option<&str>,
+    files: &[String],
+    clear: &[String],
+) -> Result<Vec<Value>, String> {
+    let mut command = emulator_command(app)?;
+    command
+        .arg(format!("--saves={}", saves_root(app)?.to_string_lossy()))
+        .arg("saves");
+    if let Some(system) = system {
+        command.arg(format!("--system={system}"));
+    }
+    if !clear.is_empty() {
+        command.arg(format!("--clear={}", clear.join(",")));
+    }
+    let said = command
+        .args(files)
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&said.stdout)
+        .lines()
+        .filter_map(|line| {
+            let [kind, bytes, written, path] = line.splitn(4, '\t').collect::<Vec<_>>()[..] else {
+                return None;
+            };
+            Some(json!({
+                "kind": kind,
+                "bytes": bytes.parse::<u64>().ok()?,
+                "written": written.parse::<u64>().ok()?,
+                "path": path,
+            }))
+        })
+        .collect())
+}
+
+/// What Settings shows of the saves: where they're kept, whether that's
+/// been chosen, and of each kind, how many and how big.
+#[tauri::command(async)]
+fn saves_overview(app: AppHandle) -> Result<Value, String> {
+    let mut kinds = json!({});
+    for save in saves_listed(&app, None, &[], &[])? {
+        let kind = &mut kinds[save["kind"].as_str().unwrap_or_default()];
+        kind["count"] = json!(kind["count"].as_u64().unwrap_or(0) + 1);
+        kind["bytes"] =
+            json!(kind["bytes"].as_u64().unwrap_or(0) + save["bytes"].as_u64().unwrap_or(0));
+    }
+    Ok(json!({
+        "folder": saves_root(&app)?.to_string_lossy(),
+        "chosen": library(&app).app_setting("saves")?.is_some(),
+        "kinds": kinds,
+    }))
+}
+
+/// All saves of the `kinds` deleted.
+#[tauri::command(async)]
+fn clear_saves(app: AppHandle, kinds: Vec<String>) -> Result<Value, String> {
+    if !kinds.is_empty() {
+        saves_listed(&app, None, &[], &kinds)?;
+    }
+    saves_overview(app)
+}
+
+/// `machine`'s game's saves.
+#[tauri::command(async)]
+fn game_saves(app: AppHandle, machine: Value) -> Result<Vec<Value>, String> {
+    let files = game_files(&app, &machine)?;
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+    saves_listed(&app, save_system(&machine), &files, &[])
+}
+
+/// `machine`'s game's saves of the `kinds` deleted: what's left of them.
+#[tauri::command(async)]
+fn clear_game_saves(
+    app: AppHandle,
+    machine: Value,
+    kinds: Vec<String>,
+) -> Result<Vec<Value>, String> {
+    let files = game_files(&app, &machine)?;
+    if !files.is_empty() && !kinds.is_empty() {
+        saves_listed(&app, save_system(&machine), &files, &kinds)?;
+    }
+    game_saves(app, machine)
+}
+
+/// Saves kept under `path` from now on, or, with none, the app's own folder
+/// again: its `saves` and `states` moved there.
+#[tauri::command(async)]
+fn set_saves_folder(app: AppHandle, path: Option<String>) -> Result<Value, String> {
+    let from = saves_root(&app)?;
+    let default = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let to = path.map_or_else(|| default.clone(), PathBuf::from);
+    if to != from {
+        let inside = |root: &Path, other: &Path| {
+            ["saves", "states"]
+                .iter()
+                .any(|sub| other.starts_with(root.join(sub)))
+        };
+        if inside(&from, &to) || inside(&to, &from) {
+            return Err("The saves can't be moved into the folder they're in.".into());
+        }
+        fs::create_dir_all(&to).map_err(|e| format!("{}: {e}", to.display()))?;
+        let trying = to.join(".open-bus-saves");
+        fs::write(&trying, b"")
+            .map_err(|e| format!("{}: can't be written to: {e}", to.display()))?;
+        let _ = fs::remove_file(&trying);
+        for sub in ["saves", "states"] {
+            move_folder(&from.join(sub), &to.join(sub))?;
+            let _ = fs::remove_dir(from.join(sub));
+        }
+    }
+    let chosen = (to != default).then(|| to.to_string_lossy().into_owned());
+    library(&app).set_app_setting("saves", chosen.as_deref())?;
+    saves_overview(app)
 }
 
 /// `--window=`, for the emulator to open where the library is.
@@ -1124,10 +1374,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
     // Its saves in the app's own folder, never beside the games: their
     // folders are left as they are (and may be a network share's, not to be
     // written to).
-    line.push(format!(
-        "--saves={}",
-        folder(&app, "saves")?.to_string_lossy()
-    ));
+    line.push(format!("--saves={}", saves_root(&app)?.to_string_lossy()));
     let began = (SystemTime::now(), Instant::now());
     #[cfg(desktop)]
     {
@@ -1506,7 +1753,12 @@ pub fn run() {
             favourite,
             game_facts,
             game_settings,
-            choose_settings
+            choose_settings,
+            saves_overview,
+            clear_saves,
+            game_saves,
+            clear_game_saves,
+            set_saves_folder
         ])
         .run(tauri::generate_context!())
         .expect("couldn't open the window");

@@ -349,6 +349,45 @@ mod tests {
     }
 
     #[test]
+    fn what_its_dos_saves_on_a_games_card_is_read_back_and_kept() {
+        let Some(rom) = booting().map(|_| x16::rom_file().unwrap()) else {
+            return;
+        };
+        let card =
+            std::env::temp_dir().join(format!("cpu_emu_{}_x16_kept.img", std::process::id()));
+        let big: Vec<u8> = (0..100_000).map(|n| (n % 253) as u8).collect();
+        let files = [("BIG.BIN".to_string(), big.clone())];
+        let mut image = x16::card::card(&files, clock::now()).unwrap();
+        x16::card::stamp(&mut image, 1234);
+        std::fs::write(&card, image).unwrap();
+        let mut cpu = x16::build(&rom.to_string_lossy(), card.to_str()).unwrap();
+        frames(&mut cpu, 300);
+        cpu.memory
+            .type_text("dos\"md:saves\"\n10 print 6*7\nsave\"answer\"\nsave\"//saves/:deeper\"\n");
+        frames(&mut cpu, 300);
+        files::all_saved();
+        let image = std::fs::read(&card).unwrap();
+        std::fs::remove_file(&card).unwrap();
+        assert_eq!(
+            x16::card::made(&image),
+            x16::card::Made::Game(1234),
+            "its boot sector's as it was"
+        );
+        let mut on = x16::card::files_of(&image).unwrap();
+        on.sort();
+        let names: Vec<&str> = on.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["ANSWER", "BIG.BIN", "SAVES/DEEPER"],
+            "{:?}",
+            cpu.memory.screen_text()
+        );
+        assert_eq!(on[1].1, big);
+        assert_eq!(on[0].1, on[2].1, "the same program");
+        assert!(on[0].1.starts_with(&[0x01, 0x08]), "a program BASIC loads");
+    }
+
+    #[test]
     fn its_clock_is_the_hosts_time_as_basic_has_it() {
         let Some(mut cpu) = booting() else { return };
         frames(&mut cpu, 300);

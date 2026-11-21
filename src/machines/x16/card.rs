@@ -376,6 +376,270 @@ pub fn card(files: &[CardFile], when: DateTime) -> Result<Vec<u8>, String> {
     Ok(card.bytes)
 }
 
+/// What a card made for a game says of it, in its boot sector's boot code,
+/// which nothing runs or reads: that Open Bus made it, and then its game's
+/// files' fingerprint, to know it by when the game's changed.
+const MADE: &[u8; 8] = b"Open Bus";
+/// A card's first bytes, as many as say who made it: its MBR, to its
+/// partition's boot sector.
+pub const HEAD: usize = (START + 1) * SECTOR;
+const MADE_AT: usize = 90;
+
+/// The fingerprint of a game's `files`, as its card's made of them: their
+/// paths and bytes, FNV-1a's.
+pub fn fingerprint(files: &[CardFile]) -> u32 {
+    let mut sorted: Vec<&CardFile> = files.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut hash = 0x811C_9DC5u32;
+    let mut add = |bytes: &[u8]| {
+        for &byte in bytes {
+            hash = (hash ^ byte as u32).wrapping_mul(0x0100_0193);
+        }
+    };
+    for (path, bytes) in sorted {
+        add(path.as_bytes());
+        add(&(bytes.len() as u64).to_le_bytes());
+        add(bytes);
+    }
+    hash
+}
+
+/// Who made a card, as its boot sector says.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Made {
+    /// Open Bus, for a game, the fingerprint of whose files it's given.
+    Game(u32),
+    /// Open Bus, before cards were given their game's fingerprint (or a
+    /// blank one): a volume labelled X16, its ID 0x0016 and the date.
+    Before,
+    /// Someone else.
+    Other,
+}
+
+/// Where a card's FAT32 partition starts, in bytes: its MBR's first
+/// partition's, or the card's own start, with no MBR.
+fn partition(image: &[u8]) -> Option<usize> {
+    if !is_card_image(image) {
+        return None;
+    }
+    let start = if matches!(image[450], 0x0B | 0x0C) {
+        u32::from_le_bytes(image[454..458].try_into().ok()?) as usize * SECTOR
+    } else {
+        0
+    };
+    let boot = image.get(start..start + SECTOR)?;
+    (&boot[82..90] == b"FAT32   ").then_some(start)
+}
+
+/// Who made the card `image`.
+pub fn made(image: &[u8]) -> Made {
+    let Some(start) = partition(image) else {
+        return Made::Other;
+    };
+    let boot = &image[start..start + SECTOR];
+    if &boot[MADE_AT..MADE_AT + 8] == MADE {
+        let at = MADE_AT + 8;
+        return Made::Game(u32::from_le_bytes(boot[at..at + 4].try_into().unwrap()));
+    }
+    let ours = &boot[3..11] == b"MSWIN4.1"
+        && boot[13] as usize == CLUSTER_SECTORS
+        && &boot[71..82] == b"X16        "
+        && boot[69..71] == [0x16, 0x00];
+    if ours { Made::Before } else { Made::Other }
+}
+
+/// The card `image` marked as made for a game, the `fingerprint` of whose
+/// files it's given: in its boot sector and its backup.
+pub fn stamp(image: &mut [u8], fingerprint: u32) {
+    let Some(start) = partition(image) else {
+        return;
+    };
+    for sector in [0, 6] {
+        let at = start + sector * SECTOR + MADE_AT;
+        if let Some(place) = image.get_mut(at..at + 12) {
+            place[..8].copy_from_slice(MADE);
+            place[8..].copy_from_slice(&fingerprint.to_le_bytes());
+        }
+    }
+}
+
+/// The files on the card `image`, as FAT32 has them, whoever wrote them:
+/// each one's path, folders by `/`, by its long name, or its short one,
+/// and its bytes.
+pub fn files_of(image: &[u8]) -> Result<Vec<CardFile>, String> {
+    let start = partition(image).ok_or("not a FAT32 card")?;
+    let u16_at = |at: usize| u16::from_le_bytes([image[at], image[at + 1]]) as usize;
+    let u32_at = |at: usize| {
+        image
+            .get(at..at + 4)
+            .map(|bytes| u32::from_le_bytes(bytes.try_into().unwrap()))
+            .ok_or("its FAT runs past its end")
+    };
+    if u16_at(start + 11) != SECTOR {
+        return Err("its sectors aren't 512 bytes".into());
+    }
+    let cluster = image[start + 13] as usize * SECTOR;
+    if cluster == 0 {
+        return Err("its clusters have no sectors".into());
+    }
+    let fat = start + u16_at(start + 14) * SECTOR;
+    let data = fat + image[start + 16] as usize * u32_at(start + 36)? as usize * SECTOR;
+    let clusters = image.len().saturating_sub(data) / cluster;
+    // A chain's bytes, from cluster `first`: as many as `size`, if it's
+    // given.
+    let chain = |first: u32, size: Option<usize>| -> Result<Vec<u8>, String> {
+        let mut bytes = Vec::new();
+        let mut at = first;
+        for _ in 0..=clusters {
+            if !(2..0x0FFF_FFF8).contains(&at) || size.is_some_and(|size| bytes.len() >= size) {
+                break;
+            }
+            let from = data + (at as usize - 2) * cluster;
+            let part = image
+                .get(from..from + cluster)
+                .ok_or("a cluster past its end")?;
+            bytes.extend_from_slice(part);
+            at = u32_at(fat + at as usize * 4)? & 0x0FFF_FFFF;
+        }
+        if let Some(size) = size {
+            if bytes.len() < size {
+                return Err("a file's clusters end before it does".into());
+            }
+            bytes.truncate(size);
+        }
+        Ok(bytes)
+    };
+    let mut found = Vec::new();
+    let mut seen = HashSet::new();
+    let mut folders = vec![(u32_at(start + 44)?, String::new())];
+    while let Some((first, prefix)) = folders.pop() {
+        if !seen.insert(first) {
+            continue;
+        }
+        let entries = chain(first, None)?;
+        let mut long: Vec<(u8, u8, Vec<u16>)> = Vec::new();
+        for entry in entries.as_chunks::<32>().0 {
+            match entry[0] {
+                0 => break,
+                0xE5 => {
+                    long.clear();
+                    continue;
+                }
+                _ => {}
+            }
+            let attributes = entry[11];
+            if attributes & 0x3F == LONG_NAME {
+                let places = (1..11).step_by(2).chain((14..26).step_by(2));
+                let chars = places
+                    .chain((28..32).step_by(2))
+                    .map(|at| u16::from_le_bytes([entry[at], entry[at + 1]]))
+                    .collect();
+                long.push((entry[0] & 0x3F, entry[13], chars));
+                continue;
+            }
+            let short: &[u8; 11] = entry[..11].try_into().unwrap();
+            let named = std::mem::take(&mut long);
+            if attributes & VOLUME != 0 || short[0] == b'.' {
+                continue;
+            }
+            let name = long_name(named, short).unwrap_or_else(|| {
+                // Lower case, as Windows NT marks a short name's parts.
+                let part = |bytes: &[u8], lower: bool| {
+                    let text = String::from_utf8_lossy(bytes).trim_end().to_string();
+                    if lower {
+                        text.to_ascii_lowercase()
+                    } else {
+                        text
+                    }
+                };
+                let base = part(&short[..8], entry[12] & 0x08 != 0);
+                let ext = part(&short[8..], entry[12] & 0x10 != 0);
+                if ext.is_empty() {
+                    base
+                } else {
+                    format!("{base}.{ext}")
+                }
+            });
+            let path = format!("{prefix}{name}");
+            let first = u16::from_le_bytes([entry[26], entry[27]]) as u32
+                | (u16::from_le_bytes([entry[20], entry[21]]) as u32) << 16;
+            if attributes & FOLDER != 0 {
+                folders.push((first, format!("{path}/")));
+            } else {
+                let size = u32::from_le_bytes(entry[28..32].try_into().unwrap()) as usize;
+                let bytes = if size == 0 {
+                    Vec::new()
+                } else {
+                    chain(first, Some(size))?
+                };
+                found.push((path, bytes));
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// The long name a short one's long entries, `named`, give it: if they're
+/// whole and for it.
+fn long_name(mut named: Vec<(u8, u8, Vec<u16>)>, short: &[u8; 11]) -> Option<String> {
+    let sum = checksum(short);
+    if named.is_empty() || named.iter().any(|&(_, check, _)| check != sum) {
+        return None;
+    }
+    named.sort_by_key(|&(n, ..)| n);
+    if named
+        .iter()
+        .enumerate()
+        .any(|(at, &(n, ..))| n as usize != at + 1)
+    {
+        return None;
+    }
+    let chars: Vec<u16> = named
+        .into_iter()
+        .flat_map(|(.., chars)| chars)
+        .take_while(|&c| c != 0 && c != 0xFFFF)
+        .collect();
+    String::from_utf16(&chars).ok()
+}
+
+/// A game's `files`, with those on its card before, `kept`, that aren't
+/// its: what it's saved there. A kept file's folders are spelt as the
+/// game's are, FAT being blind to case.
+pub fn with_kept(mut files: Vec<CardFile>, kept: Vec<CardFile>) -> Vec<CardFile> {
+    let lower = |path: &str| path.to_lowercase();
+    let theirs: HashSet<String> = files.iter().map(|(path, _)| lower(path)).collect();
+    let mut spelt = std::collections::HashMap::new();
+    for (path, _) in &files {
+        let mut folder = path.as_str();
+        while let Some((parent, _)) = folder.rsplit_once('/') {
+            spelt.insert(lower(parent), parent.to_string());
+            folder = parent;
+        }
+    }
+    for (path, bytes) in kept {
+        if theirs.contains(&lower(&path)) {
+            continue;
+        }
+        let (folders, name) = path.rsplit_once('/').unwrap_or(("", &path));
+        let mut at = String::new();
+        for part in folders.split('/').filter(|part| !part.is_empty()) {
+            let next = if at.is_empty() {
+                part.to_string()
+            } else {
+                format!("{at}/{part}")
+            };
+            at = spelt.get(&lower(&next)).cloned().unwrap_or(next);
+        }
+        let path = if at.is_empty() {
+            name.to_string()
+        } else {
+            format!("{at}/{name}")
+        };
+        files.push((path, bytes));
+    }
+    files
+}
+
 /// A game's files on a card, and the program they're run by.
 pub struct Game {
     pub files: Vec<CardFile>,

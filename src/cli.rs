@@ -54,13 +54,14 @@ pub(crate) struct Host {
     /// held together go back to it.
     #[arg(long, global = true)]
     pub(crate) launched: bool,
-    /// Its saves (a battery's RAM, its states, a game resumed) kept in
-    /// FOLDER, under each one's whole path, not beside the game; the
-    /// desktop app's folder of saves if it's not given.
+    /// Its saves kept under FOLDER, not beside the game: what it saves in
+    /// saves/SYSTEM, its states in states/SYSTEM, by its name, as
+    /// saves/nes/Zelda.srm and states/nes/Zelda.state; under the desktop
+    /// app's data folder if it's not given.
     ///
-    /// On Linux, ~/.local/share/app.openbus.desktop/saves; on a Mac,
-    /// ~/Library/Application Support/app.openbus.desktop/saves; on Windows,
-    /// %APPDATA%\app.openbus.desktop\saves.
+    /// On Linux, ~/.local/share/app.openbus.desktop; on a Mac,
+    /// ~/Library/Application Support/app.openbus.desktop; on Windows,
+    /// %APPDATA%\app.openbus.desktop.
     #[arg(long, global = true, value_name = "FOLDER")]
     pub(crate) saves: Option<PathBuf>,
 }
@@ -196,6 +197,21 @@ pub(crate) enum Machine {
     /// Those among the files named on standard input, written into FOLDER
     /// under the names they're looked for by.
     Roms { folder: PathBuf },
+    /// The saves kept, a line each (their kind, bytes, when they were last
+    /// written, in seconds since 1970, and where they are), of a game, by
+    /// its files (its ROM, its disks, or the X16's card it's played from),
+    /// or, with none, all of them: for the app's library
+    Saves {
+        /// Those of these kinds deleted, and said: save, state, resume,
+        /// card or disk, a comma between
+        #[arg(long, value_name = "KINDS")]
+        clear: Option<String>,
+        /// The game's system, as its saves' folders are named: nes,
+        /// atari2600, atari7800, apple2, x16
+        #[arg(long)]
+        system: Option<String>,
+        files: Vec<PathBuf>,
+    },
 }
 
 /// An Apple's disks, cards, CPU and monitor.
@@ -278,8 +294,11 @@ pub fn run(args: Vec<String>) {
     };
     let host = cli.host;
     // Saves never beside the games, whose folders are left as they are.
-    if let Some(folder) = host.saves.clone().or_else(host::saves::default_folder) {
-        host::saves::keep_in(&folder);
+    if let Some(root) = host.saves.clone().or_else(host::saves::default_root) {
+        host::saves::keep_in(&root);
+    }
+    if let Some(system) = cli.machine.as_ref().and_then(Machine::system) {
+        host::saves::system(system);
     }
     if let Some(place) = host.window {
         host::window::PLACE.set(place).expect("one --window");
@@ -356,6 +375,7 @@ pub fn run(args: Vec<String>) {
         Some(Machine::Pads) => host::pads::report(),
         Some(Machine::Bound) => print!("{}", host::controls::Controls::load().text()),
         Some(Machine::Facts) => machines::facts::report(),
+        Some(Machine::Saves { clear, files, .. }) => saves_report(clear.as_deref(), &files),
         Some(Machine::Roms { folder }) => {
             machines::apple2::rom_set::sort(&folder).expect("couldn't sort the ROMs")
         }
@@ -376,6 +396,71 @@ impl Apple {
         )
         .unwrap_or_else(|e| panic!("{e}"));
         machines::apple2::run(model, built, self.text, fullscreen);
+    }
+}
+
+impl Machine {
+    /// The folder its saves are kept in, under saves/ and states/.
+    fn system(&self) -> Option<&str> {
+        Some(match self {
+            Machine::Basic { .. } => "basic",
+            Machine::Apple2 { .. } | Machine::Apple2e { .. } => "apple2",
+            Machine::Nes { .. } => "nes",
+            Machine::Atari2600 { .. } => "atari2600",
+            Machine::Atari7800 { .. } => "atari7800",
+            Machine::Skink { .. } => "skink",
+            Machine::X16 { .. } => "x16",
+            Machine::Saves { system, .. } => return system.as_deref(),
+            _ => return None,
+        })
+    }
+}
+
+/// `cpu_emu saves`: each save of `files`' game, or all, a line each; those
+/// of the kinds `clear` names deleted first, and said.
+fn saves_report(clear: Option<&str>, files: &[PathBuf]) {
+    use std::io::Write;
+    let kinds: Option<Vec<host::saves::Kind>> = clear.map(|kinds| {
+        kinds
+            .split(',')
+            .map(|name| {
+                host::saves::Kind::named(name.trim())
+                    .unwrap_or_else(|| panic!("{name}: not a kind of save"))
+            })
+            .collect()
+    });
+    let found = if files.is_empty() {
+        host::saves::all()
+    } else {
+        host::saves::of_game(files)
+    };
+    let mut out = std::io::stdout().lock();
+    for (kind, path) in found {
+        let Ok(about) = std::fs::metadata(&path) else {
+            continue;
+        };
+        if let Some(kinds) = &kinds {
+            if !kinds.contains(&kind) {
+                continue;
+            }
+            if let Err(e) = std::fs::remove_file(&path) {
+                eprintln!("{}: not deleted: {e}", path.display());
+                continue;
+            }
+            host::saves::tidy(&path);
+        }
+        let written = about
+            .modified()
+            .ok()
+            .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |since| since.as_secs());
+        let _ = writeln!(
+            out,
+            "{}\t{}\t{written}\t{}",
+            kind.name(),
+            about.len(),
+            path.display()
+        );
     }
 }
 
