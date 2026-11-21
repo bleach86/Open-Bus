@@ -122,6 +122,11 @@ pub const NVRAM_SAVE: &str = "nvram.bin";
 const KEYD: usize = 0xA800 - 0xA000;
 const KEYD_SIZE: usize = 10;
 const NDX: usize = 0xA80A - 0xA000;
+/// The KERNAL's screen editor's mode (R49's): bit 6, ISO's character set,
+/// its screen codes ISO-8859's, not PETSCII's. A program with a font of its
+/// own may have them so without it (ROMTERM).
+const MODE: usize = 0x0372;
+const ISO: u8 = 0x40;
 const RAM_TOP: usize = 0x9F00;
 const BANK: usize = 0x2000;
 const RAM_BANKS: usize = 64;
@@ -509,13 +514,41 @@ impl X16 {
         self.mouse.at = Some((from.0 + sent.0 as f32, from.1 - sent.1 as f32));
     }
 
+    /// Whether the text map at `base` has ISO-8859's codes, not PETSCII's
+    /// screen codes: as the KERNAL's in ISO mode, or with letters where
+    /// ISO's are, far more than where PETSCII's are.
+    fn iso_text(&self, base: usize, width: usize, across: usize, down: usize) -> bool {
+        if self.ram[MODE] & ISO != 0 {
+            return true;
+        }
+        let (mut iso, mut petscii) = (0, 0);
+        for row in 0..down {
+            for column in 0..across {
+                match self.vera.peek(base + (row * width + column) * 2) {
+                    0x41..=0x5A | 0x61..=0x7A => iso += 1,
+                    code if (1..=26).contains(&(code & 0x7F)) => petscii += 1,
+                    _ => {}
+                }
+            }
+        }
+        iso > petscii * 4
+    }
+
     /// Row `row` of a text map at `base`, `width` cells to a row, its first
     /// `across` as text: their screen codes as upper case and graphics have
-    /// them, the graphics as spaces.
-    fn row_text(&self, base: usize, width: usize, row: usize, across: usize) -> String {
+    /// them, the graphics as spaces; or, `iso`, as ISO-8859 has them, what
+    /// isn't printable as spaces.
+    fn row_text(&self, base: usize, width: usize, row: usize, across: usize, iso: bool) -> String {
         (0..across)
             .map(|column| {
-                let code = self.vera.peek(base + (row * width + column) * 2) & 0x7F;
+                let code = self.vera.peek(base + (row * width + column) * 2);
+                if iso {
+                    return match code {
+                        0x20..=0x7E | 0xA0..=0xFF => code as char,
+                        _ => ' ',
+                    };
+                }
+                let code = code & 0x7F;
                 match code {
                     0x00 => '@',
                     0x01..=0x1A => (b'A' + code - 1) as char,
@@ -760,8 +793,9 @@ impl Machine for X16 {
 
     fn screen_text(&self) -> Option<String> {
         let (base, width, across, down) = self.vera.text_map(1)?;
+        let iso = self.iso_text(base, width, across, down);
         let rows: Vec<String> = (0..down)
-            .map(|row| self.row_text(base, width, row, across))
+            .map(|row| self.row_text(base, width, row, across, iso))
             .collect();
         let first = rows.iter().position(|row| !row.is_empty())?;
         let last = rows.iter().rposition(|row| !row.is_empty())?;
