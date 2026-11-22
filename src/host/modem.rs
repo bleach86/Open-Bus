@@ -41,10 +41,16 @@
 //! S2 the escape's character; S46 and S48 its DCD and CTS, as they're up
 //! (0) or the other way round (1), always up (2) or never (3); S63=2, DTR
 //! dropped hanging up. `+++` hangs up, as it does a place dialled. Its
-//! WiFi is the host's network, so `ATW`, `ATB` and `AT+CONFIG` change
-//! nothing; its phone book, listening (`ATA`), packets (`ATC`, `ATT`),
-//! downloads (`AT&G`), SSH and PETSCII aren't here.
+//! phone book (`host::phone_book`): `ATP"5=host:port,note"` keeps a place
+//! as 5, with the dial modifiers before the quote (`ATPT"..."`, telnet's);
+//! `ATP` lists them, `ATP?` with their notes; `ATP"5=DELETE"`; `ATD5`
+//! dials it. `AT&F` leaves it be, which Zimodem's doesn't, so a program
+//! setting the modem up loses nobody's places. Its WiFi is the host's
+//! network, so `ATW`, `ATB` and `AT+CONFIG` change nothing; listening
+//! (`ATA`), packets (`ATC`, `ATT`), downloads (`AT&G`), SSH and PETSCII
+//! aren't here.
 
+use crate::host::phone_book::{self, Entry, PhoneBook};
 #[cfg(not(target_arch = "wasm32"))]
 use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::VecDeque;
@@ -199,6 +205,39 @@ pub struct Modem {
     registers: [u8; 64],
     dtr: bool,
     connections: u32,
+    /// Zimodem's phone book (`ATP`), kept where the host says.
+    pub phone_book: PhoneBook,
+}
+
+/// The number in the phone book that's dialled, if what's dialled is a
+/// number: digits, and any of `-@,;` (Zimodem's, between them); `None`
+/// in it if it's too long to be one kept.
+fn dialled_number(place: &str) -> Option<Option<u32>> {
+    let a_number = place.bytes().any(|c| c.is_ascii_digit())
+        && place
+            .bytes()
+            .all(|c| c.is_ascii_digit() || b"-@,;".contains(&c));
+    if !a_number {
+        return None;
+    }
+    let digits: String = place.chars().filter(char::is_ascii_digit).collect();
+    Some(
+        digits
+            .parse()
+            .ok()
+            .filter(|_| digits.len() <= phone_book::DIGITS),
+    )
+}
+
+/// Whether two sets of dial modifiers are the same, in any order.
+fn same_modifiers(these: &str, those: &str) -> bool {
+    let sorted = |modifiers: &str| {
+        let mut letters: Vec<char> = modifiers.to_ascii_lowercase().chars().collect();
+        letters.sort_unstable();
+        letters.dedup();
+        letters
+    };
+    sorted(these) == sorted(those)
 }
 
 impl Default for Modem {
@@ -236,6 +275,7 @@ impl Modem {
             registers: [0; 64],
             dtr: false,
             connections: 0,
+            phone_book: PhoneBook::default(),
         }
     }
 
@@ -556,17 +596,19 @@ impl Modem {
                         } else {
                             self.result(Result::Error);
                         }
-                    } else if modifiers.contains(&b'S') || place.bytes().all(|c| c.is_ascii_digit())
-                    {
-                        // SSH, or a number in its phone book: not here.
-                        self.result(Result::Error);
-                    } else {
-                        self.telnet = modifiers.contains(&b'T') && self.registers[62] != 0;
-                        self.online_echo = Some(modifiers.contains(&b'E'));
-                        if modifiers.contains(&b'X') {
-                            self.xon_xoff = true;
+                    } else if let Some(number) = dialled_number(&place) {
+                        // A number: its place in the phone book, dialled
+                        // with the modifiers kept with it, not these.
+                        match number.and_then(|number| self.phone_book.find(number)) {
+                            Some(entry) => {
+                                let modifiers = entry.modifiers.to_ascii_uppercase().into_bytes();
+                                let place = entry.place.clone();
+                                self.zimodem_dial(&place, &modifiers);
+                            }
+                            None => self.result(Result::Error),
                         }
-                        self.dial(&place.to_ascii_lowercase());
+                    } else {
+                        self.zimodem_dial(&place, &modifiers);
                     }
                     return;
                 }
@@ -611,9 +653,27 @@ impl Modem {
                         self.say("ONLINE BY THE HOST'S NETWORK");
                     }
                 },
-                // Its WiFi, its baud rate, its phone book: the host's, the
-                // port's, none.
-                b'W' | b'B' | b'P' => {
+                b'P' => {
+                    let mut modifiers = String::new();
+                    while let Some(
+                        &modifier @ (b'E' | b'X' | b'P' | b'R' | b'T' | b'S' | b'+' | b','),
+                    ) = line.get(at)
+                    {
+                        modifiers.push(modifier.to_ascii_lowercase() as char);
+                        at += 1;
+                    }
+                    let value = quoted(&mut at).unwrap_or_else(|| {
+                        let rest = String::from_utf8_lossy(&line[at..]).into_owned();
+                        at = line.len();
+                        rest
+                    });
+                    if !self.phone_book_command(&value, &modifiers) {
+                        self.result(Result::Error);
+                        return;
+                    }
+                }
+                // Its WiFi, its baud rate: the host's, the port's.
+                b'W' | b'B' => {
                     while matches!(line.get(at), Some(b'P' | b'T' | b'E' | b'X')) {
                         at += 1;
                     }
@@ -685,6 +745,93 @@ impl Modem {
             }
         }
         self.result(Result::Ok);
+    }
+
+    /// A place dialled, Zimodem's way, with its dial `modifiers`: `T`,
+    /// telnet's, if S62 isn't 0; `E`, what's typed echoed online; `X`, XON
+    /// and XOFF; `S`, SSH's, which isn't here.
+    fn zimodem_dial(&mut self, place: &str, modifiers: &[u8]) {
+        if modifiers.contains(&b'S') {
+            self.result(Result::Error);
+            return;
+        }
+        self.telnet = modifiers.contains(&b'T') && self.registers[62] != 0;
+        self.online_echo = Some(modifiers.contains(&b'E'));
+        if modifiers.contains(&b'X') {
+            self.xon_xoff = true;
+        }
+        self.dial(&place.to_ascii_lowercase());
+    }
+
+    /// Zimodem's `ATP`, its phone book, with `value` and the dial
+    /// `modifiers` before it: whether it's done, as it's not with an
+    /// ERROR.
+    /// - No value, a number or a character (`ATP?`): the entries listed, a
+    ///   number's alone, those with these modifiers if there are any; their
+    ///   notes too, but for a number or no value.
+    /// - `5=host:port,note`: kept as 5, with these modifiers, over any 5
+    ///   there was; the port digits, if it's there.
+    /// - `5=DELETE`: 5 gone.
+    fn phone_book_command(&mut self, value: &str, modifiers: &str) -> bool {
+        let a_number = value.bytes().all(|c| c.is_ascii_digit() || c == b'-');
+        if a_number || value.len() == 1 {
+            let only: Option<u32> = if a_number && !value.is_empty() {
+                let digits: String = value.chars().filter(char::is_ascii_digit).collect();
+                digits.parse().ok().filter(|&number| number != 0)
+            } else {
+                None
+            };
+            let lines: Vec<String> = self
+                .phone_book
+                .entries()
+                .iter()
+                .filter(|entry| only.is_none_or(|number| entry.number == number))
+                .filter(|entry| modifiers.is_empty() || same_modifiers(modifiers, &entry.modifiers))
+                .map(|entry| {
+                    let mut line = format!(
+                        "{:<10} {:<4} {}",
+                        entry.number, entry.modifiers, entry.place
+                    );
+                    if !a_number {
+                        line += &format!(" ({})", entry.note);
+                    }
+                    line
+                })
+                .collect();
+            for line in lines {
+                self.to_machine.extend(line.bytes());
+                self.to_machine.extend(self.eol);
+            }
+            return true;
+        }
+        let Some((number, rest)) = value.split_once('=') else {
+            return false;
+        };
+        if number.len() > phone_book::DIGITS || !number.bytes().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+        let number = number.parse().unwrap_or(0);
+        if rest == "DELETE" || rest == "delete" {
+            return self.phone_book.delete(number);
+        }
+        let Some(colon) = rest.find(':') else {
+            return false;
+        };
+        let (place, note) = match rest[colon..].find(',') {
+            Some(comma) => (&rest[..colon + comma], &rest[colon + comma + 1..]),
+            None => (rest, ""),
+        };
+        let port = &place[colon + 1..];
+        if port.len() > phone_book::DIGITS || !port.bytes().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+        self.phone_book.add(Entry {
+            number,
+            place: place.to_string(),
+            modifiers: modifiers.to_string(),
+            note: note.to_string(),
+        });
+        true
     }
 
     /// Zimodem's flow control `value`: by RTS if it's one of `rts`, XON and

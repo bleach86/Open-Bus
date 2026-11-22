@@ -5,7 +5,8 @@
 //! the place gone, or never there. What comes held to a few frames' worth,
 //! the rest left in the network. Zimodem's: x16net's setting up taken,
 //! a place dialled in quotes over plain TCP or telnet, `+++` and DTR
-//! hanging up, its S registers, flow control and the ends of its lines.
+//! hanging up, its S registers, flow control and the ends of its lines;
+//! its phone book, places kept, listed and dialled by number.
 
 #[cfg(test)]
 mod tests {
@@ -437,6 +438,71 @@ mod tests {
         assert!((256..=512).contains(&held), "{held} held");
         modem.to_machine.drain(..);
         until(&mut modem, |modem| !modem.to_machine.is_empty());
+        drop(place);
+    }
+
+    #[test]
+    fn zimodem_keeps_places_in_its_phone_book_lists_them_and_dials_them_by_number() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            caller.write_all(b"HI").unwrap();
+            caller
+        });
+        let mut modem = Modem::zimodem();
+        let command = |modem: &mut Modem, line: &str| {
+            modem.send(format!("{line}\r").as_bytes());
+            said(modem)
+        };
+        assert_eq!(
+            command(&mut modem, "ATE0"),
+            "ATE0\r\nOK\r\n",
+            "echoed, then not"
+        );
+        let keep = format!("ATP\"5=127.0.0.1:{port},the test's place\"");
+        assert_eq!(command(&mut modem, &keep), "OK\r\n");
+        assert_eq!(
+            command(&mut modem, "ATPT\"64=bbs.example.org:6400\""),
+            "OK\r\n"
+        );
+        assert_eq!(
+            command(&mut modem, "ATP"),
+            format!(
+                "5               127.0.0.1:{port}\r\n64         t    bbs.example.org:6400\r\nOK\r\n"
+            ),
+            "by number; their modifiers; no notes"
+        );
+        assert_eq!(
+            command(&mut modem, "ATP?"),
+            format!(
+                "5               127.0.0.1:{port} (the test's place)\r\n\
+                 64         t    bbs.example.org:6400 ()\r\nOK\r\n"
+            ),
+            "with their notes"
+        );
+        assert_eq!(
+            command(&mut modem, "ATP64"),
+            "64         t    bbs.example.org:6400\r\nOK\r\n"
+        );
+        for wrong in [
+            "ATP\"x=host:23\"",
+            "ATP\"1234567890=host:23\"",
+            "ATP\"6=host\"",
+            "ATP\"6=host:telnet\"",
+            "ATP\"6=DELETE\"",
+            "ATD6",
+        ] {
+            assert_eq!(command(&mut modem, wrong), "ERROR\r\n", "{wrong}");
+        }
+        assert_eq!(command(&mut modem, "ATP\"64=DELETE\""), "OK\r\n");
+        assert_eq!(command(&mut modem, "AT&F"), "OK\r\n");
+        modem.send(b"ATE0D5\r");
+        let came = wait_for(&mut modem, "HI");
+        assert!(
+            came.ends_with("CONNECT 1\r\nHI"),
+            "kept past AT&F: {came:?}"
+        );
         drop(place);
     }
 }

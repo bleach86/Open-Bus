@@ -205,9 +205,22 @@ The address goes in quotes. `atdt` speaks telnet, which most BBSes want, and
 `ati` says which modem it is. Programs that use the card directly, such as
 [x16net](https://github.com/retrodores/x16net), work too.
 
-Zimodem's own extras aren't there: its phone book, listening for calls, its
-packet commands, `AT&G` downloads, SSH and PETSCII translation. The web
-version can't open network connections, so there the modem never connects.
+Zimodem's phone book keeps places by number, so you can dial a BBS without
+typing its address each time. Save one once, with `t` before the quote for
+telnet:
+
+```
+atpt"1=bbs.example.org:23,Example BBS"
+```
+
+Then `atd1` dials it. `atp` lists what's saved, `atp?` lists it with the notes,
+and `atp"1=delete"` removes one. Numbers can have up to 9 digits. The phone book
+is kept with the X16's saves, in `zphonebook.txt`, so every X16 game shares it.
+Unlike Zimodem, `at&f` leaves it alone.
+
+Zimodem's other extras aren't there: listening for calls, its packet commands,
+`AT&G` downloads, SSH and PETSCII translation. The web version can't open
+network connections, so there the modem never connects.
 
 ## Skink and BASIC
 

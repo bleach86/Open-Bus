@@ -51,8 +51,9 @@
 //!
 //! In its expansion slot, TexElec's Serial & ESP32 Network Card
 //! (`network_card`), its UARTs at `$9FE0` and `$9FE8`, and on the first a
-//! WiFi modem, Zimodem's, for terminal programs to go online with. It's
-//! not in a save state: its connection's the host's, and its UARTs as the
+//! WiFi modem, Zimodem's, for terminal programs to go online with; its
+//! phone book kept with the clock's RAM, as `zphonebook.txt`. It's not in
+//! a save state: its connection's the host's, and its UARTs as the
 //! program running has them set.
 
 #[cfg(test)]
@@ -116,6 +117,10 @@ pub const ROM_FOLDER: &str = "roms/x16";
 pub const NVRAM_FILE: &str = "roms/x16/nvram.bin";
 /// Its name where saves are kept apart, as they are, but in the tests.
 pub const NVRAM_SAVE: &str = "nvram.bin";
+/// The network card's modem's phone book, as the ESP32's flash keeps it:
+/// with saves, or, with none kept apart, here.
+pub const PHONE_BOOK_FILE: &str = "roms/x16/zphonebook.txt";
+pub const PHONE_BOOK_SAVE: &str = "zphonebook.txt";
 
 /// The KERNAL's keyboard buffer, KEYD, in RAM bank 0, and NDX, how many
 /// it holds, as they've been since R41, and as x16emu has them.
@@ -1151,6 +1156,8 @@ pub fn run(rom: &str, sd_card: Option<&str>, game: Option<&str>, fullscreen: boo
     let before = Path::new(NVRAM_FILE);
     cpu.memory
         .keep_nvram(&saves::machine(NVRAM_SAVE, before), before);
+    let phone_book = saves::machine(PHONE_BOOK_SAVE, Path::new(PHONE_BOOK_FILE));
+    cpu.memory.network.modem.phone_book.keep_in(&phone_book);
     if let Some(game) = game {
         cpu.memory.name = game_name(Path::new(game));
     }
