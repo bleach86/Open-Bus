@@ -465,7 +465,8 @@ fn saves_report(clear: Option<&str>, files: &[PathBuf]) {
 }
 
 /// The X16: its ROM as it's given, else as it's found in roms/x16/; its SD
-/// card a game's own, made from it, or as it's given, or roms/x16/'s.
+/// card a game's own, made from it, or as it's given, or roms/x16/'s; its
+/// files a folder beside the card (`shared_folder`).
 fn x16(rom: Option<String>, game: Option<String>, sd: Option<String>, fullscreen: bool) {
     let rom = rom
         .or_else(|| machines::x16::rom_file().map(|rom| rom.to_string_lossy().into_owned()))
@@ -493,7 +494,15 @@ fn x16(rom: Option<String>, game: Option<String>, sd: Option<String>, fullscreen
             None => machines::x16::sd_card_file().map(|image| image.to_string_lossy().into_owned()),
         },
     };
+    // Its files, but its program's own, a folder beside its card: put on
+    // the card as it starts, and what it saved brought back as it stops.
+    let shared = sd_card.as_deref().and_then(|card| {
+        machines::x16::shared_folder::share_in(game.as_deref().map(Path::new), Path::new(card))
+    });
     machines::x16::run(&rom, sd_card.as_deref(), game.as_deref(), fullscreen);
+    if let Some(shared) = &shared {
+        machines::x16::shared_folder::share_out(shared);
+    }
 }
 
 /// Android's way in: SDL's activity calls this, with the arguments it's

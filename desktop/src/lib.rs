@@ -1090,6 +1090,34 @@ fn x16_card(app: &AppHandle, machine: &Value) -> Result<PathBuf, String> {
     Ok(card)
 }
 
+/// The folder of an X16 game's files, beside its card, as the emulator has
+/// it (`machines::x16::shared_folder`: the card's name and " files", kept
+/// the same as the card while the game runs): where it is; and, `open`,
+/// made if it isn't there yet and opened in the system's file manager.
+#[tauri::command(async)]
+fn x16_files(app: AppHandle, machine: Value, open: bool) -> Result<String, String> {
+    let card = x16_card(&app, &machine)?;
+    let stem = card
+        .file_stem()
+        .map_or("card".into(), |stem| stem.to_string_lossy().into_owned());
+    let folder = card.with_file_name(format!("{stem} files"));
+    if open {
+        fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+        let opener = if cfg!(target_os = "windows") {
+            "explorer"
+        } else if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        Command::new(opener)
+            .arg(&folder)
+            .spawn()
+            .map_err(|e| format!("{opener}: {e}"))?;
+    }
+    Ok(folder.to_string_lossy().into_owned())
+}
+
 /// `from` moved to `to`: renamed, or, from one disk to another, copied and
 /// the first removed.
 fn move_file(from: &Path, to: &Path) -> Result<(), String> {
@@ -1725,6 +1753,7 @@ pub fn run() {
         .manage(Learning::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            x16_files,
             all_files,
             known_files,
             file_bytes,

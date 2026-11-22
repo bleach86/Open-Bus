@@ -63,6 +63,7 @@ mod tests {
     mod machine;
     mod network_card;
     mod sd_card;
+    mod shared_folder;
     mod vera;
     mod vera_audio;
     mod vera_fx;
@@ -73,6 +74,8 @@ pub mod i2c;
 pub mod keyboard;
 pub mod network_card;
 pub mod sd_card;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod shared_folder;
 pub mod vera;
 pub mod vera_audio;
 pub mod vera_fx;

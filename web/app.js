@@ -3142,22 +3142,50 @@ if (native) {
     page('saves-default').onclick = () => moveSaves(null);
 }
 
+/// An X16 game's files, a folder on this computer beside its card (what it
+/// saves there, a terminal's downloads; what's put there, on its card the
+/// next time it runs): where it is, and a button to open it.
+async function x16FilesRow(machine) {
+    if (machine.kind !== 'x16') {
+        return [];
+    }
+    try {
+        const folder = await native.x16Files(machine, false);
+        if (native.android) {
+            return [row('Its files', folder)];
+        }
+        return [
+            row('Its files', folder, 'Open', async () => {
+                try {
+                    await native.x16Files(machine, true);
+                } catch (problem) {
+                    say(`The folder can't be opened: ${problem}`);
+                }
+            }),
+        ];
+    } catch {
+        return [];
+    }
+}
+
 /// A game's own saves, in its details: each, with when it was saved, to be
-/// deleted, asked first.
+/// deleted, asked first; an X16 game's files folder first.
 async function fillGameSaves(machine) {
     const list = page('game-saves');
+    const files = await x16FilesRow(machine);
     let saves;
     try {
         saves = await native.gameSaves(machine);
     } catch (problem) {
-        list.replaceChildren(row("Its saves can't be read", String(problem)));
+        list.replaceChildren(...files, row("Its saves can't be read", String(problem)));
         return;
     }
     if (!saves.length) {
-        list.replaceChildren(row('None yet'));
+        list.replaceChildren(...files, row('None yet'));
         return;
     }
     list.replaceChildren(
+        ...files,
         ...saves.map((save) => {
             const [, name] = SAVE_KINDS[save.kind] ?? [save.kind, save.kind];
             const when = whenPlayed(save.written).toLowerCase();
