@@ -3064,6 +3064,7 @@ async function fillSettings() {
     if (native) {
         fillFolders();
         fillSaves();
+        fillX16Files();
     }
 }
 
@@ -3132,6 +3133,36 @@ async function moveSaves(path) {
         say(`Saves not moved: ${problem}`);
     }
 }
+/// The X16's files folder, in Settings: where it is, opened, changed.
+async function fillX16Files(given) {
+    let files = given;
+    try {
+        files ??= await native.x16Files();
+    } catch (problem) {
+        page('x16-files-where').textContent = "a folder that can't be found";
+        say(`The X16's files: ${problem}`);
+        return;
+    }
+    page('x16-files-where').textContent = files.folder;
+    page('x16-files-default').hidden = !files.chosen;
+}
+if (native) {
+    page('x16-files-open').hidden = native.android;
+    page('x16-files-open').onclick = async () => {
+        try {
+            await native.openX16Files();
+        } catch (problem) {
+            say(`The folder can't be opened: ${problem}`);
+        }
+    };
+    page('x16-files-change').onclick = async () => {
+        const path = await (native.android ? browseFolders() : native.pickFolder());
+        if (path) {
+            fillX16Files(await native.setX16Files(path));
+        }
+    };
+    page('x16-files-default').onclick = async () => fillX16Files(await native.setX16Files(null));
+}
 if (native) {
     page('saves-change').onclick = async () => {
         const path = await (native.android ? browseFolders() : native.pickFolder());
@@ -3142,50 +3173,22 @@ if (native) {
     page('saves-default').onclick = () => moveSaves(null);
 }
 
-/// An X16 game's files, a folder on this computer beside its card (what it
-/// saves there, a terminal's downloads; what's put there, on its card the
-/// next time it runs): where it is, and a button to open it.
-async function x16FilesRow(machine) {
-    if (machine.kind !== 'x16') {
-        return [];
-    }
-    try {
-        const folder = await native.x16Files(machine, false);
-        if (native.android) {
-            return [row('Its files', folder)];
-        }
-        return [
-            row('Its files', folder, 'Open', async () => {
-                try {
-                    await native.x16Files(machine, true);
-                } catch (problem) {
-                    say(`The folder can't be opened: ${problem}`);
-                }
-            }),
-        ];
-    } catch {
-        return [];
-    }
-}
-
 /// A game's own saves, in its details: each, with when it was saved, to be
-/// deleted, asked first; an X16 game's files folder first.
+/// deleted, asked first.
 async function fillGameSaves(machine) {
     const list = page('game-saves');
-    const files = await x16FilesRow(machine);
     let saves;
     try {
         saves = await native.gameSaves(machine);
     } catch (problem) {
-        list.replaceChildren(...files, row("Its saves can't be read", String(problem)));
+        list.replaceChildren(row("Its saves can't be read", String(problem)));
         return;
     }
     if (!saves.length) {
-        list.replaceChildren(...files, row('None yet'));
+        list.replaceChildren(row('None yet'));
         return;
     }
     list.replaceChildren(
-        ...files,
         ...saves.map((save) => {
             const [, name] = SAVE_KINDS[save.kind] ?? [save.kind, save.kind];
             const when = whenPlayed(save.written).toLowerCase();

@@ -133,13 +133,21 @@ fn an_x16_game_on_its_own_card() {
         "/library/x16-rom.bin",
         "--game=/games/Contra.zip",
         "--sd=/cards/Contra.img",
+        "--files=/home/me/X16 Files",
     ]);
-    let Some(Machine::X16 { rom, game, sd }) = cli.machine else {
+    let Some(Machine::X16 {
+        rom,
+        game,
+        sd,
+        files,
+    }) = cli.machine
+    else {
         panic!("not the X16: {cli:?}");
     };
     assert_eq!(rom.as_deref(), Some("/library/x16-rom.bin"));
     assert_eq!(game.as_deref(), Some("/games/Contra.zip"));
     assert_eq!(sd.as_deref(), Some("/cards/Contra.img"));
+    assert_eq!(files.as_deref(), Some("/home/me/X16 Files"));
 }
 
 #[test]

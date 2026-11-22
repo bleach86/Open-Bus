@@ -993,6 +993,11 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
         // Its card where the emulator keeps it, one from before moved there.
         let card = x16_card(app, machine)?;
         line.push(format!("--sd={}", card.to_string_lossy()));
+        // The X16's files, on its card as FILES.
+        line.push(format!(
+            "--files={}",
+            x16_files_folder(app)?.to_string_lossy()
+        ));
         return Ok(line);
     }
     let library = folder(app, "library")?.to_string_lossy().into_owned();
@@ -1090,32 +1095,57 @@ fn x16_card(app: &AppHandle, machine: &Value) -> Result<PathBuf, String> {
     Ok(card)
 }
 
-/// The folder of an X16 game's files, beside its card, as the emulator has
-/// it (`machines::x16::shared_folder`: the card's name and " files", kept
-/// the same as the card while the game runs): where it is; and, `open`,
-/// made if it isn't there yet and opened in the system's file manager.
-#[tauri::command(async)]
-fn x16_files(app: AppHandle, machine: Value, open: bool) -> Result<String, String> {
-    let card = x16_card(&app, &machine)?;
-    let stem = card
-        .file_stem()
-        .map_or("card".into(), |stem| stem.to_string_lossy().into_owned());
-    let folder = card.with_file_name(format!("{stem} files"));
-    if open {
-        fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
-        let opener = if cfg!(target_os = "windows") {
-            "explorer"
-        } else if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        };
-        Command::new(opener)
-            .arg(&folder)
-            .spawn()
-            .map_err(|e| format!("{opener}: {e}"))?;
+/// The X16's files: one folder on this computer, on every X16 program's
+/// card as its FILES folder (the emulator's `--files`): as Settings has
+/// chosen it, else "Open Bus/X16 Files" in Documents (or, with none, the
+/// app's own folder).
+fn x16_files_folder(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Some(chosen) = library(app).app_setting("x16 files")? {
+        return Ok(PathBuf::from(chosen));
     }
-    Ok(folder.to_string_lossy().into_owned())
+    let base = app
+        .path()
+        .document_dir()
+        .or_else(|_| app.path().app_data_dir())
+        .map_err(|e| e.to_string())?;
+    Ok(base.join("Open Bus").join("X16 Files"))
+}
+
+/// The X16's files folder: `{ folder, chosen }`.
+#[tauri::command(async)]
+fn x16_files(app: AppHandle) -> Result<Value, String> {
+    Ok(json!({
+        "folder": x16_files_folder(&app)?.to_string_lossy(),
+        "chosen": library(&app).app_setting("x16 files")?.is_some(),
+    }))
+}
+
+/// The X16's files folder chosen (`None`, the default again): what's in
+/// the one before stays there. `{ folder, chosen }` after.
+#[tauri::command(async)]
+fn set_x16_files(app: AppHandle, path: Option<String>) -> Result<Value, String> {
+    library(&app).set_app_setting("x16 files", path.as_deref())?;
+    x16_files(app)
+}
+
+/// The X16's files folder opened in the system's file manager, made if it
+/// isn't there yet.
+#[tauri::command(async)]
+fn open_x16_files(app: AppHandle) -> Result<(), String> {
+    let folder = x16_files_folder(&app)?;
+    fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    let opener = if cfg!(target_os = "windows") {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    Command::new(opener)
+        .arg(&folder)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("{opener}: {e}"))
 }
 
 /// `from` moved to `to`: renamed, or, from one disk to another, copied and
@@ -1754,6 +1784,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             x16_files,
+            set_x16_files,
+            open_x16_files,
             all_files,
             known_files,
             file_bytes,

@@ -135,9 +135,12 @@ export const setSavesFolder = (path) => invoke('set_saves_folder', { path });
 export const gameSaves = (machine) => invoke('game_saves', { machine: pathed(machine) });
 export const clearGameSaves = (machine, kinds) => invoke('clear_game_saves', { machine: pathed(machine), kinds });
 
-/// An X16 game's files, a folder beside its card: where it is; and, `open`,
-/// opened in the file manager.
-export const x16Files = (machine, open) => invoke('x16_files', { machine: pathed(machine), open });
+/// The X16's files, one folder on every X16 card as FILES: `{ folder,
+/// chosen }`; chosen (`null`, the default again); opened in the file
+/// manager.
+export const x16Files = () => invoke('x16_files');
+export const setX16Files = (path) => invoke('set_x16_files', { path });
+export const openX16Files = () => invoke('open_x16_files');
 export const folderFiles = (folder) => invoke('folder_files', { folder });
 export const hide = (path) => invoke('forget_path', { path });
 
