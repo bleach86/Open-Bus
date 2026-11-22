@@ -22,7 +22,8 @@
 //! Online, what the machine sends goes to the place, and what comes back
 //! to the machine, the carrier up while it lasts. Telnet's: its commands
 //! answered (no to all it's asked, but its binary, its echo and its
-//! suppressing of go-ahead), $FF doubled, a return's NUL left out. `+++`,
+//! suppressing of go-ahead), $FF doubled, a return's NUL left out unless
+//! the place sends in binary. `+++`,
 //! with a second's quiet before it and after, back to the command mode,
 //! still connected (the `+`s sent on, as a Hayes modem sends them). The
 //! place gone, `NO CARRIER`, the carrier dropped.
@@ -30,7 +31,12 @@
 //! Or, `Modem::zimodem`, Zimodem's (Bo Zimmerman's firmware for WiFi
 //! modems, as the X16's network card has on its ESP32), as its README and
 //! source have it: `ATD"host:port"`, the place in quotes, over plain TCP,
-//! telnet's only with `T` (`ATDT"host:port"`) and S62 not 0; with `E`,
+//! telnet's only with `T` (`ATDT"host:port"`) and S62 not 0, its telnet
+//! Zimodem's own: no to every option but the terminal type (`WILL` and
+//! `DO` answered `DONT` and `WONT` each time they come, `DONT` with
+//! `WONT`), the type "Zimodem" whenever it's asked, nothing asked itself,
+//! and nothing taken out but its commands, $FF doubled each way (a
+//! return's NUL comes through, so XMODEM's blocks do); with `E`,
 //! what's typed echoed online, `X`, XON and XOFF. `CONNECT 1`, the
 //! connection's number (`CONNECT` alone with `X0`); a place that isn't
 //! there, `NO ANSWER`. Its flow control `F`: `F0` the machine's RTS (as it
@@ -98,6 +104,9 @@ const SE: u8 = 240;
 const BINARY: u8 = 0;
 const ECHO: u8 = 1;
 const SUPPRESS_GO_AHEAD: u8 = 3;
+/// The terminal type: Zimodem's only yes, and what it says it is.
+const TERMINAL_TYPE: u8 = 24;
+const ZIMODEM_TERMINAL: &[u8] = b"Zimodem";
 
 /// Its results, as words and as numbers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,9 +152,11 @@ enum Telnet {
     Command,
     /// An option's asked for or offered: WILL, WONT, DO or DONT.
     Option(u8),
-    /// A subnegotiation, to its end; and an IAC in it.
-    Sub,
-    SubCommand,
+    /// A subnegotiation: its option next; then the rest, to its end; and
+    /// an IAC in it.
+    SubOption,
+    Sub(u8),
+    SubCommand(u8),
 }
 
 /// The connection, once it's made; or being made.
@@ -193,6 +204,9 @@ pub struct Modem {
     /// never, as a Hayes modem's online echo; else as telnet has it.
     far_echoes: bool,
     online_echo: Option<bool>,
+    /// Whether the place sends in binary (`WILL BINARY`, said yes to):
+    /// then a return's NUL is its data, not telnet's.
+    far_binary: bool,
     /// Zimodem's commands, not Hayes's.
     zimodem: bool,
     /// Zimodem's flow control by the machine's RTS (`F0`); the end of its
@@ -268,6 +282,7 @@ impl Modem {
             held: false,
             far_echoes: false,
             online_echo: None,
+            far_binary: false,
             zimodem: false,
             hardware_flow: false,
             eol: b"\r\n",
@@ -988,6 +1003,14 @@ impl Modem {
         self.connection();
     }
 
+    /// Between frames: the network's sending and taking only, as a modem
+    /// does all the time; its timing (the escape's guard) left to the
+    /// frames.
+    pub fn poll(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.connection();
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn connection(&mut self) {
         if let Some(Line::Dialling(answered)) = &self.line {
@@ -998,6 +1021,7 @@ impl Modem {
                     self.line = Some(Line::Up(stream));
                     self.online = true;
                     self.far_echoes = false;
+                    self.far_binary = false;
                     self.quiet_frames = 0;
                     self.connections += 1;
                     self.result(Result::Connect);
@@ -1078,9 +1102,12 @@ impl Modem {
             self.to_machine.push_back(byte);
             return;
         }
+        // A return's NUL, telnet's (RFC 854), left out; not in binary
+        // (RFC 856), nor ever by Zimodem, which leaves all data be.
+        let drops_nul = !self.zimodem && !self.far_binary;
         self.taking = match (self.taking, byte) {
             (Telnet::Data | Telnet::Return, IAC) => Telnet::Command,
-            (Telnet::Return, 0) => Telnet::Data,
+            (Telnet::Return, 0) if drops_nul => Telnet::Data,
             (Telnet::Data | Telnet::Return, byte) => {
                 self.to_machine.push_back(byte);
                 if byte == b'\r' {
@@ -1094,24 +1121,57 @@ impl Modem {
                 Telnet::Data
             }
             (Telnet::Command, WILL | WONT | DO | DONT) => Telnet::Option(byte),
-            (Telnet::Command, SB) => Telnet::Sub,
+            (Telnet::Command, SB) => Telnet::SubOption,
             (Telnet::Command, _) => Telnet::Data,
             (Telnet::Option(asked), option) => {
                 self.answer(asked, option);
                 Telnet::Data
             }
-            (Telnet::Sub, IAC) => Telnet::SubCommand,
-            (Telnet::Sub, _) => Telnet::Sub,
-            (Telnet::SubCommand, SE) => Telnet::Data,
-            (Telnet::SubCommand, _) => Telnet::Sub,
+            (Telnet::SubOption, IAC) => Telnet::SubCommand(IAC),
+            (Telnet::SubOption, option) => Telnet::Sub(option),
+            (Telnet::Sub(option), IAC) => Telnet::SubCommand(option),
+            (Telnet::Sub(option), _) => Telnet::Sub(option),
+            (Telnet::SubCommand(option), SE) => {
+                self.subnegotiated(option);
+                Telnet::Data
+            }
+            (Telnet::SubCommand(option), _) => Telnet::Sub(option),
         };
+    }
+
+    /// A subnegotiation ended: Zimodem's terminal type sent, for one about
+    /// the terminal type (its `SEND` not looked at, as Zimodem doesn't).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    fn subnegotiated(&mut self, option: u8) {
+        if self.zimodem && option == TERMINAL_TYPE {
+            self.to_place.extend([IAC, SB, TERMINAL_TYPE, 0]);
+            self.to_place.extend_from_slice(ZIMODEM_TERMINAL);
+            self.to_place.extend([IAC, SE]);
+        }
     }
 
     /// Telnet's option `option` asked for (`DO`) or offered (`WILL`): yes
     /// to those it does, no to the rest. Told no (`DONT`, `WONT`), nothing
-    /// said back, as that could go back and forth for ever.
+    /// said back, as that could go back and forth for ever. Zimodem's
+    /// answers are its own: no to all but the terminal type, and `DONT`
+    /// answered with `WONT`, each time, as its firmware does.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn answer(&mut self, asked: u8, option: u8) {
+        if self.zimodem {
+            // Zimodem's: no to all but the terminal type, every time.
+            let reply = match (asked, option == TERMINAL_TYPE) {
+                (WILL, true) => DO,
+                (WILL, false) => DONT,
+                (DO, true) => WILL,
+                (DO | DONT, _) => WONT,
+                _ => return,
+            };
+            self.to_place.extend([IAC, reply, option]);
+            return;
+        }
+        if option == BINARY && matches!(asked, WILL | WONT) {
+            self.far_binary = asked == WILL;
+        }
         if option == ECHO && matches!(asked, WILL | WONT) {
             self.far_echoes = asked == WILL;
         }

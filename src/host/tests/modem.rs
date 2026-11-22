@@ -381,6 +381,76 @@ mod tests {
     }
 
     #[test]
+    fn zimodem_s_telnet_says_no_but_to_its_terminal_type_and_leaves_data_be() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            // Options offered and asked for, binary among them, one twice;
+            // told no; its terminal type asked; then data, a return's NUL
+            // and $FF, as XMODEM's blocks have them.
+            caller
+                .write_all(&[
+                    255, 251, 0, 255, 253, 0, 255, 251, 1, 255, 251, 3, 255, 253, 31, 255, 254, 3,
+                    255, 253, 24, 255, 253, 24, 255, 252, 1, 255, 250, 24, 1, 255, 240, b'A',
+                    b'\r', 0, b'B', 255, 255, 0, b'\r', b'\n',
+                ])
+                .unwrap();
+            let mut answers = vec![0; 8 * 3 + 13];
+            caller.read_exact(&mut answers).unwrap();
+            answers
+        });
+        let mut modem = Modem::zimodem();
+        modem.send(format!("ATE0DT\"127.0.0.1:{port}\"\r").as_bytes());
+        wait_for(&mut modem, "CONNECT 1\r\n");
+        let mut came = Vec::new();
+        until(&mut modem, |modem| {
+            came.extend(modem.to_machine.drain(..));
+            came.ends_with(b"\r\n")
+        });
+        assert_eq!(came, b"A\r\0B\xFF\0\r\n", "its NULs and one $FF");
+        until(&mut modem, |_| place.is_finished());
+        let answers = place.join().unwrap();
+        #[rustfmt::skip]
+        let zimodem = [
+            255, 254, 0, // WILL BINARY: DONT
+            255, 252, 0, // DO BINARY: WONT
+            255, 254, 1, // WILL ECHO: DONT
+            255, 254, 3, // WILL SGA: DONT
+            255, 252, 31, // DO NAWS: WONT
+            255, 252, 3, // DONT SGA: WONT
+            255, 251, 24, // DO TTYPE: WILL, twice
+            255, 251, 24,
+            // WONT ECHO: nothing; SB TTYPE SEND: IS "Zimodem"
+            255, 250, 24, 0, b'Z', b'i', b'm', b'o', b'd', b'e', b'm', 255, 240,
+        ];
+        assert_eq!(answers, zimodem);
+    }
+
+    #[test]
+    fn a_return_s_nul_is_data_when_the_place_sends_in_binary() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            caller.write_all(&[b'A', b'\r', 0, 255, 251, 0]).unwrap();
+            let mut answer = [0; 3];
+            caller.read_exact(&mut answer).unwrap();
+            caller.write_all(&[b'B', b'\r', 0, b'!']).unwrap();
+            answer
+        });
+        let mut modem = Modem::new();
+        modem.send(format!("ATE0DT 127.0.0.1:{port}\r").as_bytes());
+        let came = wait_for(&mut modem, "!");
+        assert!(
+            came.contains("CONNECT 9600\r\nA\rB\r\0!"),
+            "its NUL telnet's, then binary's data: {came:?}"
+        );
+        until(&mut modem, |_| place.is_finished());
+        assert_eq!(place.join().unwrap(), [255, 253, 0], "DO BINARY");
+    }
+
+    #[test]
     fn zimodem_dials_telnet_with_t_and_a_dropped_dtr_hangs_up_with_s63_2() {
         let server = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = server.local_addr().unwrap().port();
@@ -406,7 +476,7 @@ mod tests {
         modem.dtr(false);
         assert_eq!(said(&mut modem), "NO CARRIER\r\n");
         assert!(!modem.carrier());
-        assert_eq!(place.join().unwrap(), [255, 253, 1], "telnet's, DO ECHO");
+        assert_eq!(place.join().unwrap(), [255, 254, 1], "Zimodem's, DONT ECHO");
         // Nobody there: no answer.
         let closed = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = closed.local_addr().unwrap().port();
