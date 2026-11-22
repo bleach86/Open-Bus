@@ -224,8 +224,16 @@ pub fn power_off() -> ! {
     std::process::exit(0)
 }
 
+/// What the machine writes, sent as it is: its own CR LF ends its lines,
+/// the terminal adding no CR to the LF. A CR too many is a blank line to a
+/// terminal that takes CR as a new line, as ROMTERM does, behind a BBS that
+/// makes a door's LF CR LF itself.
+pub fn raw_output() {
+    stty(&["-opost"]);
+}
+
 /// The host terminal's modes as they were.
-const RESTORE: [&str; 4] = ["icanon", "echo", "isig", "icrnl"];
+const RESTORE: [&str; 5] = ["icanon", "echo", "isig", "icrnl", "opost"];
 
 /// Set the host terminal's modes; nothing to set when stdin isn't one.
 fn stty(settings: &[&str]) {

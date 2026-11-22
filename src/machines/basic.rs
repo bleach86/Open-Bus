@@ -227,6 +227,8 @@ pub fn run(rom_opt: Option<&str>, with_terminal: bool) {
 
     if with_terminal {
         cpu.memory.terminal = Some(Terminal::new());
+        // BASIC ends its lines with CR LF itself.
+        crate::host::terminal::raw_output();
     }
     cpu.memory.power_on = Some(Instant::now());
 

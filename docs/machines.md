@@ -217,7 +217,8 @@ floppy image. It boots `roms/skink/rom.bin` and uses `roms/skink/geckos.img`
 when it's there.
 
 BASIC is a bare 6502 at 1 MHz running Microsoft BASIC in your terminal. Build
-its ROM with `tools/fetch-msbasic`. Ctrl-C stops a program. `QUIT` (or `Q`)
-at BASIC's prompt, or Ctrl-D, turns the machine off.
+its ROM with `tools/fetch-msbasic`. Letters you type come out in upper case,
+as on the machines BASIC first ran on. Ctrl-C stops a program. `QUIT` (or
+`Q`) at BASIC's prompt, or Ctrl-D, turns the machine off.
 
 Both are mostly for development, and aren't in the library.

@@ -2,7 +2,8 @@
 ; in at $FFF9 (0 when there is none; writing 0 takes it) and a character
 ; out at $FFF8; RAM below $C000, this ROM from $C000. Lines are typed and
 ; edited in the machine's line editor, as on the PET, and BASIC is given
-; them finished: its own line editing ("@", "_") is off.
+; them finished: its own line editing ("@", "_") is off. Letters typed are
+; upper case, as on the machines BASIC first ran on.
 
 ; configuration
 CONFIG_2A := 1
@@ -45,14 +46,16 @@ ED_HANDING      := $024B        ; nonzero while the line is handed over
 ED_X            := $024C
 ED_Y            := $024D
 ED_FIRST        := $024E        ; an escape sequence's first byte
-ED_QUOTE        := $024F        ; nonzero inside quotes, handing the line over
+ED_PROMPT       := $024F        ; nonzero when the line's for BASIC's prompt
 LINE_MAX        = 71            ; as long as BASIC's input buffer holds
 
 .segment "EXTRA"
 
 ; A key, waited for, in A; X and Y kept. For GETLN, which reads BASIC's
 ; lines (it is what calls from GETLN+2), the next key of a line from the
-; line editor; for GET, a key on its own.
+; line editor; for GET, a key on its own. A line is for BASIC's prompt,
+; not a program's INPUT, when INLIN was called from the prompt's loop
+; (L2351), as the stack has it: past the returns to GETLN and to INLIN.
 MONRDKEY:
         stx     ED_X
         sty     ED_Y
@@ -63,6 +66,16 @@ MONRDKEY:
         lda     $0101,x
         cmp     #<(GETLN+2)
         bne     @key
+        ldy     #0
+        lda     $0106,x
+        cmp     #>(L2351+2)
+        bne     @prompt
+        lda     $0105,x
+        cmp     #<(L2351+2)
+        bne     @prompt
+        iny
+@prompt:
+        sty     ED_PROMPT
         jsr     LINEKEY
         jmp     @done
 @key:
@@ -73,8 +86,7 @@ MONRDKEY:
         rts
 
 ; The next key of the line for BASIC: a line edited first, unless one is
-; being handed over; then its keys, then CR. Letters go to BASIC in upper
-; case, as its words are, but inside quotes as they were typed.
+; being handed over; then its keys, then CR.
 LINEKEY:
         lda     ED_HANDING
         bne     @hand
@@ -85,18 +97,6 @@ LINEKEY:
         bcs     @end
         inc     ED_OUT
         lda     ED_BUF,x
-        cmp     #'"'
-        bne     @notquote
-        lda     ED_QUOTE
-        eor     #1
-        sta     ED_QUOTE
-        lda     #'"'
-        rts
-@notquote:
-        ldy     ED_QUOTE
-        bne     @asis
-        jmp     UPPER
-@asis:
         rts
 @end:
         lda     #0
@@ -120,14 +120,14 @@ ONEKEY:
         jmp     UPPER
 
 ; A line typed into ED_BUF, the screen showing it as it is: keys go in at
-; the cursor, Left and Right move it, Backspace and Delete take out, Home
-; and End go to the ends; Enter ends it. Other control keys do nothing.
+; the cursor, letters upper case, Left and Right move it, Backspace and
+; Delete take out, Home and End go to the ends; Enter ends it. Other control
+; keys do nothing.
 EDITLINE:
         lda     #0
         sta     ED_LEN
         sta     ED_POS
         sta     ED_OUT
-        sta     ED_QUOTE
 @next:
         jsr     GETKEY
         cmp     #$0A            ; Enter
@@ -142,6 +142,7 @@ EDITLINE:
         beq     @escape
         cmp     #' '
         bcc     @next
+        jsr     UPPER
         jsr     ED_INSERT
         jmp     @next
 @backspace:
@@ -196,13 +197,12 @@ EDITLINE:
         sta     ED_HANDING
         rts
 
-; Q or QUIT typed at BASIC's prompt, not to a program's INPUT (BASIC in
-; direct mode, the high byte of CURLIN $FF): the machine turned off, as
-; Ctrl-D turns it off. Either is ?SN ERROR to BASIC, so nothing is lost.
+; Q or QUIT typed at BASIC's prompt, not to a program's INPUT: the machine
+; turned off, as Ctrl-D turns it off. Either is ?SN ERROR to BASIC, so
+; nothing is lost.
 QUITLINE:
-        lda     z:CURLIN+1
-        cmp     #$FF
-        bne     @no
+        lda     ED_PROMPT
+        beq     @no
         ldx     ED_LEN
         cpx     #1
         beq     @q
@@ -211,7 +211,6 @@ QUITLINE:
         dex
 @quit:
         lda     ED_BUF,x
-        jsr     UPPER
         cmp     QUITWORD,x
         bne     @no
         dex
@@ -219,7 +218,6 @@ QUITLINE:
         bmi     @off
 @q:
         lda     ED_BUF
-        jsr     UPPER
         cmp     #'Q'
         bne     @no
 @off:
