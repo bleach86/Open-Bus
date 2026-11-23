@@ -1964,7 +1964,7 @@ function navigate(now) {
         return;
     }
     if (pageDialog()) {
-        padInDialog(pageDialog(), pressed);
+        padInDialog(pageDialog(), pressed, now);
         wasPressed = pressed;
         return;
     }
@@ -2983,15 +2983,21 @@ function browseFolders() {
 }
 
 /// A dialog of the page's own gone round by a gamepad: its buttons by its
-/// directions, the browser's focus moved; A presses the one there, and B
-/// goes back.
-function padInDialog(dialog, pressed) {
+/// directions, the browser's focus moved, held directions repeating as
+/// they do on the shelf; A presses the one there, and B goes back.
+function padInDialog(dialog, pressed, now) {
     const newly = (name) => pressed[name] && !wasPressed[name];
     const buttons = [...dialog.querySelectorAll('button:not([disabled])')].filter(
         (button) => button.checkVisibility?.() ?? button.getClientRects().length > 0,
     );
     const from = buttons.includes(document.activeElement) ? document.activeElement : null;
-    const way = ['up', 'down', 'left', 'right'].find(newly);
+    const held = ['up', 'down', 'left', 'right'].find((direction) => pressed[direction]) ?? '';
+    let way = '';
+    if (held !== moving) {
+        [moving, moveAgainAt, way] = [held, now + FIRST_REPEAT, held];
+    } else if (held && now >= moveAgainAt) {
+        [moveAgainAt, way] = [now + NEXT_REPEAT, held];
+    }
     if (way) {
         const next = from ? nearest(from, way, buttons) : buttons[0];
         next?.focus();
@@ -3058,6 +3064,7 @@ async function fillSettings() {
     if (native) {
         fillFolders();
         fillSaves();
+        fillX16Files();
     }
 }
 
@@ -3125,6 +3132,44 @@ async function moveSaves(path) {
     } catch (problem) {
         say(`Saves not moved: ${problem}`);
     }
+}
+/// The X16's files folder, in Settings: where it is, opened, changed.
+async function fillX16Files(given) {
+    let files = given;
+    try {
+        files ??= await native.x16Files();
+    } catch (problem) {
+        page('x16-files-where').textContent = "a folder that can't be found";
+        say(`The X16's files: ${problem}`);
+        return;
+    }
+    page('x16-files-where').textContent = files.folder;
+    page('x16-files-default').hidden = !files.chosen;
+}
+if (native) {
+    page('x16-files-open').hidden = native.android;
+    page('x16-files-open').onclick = async () => {
+        try {
+            await native.openX16Files();
+        } catch (problem) {
+            say(`The folder can't be opened: ${problem}`);
+        }
+    };
+    // The folder changed, or its default again; or, refused, why.
+    const x16FilesTo = async (path) => {
+        try {
+            fillX16Files(await native.setX16Files(path));
+        } catch (problem) {
+            say(`The X16's files not changed: ${problem}`, true);
+        }
+    };
+    page('x16-files-change').onclick = async () => {
+        const path = await (native.android ? browseFolders() : native.pickFolder());
+        if (path) {
+            await x16FilesTo(path);
+        }
+    };
+    page('x16-files-default').onclick = () => x16FilesTo(null);
 }
 if (native) {
     page('saves-change').onclick = async () => {
@@ -3943,6 +3988,88 @@ if (!native) {
 // Which Open Bus this is, at the foot of Settings: the desktop app's own, or
 // this page's emulator's.
 page('app-version').textContent = `Open Bus ${native ? await native.appVersion() : app_version()}`;
+
+/// The version whose update was put off ("Not now"), not offered again by
+/// itself: Settings' "Check for updates" still offers it.
+const PUT_OFF_UPDATE = 'update put off';
+
+/// A newer Open Bus, from its releases on GitHub, offered: installed, and the
+/// app started again as it, if it's wanted. `byHand`, from Settings: what was
+/// found said, even nothing.
+async function offerUpdate(byHand) {
+    let update;
+    try {
+        update = await native.updateCheck();
+    } catch (problem) {
+        if (byHand) {
+            say(`Couldn't check for updates: ${problem}`, true);
+        }
+        return;
+    }
+    if (!update) {
+        if (byHand) {
+            say('This is the newest Open Bus.');
+        }
+        return;
+    }
+    // By itself, never over a game or another dialog: it asks again next
+    // time the app starts.
+    const busy = playing || document.querySelector('dialog[open]');
+    if (!byHand && (busy || localStorage.getItem(PUT_OFF_UPDATE) === update.version)) {
+        return;
+    }
+    const dialog = page('update-dialog');
+    const status = page('update-status');
+    page('update-version').textContent = update.version;
+    page('update-have').textContent = await native.appVersion();
+    page('update-notes').textContent = update.notes ?? '';
+    page('update-notes').hidden = !update.notes;
+    status.textContent = '';
+    const buttons = [page('update-now'), page('update-later')];
+    const working = (doing) => {
+        status.textContent = doing;
+        for (const button of buttons) {
+            button.disabled = !!doing;
+        }
+    };
+    working('');
+    page('update-later').onclick = () => {
+        localStorage.setItem(PUT_OFF_UPDATE, update.version);
+        dialog.close();
+    };
+    page('update-now').onclick = async () => {
+        working('Downloading…');
+        const megabytes = (bytes) => `${(bytes / 2 ** 20).toFixed(1)} MB`;
+        const stop = await native.whenUpdateProgresses(({ got, total }) => {
+            status.textContent =
+                total && got >= total
+                    ? 'Installing…'
+                    : total
+                      ? `Downloading… ${Math.floor((got * 100) / total)}% of ${megabytes(total)}`
+                      : `Downloading… ${megabytes(got)}`;
+        });
+        try {
+            // It starts again as the new version, so this doesn't return.
+            await native.updateInstall();
+        } catch (problem) {
+            working('');
+            status.textContent = `Couldn't update: ${problem}`;
+        } finally {
+            stop();
+        }
+    };
+    // Not closed while it's updating: the app would start again anyway.
+    dialog.oncancel = (event) => page('update-now').disabled && event.preventDefault();
+    dialog.showModal();
+    page('update-now').focus();
+}
+
+// Updates: the desktop app's, not Android's (its APK's installed by hand) or
+// a browser's.
+if (native && !native.android) {
+    page('update-actions').hidden = false;
+    page('update-check').onclick = () => offerUpdate(true);
+}
 await loadArt();
 await refresh();
 // No games yet, and it starts in Settings, where they're added.
@@ -3952,6 +4079,10 @@ if (!hasGames()) {
     showSection('library');
 }
 showShelf(!hasGames() ? 'settings' : lastShelf && lastShelf !== 'settings' ? lastShelf : gamesShelf());
+// A newer version offered, once the library's showing.
+if (native && !native.android) {
+    offerUpdate(false);
+}
 if (native) {
     // With nothing known yet, the folders may yet turn something up.
     const startedEmpty = !hasGames();

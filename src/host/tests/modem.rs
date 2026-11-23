@@ -2,9 +2,11 @@
 //! echoed or not; dialling a place (a server of the test's own, here),
 //! connecting, telnet's commands answered and taken out, what's sent and
 //! what comes back; `+++` to the command mode and `ATO` back; hanging up;
-//! the place gone, or never there. Zimodem's: x16net's setting up taken,
+//! the place gone, or never there. What comes held to a few frames' worth,
+//! the rest left in the network. Zimodem's: x16net's setting up taken,
 //! a place dialled in quotes over plain TCP or telnet, `+++` and DTR
-//! hanging up, its S registers, flow control and the ends of its lines.
+//! hanging up, its S registers, flow control and the ends of its lines;
+//! its phone book, places kept, listed and dialled by number.
 
 #[cfg(test)]
 mod tests {
@@ -379,6 +381,76 @@ mod tests {
     }
 
     #[test]
+    fn zimodem_s_telnet_says_no_but_to_its_terminal_type_and_leaves_data_be() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            // Options offered and asked for, binary among them, one twice;
+            // told no; its terminal type asked; then data, a return's NUL
+            // and $FF, as XMODEM's blocks have them.
+            caller
+                .write_all(&[
+                    255, 251, 0, 255, 253, 0, 255, 251, 1, 255, 251, 3, 255, 253, 31, 255, 254, 3,
+                    255, 253, 24, 255, 253, 24, 255, 252, 1, 255, 250, 24, 1, 255, 240, b'A',
+                    b'\r', 0, b'B', 255, 255, 0, b'\r', b'\n',
+                ])
+                .unwrap();
+            let mut answers = vec![0; 8 * 3 + 13];
+            caller.read_exact(&mut answers).unwrap();
+            answers
+        });
+        let mut modem = Modem::zimodem();
+        modem.send(format!("ATE0DT\"127.0.0.1:{port}\"\r").as_bytes());
+        wait_for(&mut modem, "CONNECT 1\r\n");
+        let mut came = Vec::new();
+        until(&mut modem, |modem| {
+            came.extend(modem.to_machine.drain(..));
+            came.ends_with(b"\r\n")
+        });
+        assert_eq!(came, b"A\r\0B\xFF\0\r\n", "its NULs and one $FF");
+        until(&mut modem, |_| place.is_finished());
+        let answers = place.join().unwrap();
+        #[rustfmt::skip]
+        let zimodem = [
+            255, 254, 0, // WILL BINARY: DONT
+            255, 252, 0, // DO BINARY: WONT
+            255, 254, 1, // WILL ECHO: DONT
+            255, 254, 3, // WILL SGA: DONT
+            255, 252, 31, // DO NAWS: WONT
+            255, 252, 3, // DONT SGA: WONT
+            255, 251, 24, // DO TTYPE: WILL, twice
+            255, 251, 24,
+            // WONT ECHO: nothing; SB TTYPE SEND: IS "Zimodem"
+            255, 250, 24, 0, b'Z', b'i', b'm', b'o', b'd', b'e', b'm', 255, 240,
+        ];
+        assert_eq!(answers, zimodem);
+    }
+
+    #[test]
+    fn a_return_s_nul_is_data_when_the_place_sends_in_binary() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            caller.write_all(&[b'A', b'\r', 0, 255, 251, 0]).unwrap();
+            let mut answer = [0; 3];
+            caller.read_exact(&mut answer).unwrap();
+            caller.write_all(&[b'B', b'\r', 0, b'!']).unwrap();
+            answer
+        });
+        let mut modem = Modem::new();
+        modem.send(format!("ATE0DT 127.0.0.1:{port}\r").as_bytes());
+        let came = wait_for(&mut modem, "!");
+        assert!(
+            came.contains("CONNECT 9600\r\nA\rB\r\0!"),
+            "its NUL telnet's, then binary's data: {came:?}"
+        );
+        until(&mut modem, |_| place.is_finished());
+        assert_eq!(place.join().unwrap(), [255, 253, 0], "DO BINARY");
+    }
+
+    #[test]
     fn zimodem_dials_telnet_with_t_and_a_dropped_dtr_hangs_up_with_s63_2() {
         let server = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = server.local_addr().unwrap().port();
@@ -404,12 +476,103 @@ mod tests {
         modem.dtr(false);
         assert_eq!(said(&mut modem), "NO CARRIER\r\n");
         assert!(!modem.carrier());
-        assert_eq!(place.join().unwrap(), [255, 253, 1], "telnet's, DO ECHO");
+        assert_eq!(place.join().unwrap(), [255, 254, 1], "Zimodem's, DONT ECHO");
         // Nobody there: no answer.
         let closed = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = closed.local_addr().unwrap().port();
         drop(closed);
         modem.send(format!("ATD\"127.0.0.1:{port}\"\r").as_bytes());
         assert_eq!(wait_for(&mut modem, "ANSWER\r\n"), "NO ANSWER\r\n");
+    }
+
+    #[test]
+    fn what_comes_is_held_back_in_the_network_past_a_few_frames_worth() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            //  far more than the modem holds: the rest waits in the network
+            let _ = caller.write_all(&vec![b'x'; 100_000]);
+            caller
+        });
+        let mut modem = Modem::new();
+        modem.send(format!("ATE0NET0DT127.0.0.1:{port}\r").as_bytes());
+        until(&mut modem, |modem| modem.carrier());
+        modem.to_machine.clear();
+        for _ in 0..200 {
+            modem.frame();
+            thread::sleep(Duration::from_millis(1));
+        }
+        //  9600 baud: four frames' worth is 64 bytes, so the least, 512
+        let held = modem.to_machine.len();
+        assert!((256..=512).contains(&held), "{held} held");
+        modem.to_machine.drain(..);
+        until(&mut modem, |modem| !modem.to_machine.is_empty());
+        drop(place);
+    }
+
+    #[test]
+    fn zimodem_keeps_places_in_its_phone_book_lists_them_and_dials_them_by_number() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            caller.write_all(b"HI").unwrap();
+            caller
+        });
+        let mut modem = Modem::zimodem();
+        let command = |modem: &mut Modem, line: &str| {
+            modem.send(format!("{line}\r").as_bytes());
+            said(modem)
+        };
+        assert_eq!(
+            command(&mut modem, "ATE0"),
+            "ATE0\r\nOK\r\n",
+            "echoed, then not"
+        );
+        let keep = format!("ATP\"5=127.0.0.1:{port},the test's place\"");
+        assert_eq!(command(&mut modem, &keep), "OK\r\n");
+        assert_eq!(
+            command(&mut modem, "ATPT\"64=bbs.example.org:6400\""),
+            "OK\r\n"
+        );
+        assert_eq!(
+            command(&mut modem, "ATP"),
+            format!(
+                "5               127.0.0.1:{port}\r\n64         t    bbs.example.org:6400\r\nOK\r\n"
+            ),
+            "by number; their modifiers; no notes"
+        );
+        assert_eq!(
+            command(&mut modem, "ATP?"),
+            format!(
+                "5               127.0.0.1:{port} (the test's place)\r\n\
+                 64         t    bbs.example.org:6400 ()\r\nOK\r\n"
+            ),
+            "with their notes"
+        );
+        assert_eq!(
+            command(&mut modem, "ATP64"),
+            "64         t    bbs.example.org:6400\r\nOK\r\n"
+        );
+        for wrong in [
+            "ATP\"x=host:23\"",
+            "ATP\"1234567890=host:23\"",
+            "ATP\"6=host\"",
+            "ATP\"6=host:telnet\"",
+            "ATP\"6=DELETE\"",
+            "ATD6",
+        ] {
+            assert_eq!(command(&mut modem, wrong), "ERROR\r\n", "{wrong}");
+        }
+        assert_eq!(command(&mut modem, "ATP\"64=DELETE\""), "OK\r\n");
+        assert_eq!(command(&mut modem, "AT&F"), "OK\r\n");
+        modem.send(b"ATE0D5\r");
+        let came = wait_for(&mut modem, "HI");
+        assert!(
+            came.ends_with("CONNECT 1\r\nHI"),
+            "kept past AT&F: {came:?}"
+        );
+        drop(place);
     }
 }

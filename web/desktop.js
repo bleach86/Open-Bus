@@ -134,6 +134,13 @@ export const setSavesFolder = (path) => invoke('set_saves_folder', { path });
 /// `kinds` deleted, what's left after.
 export const gameSaves = (machine) => invoke('game_saves', { machine: pathed(machine) });
 export const clearGameSaves = (machine, kinds) => invoke('clear_game_saves', { machine: pathed(machine), kinds });
+
+/// The X16's files, one folder on every X16 card as FILES: `{ folder,
+/// chosen }`; chosen (`null`, the default again); opened in the file
+/// manager.
+export const x16Files = () => invoke('x16_files');
+export const setX16Files = (path) => invoke('set_x16_files', { path });
+export const openX16Files = () => invoke('open_x16_files');
 export const folderFiles = (folder) => invoke('folder_files', { folder });
 export const hide = (path) => invoke('forget_path', { path });
 
@@ -141,6 +148,13 @@ export const hide = (path) => invoke('forget_path', { path });
 export const settings = () => invoke('library_settings');
 /// The app's version, as its Cargo.toml has it.
 export const appVersion = () => window.__TAURI__.app.getVersion();
+/// A newer Open Bus on GitHub: `{ version, notes }`, or null (always, on
+/// Android); and it installed, the app started again as it.
+export const updateCheck = () => invoke('update_check');
+export const updateInstall = () => invoke('update_install');
+/// The update's download, as it goes: `told({ got, total })`, in bytes, the
+/// total null if it isn't known.
+export const whenUpdateProgresses = (told) => listen('update-progress', ({ payload }) => told(payload));
 /// A folder no longer looked in, and its games gone from the library.
 export async function removeFolder(path) {
     await invoke('remove_folder', { path });

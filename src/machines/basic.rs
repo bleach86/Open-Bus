@@ -1,5 +1,6 @@
 //! This machine: the flat 64K, a ROM at its top if it has one, and the
-//! terminal at 0xFFF8 and 0xFFF9; it runs Microsoft BASIC.
+//! terminal at 0xFFF8 and 0xFFF9; 0xFFF7, written, turns it off; it runs
+//! Microsoft BASIC.
 
 use crate::cpu::CPU;
 use crate::cpu::bus::Bus;
@@ -16,6 +17,7 @@ enum SystemRegister {
     PowerOnMsHigher = 0xFFF2,
     PowerOnMsHighest = 0xFFF3,
     UptimeLatch = 0xFFF4,
+    PowerOff = 0xFFF7,
     TerminalOutput = 0xFFF8,
     TerminalInput = 0xFFF9,
 }
@@ -30,6 +32,7 @@ impl TryFrom<u16> for SystemRegister {
             0xFFF2 => Ok(Self::PowerOnMsHigher),
             0xFFF3 => Ok(Self::PowerOnMsHighest),
             0xFFF4 => Ok(Self::UptimeLatch),
+            0xFFF7 => Ok(Self::PowerOff),
             0xFFF8 => Ok(Self::TerminalOutput),
             0xFFF9 => Ok(Self::TerminalInput),
             _ => Err(()),
@@ -106,6 +109,15 @@ impl Memory {
 
 impl Bus for Memory {
     fn read(&mut self, addr: u16) -> u8 {
+        // Ctrl-C typed: the key waiting, whatever else is, as BASIC looks
+        // for it there alone, between statements.
+        if addr == 0xFFF9
+            && let Some(terminal) = self.terminal.as_ref()
+            && terminal.take_break()
+        {
+            self.data[0xFFF9] = 0x03;
+        }
+
         // The terminal's key: the next typed, once the last has been taken
         // (written back 0).
         if addr == 0xFFF9
@@ -138,6 +150,11 @@ impl Bus for Memory {
     fn write(&mut self, addr: u16, value: u8) {
         if let Some(log) = &mut self.bus_log {
             log.push((addr, value, true));
+        }
+        // Written, with a terminal attached: the machine turned off, as
+        // BASIC's line editor asks, Q or QUIT typed at its prompt.
+        if addr == SystemRegister::PowerOff as u16 && self.terminal.is_some() {
+            crate::host::terminal::power_off();
         }
         if self.rom_start.is_some_and(|start| addr >= start)
             && addr != 0xFFF8
@@ -181,10 +198,16 @@ impl fmt::UpperHex for Memory {
     }
 }
 
+/// Its speed: a megahertz, as a 6502 computer of BASIC's day ran at. Its
+/// output, a program printing in a loop, comes as fast as such a machine's
+/// did, which a terminal on a 9600 baud line can follow.
+pub const CLOCK_HZ: u32 = 1_000_000;
+
 /// This machine run, with BASIC: its ROM the top 16K, vectors and all; RAM
-/// below it; the terminal attached.
+/// below it; the terminal attached; at a megahertz.
 pub fn run(rom_opt: Option<&str>, with_terminal: bool) {
     let mut cpu = CPU::new();
+    cpu.clock_hz = CLOCK_HZ;
 
     let rom: Vec<u8> = if let Some(rom_path) = rom_opt {
         std::fs::read(rom_path).expect("rom file not found")
@@ -204,6 +227,8 @@ pub fn run(rom_opt: Option<&str>, with_terminal: bool) {
 
     if with_terminal {
         cpu.memory.terminal = Some(Terminal::new());
+        // BASIC ends its lines with CR LF itself.
+        crate::host::terminal::raw_output();
     }
     cpu.memory.power_on = Some(Instant::now());
 

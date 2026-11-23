@@ -9,6 +9,7 @@ use std::collections::VecDeque;
 use std::io::{IsTerminal, Read, Write, stdin, stdout};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+use std::time::{Duration, Instant};
 
 /// F1 to F12, as the terminal sends them.
 const FUNCTION_KEYS: [&[u8]; 12] = [
@@ -33,6 +34,15 @@ const RESET_FRAMES: u32 = 6;
 /// The function keys pressed, by number, not yet taken.
 static FUNCTION_KEYS_PRESSED: Mutex<VecDeque<u8>> = Mutex::new(VecDeque::new());
 
+const CTRL_C: u8 = 0x03;
+
+/// Whether `byte`, typed after `last`, is a key: not the line feed or NUL
+/// a telnet client sends after a return as the end of a line, which would
+/// be a second key and sit waiting where a machine looks for Ctrl-C.
+pub fn typed(last: u8, byte: u8) -> bool {
+    !(last == b'\r' && matches!(byte, b'\n' | 0))
+}
+
 #[derive(Default, Clone, Debug)]
 pub struct Terminal {
     rx_buffer: Arc<Mutex<VecDeque<u8>>>,
@@ -56,19 +66,24 @@ impl Terminal {
 
                 // A key at a time and not echoed: the machine echoes what it
                 // reads. Ctrl-C comes in as a key too, for the machine;
-                // Ctrl-D turns it off.
-                stty(&["-icanon", "-echo", "-isig"]);
+                // Ctrl-D turns it off. Return as a return, not a line feed.
+                stty(&["-icanon", "-echo", "-isig", "-icrnl"]);
 
                 let rx_buffer = Arc::new(Mutex::new(VecDeque::new()));
                 let rx_clone = Arc::clone(&rx_buffer);
 
                 // Spawn a thread to read stdin asynchronously
                 thread::spawn(move || {
+                    let mut last = 0;
                     for b in stdin().lock().bytes().map_while(Result::ok) {
                         if b == 0x04 {
                             // Ctrl-D: off
-                            stty(&["icanon", "echo", "isig"]);
-                            std::process::exit(0);
+                            power_off();
+                        }
+                        let is_key = typed(last, b);
+                        last = b;
+                        if !is_key {
+                            continue;
                         }
                         let mut rx = rx_clone.lock().unwrap();
                         rx.push_back(b);
@@ -109,6 +124,31 @@ impl Terminal {
     /// The next function key pressed, by its number, 1 to 12.
     pub fn function_key(&self) -> Option<u8> {
         FUNCTION_KEYS_PRESSED.lock().unwrap().pop_front()
+    }
+
+    /// Whether Ctrl-C's been typed since it was last asked: the keys typed
+    /// before it, and it, taken, as a break throws away what's typed ahead.
+    /// For a machine that looks for Ctrl-C only in the key waiting, which a
+    /// key typed before it would otherwise hide.
+    pub fn take_break(&self) -> bool {
+        let mut rx = self.rx_buffer.lock().unwrap();
+        let Some(at) = rx.iter().position(|&b| b == CTRL_C) else {
+            return false;
+        };
+        rx.drain(..=at);
+        true
+    }
+
+    /// Ctrl-C typed, as the reader of stdin notes it.
+    #[cfg(test)]
+    pub fn type_break(&self) {
+        self.rx_buffer.lock().unwrap().push_back(CTRL_C);
+    }
+
+    /// A key typed, for tests.
+    #[cfg(test)]
+    pub fn type_key(&self, key: u8) {
+        self.rx_buffer.lock().unwrap().push_back(key);
     }
 }
 
@@ -172,14 +212,50 @@ impl Display for Terminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         if self.first {
-            stty(&["icanon", "echo", "isig"]);
+            stty(&RESTORE);
         }
     }
 }
+
+/// The machine turned off, at once, even with output held up (a door's
+/// caller behind): the terminal put back without waiting for it to drain.
+pub fn power_off() -> ! {
+    stty_soon(&RESTORE);
+    std::process::exit(0)
+}
+
+/// What the machine writes, sent as it is: its own CR LF ends its lines,
+/// the terminal adding no CR to the LF. A CR too many is a blank line to a
+/// terminal that takes CR as a new line, as ROMTERM does, behind a BBS that
+/// makes a door's LF CR LF itself.
+pub fn raw_output() {
+    stty(&["-opost"]);
+}
+
+/// The host terminal's modes as they were.
+const RESTORE: [&str; 5] = ["icanon", "echo", "isig", "icrnl", "opost"];
 
 /// Set the host terminal's modes; nothing to set when stdin isn't one.
 fn stty(settings: &[&str]) {
     if stdin().is_terminal() {
         let _ = std::process::Command::new("stty").args(settings).status();
+    }
+}
+
+/// Set them, waiting a fifth of a second at most: stty waits for what's
+/// been written to be sent, which may not be soon.
+fn stty_soon(settings: &[&str]) {
+    if !stdin().is_terminal() {
+        return;
+    }
+    let Ok(mut child) = std::process::Command::new("stty").args(settings).spawn() else {
+        return;
+    };
+    let until = Instant::now() + Duration::from_millis(200);
+    while Instant::now() < until {
+        if let Ok(Some(_)) = child.try_wait() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
     }
 }

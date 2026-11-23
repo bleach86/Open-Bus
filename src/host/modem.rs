@@ -22,7 +22,8 @@
 //! Online, what the machine sends goes to the place, and what comes back
 //! to the machine, the carrier up while it lasts. Telnet's: its commands
 //! answered (no to all it's asked, but its binary, its echo and its
-//! suppressing of go-ahead), $FF doubled, a return's NUL left out. `+++`,
+//! suppressing of go-ahead), $FF doubled, a return's NUL left out unless
+//! the place sends in binary. `+++`,
 //! with a second's quiet before it and after, back to the command mode,
 //! still connected (the `+`s sent on, as a Hayes modem sends them). The
 //! place gone, `NO CARRIER`, the carrier dropped.
@@ -30,7 +31,12 @@
 //! Or, `Modem::zimodem`, Zimodem's (Bo Zimmerman's firmware for WiFi
 //! modems, as the X16's network card has on its ESP32), as its README and
 //! source have it: `ATD"host:port"`, the place in quotes, over plain TCP,
-//! telnet's only with `T` (`ATDT"host:port"`) and S62 not 0; with `E`,
+//! telnet's only with `T` (`ATDT"host:port"`) and S62 not 0, its telnet
+//! Zimodem's own: no to every option but the terminal type (`WILL` and
+//! `DO` answered `DONT` and `WONT` each time they come, `DONT` with
+//! `WONT`), the type "Zimodem" whenever it's asked, nothing asked itself,
+//! and nothing taken out but its commands, $FF doubled each way (a
+//! return's NUL comes through, so XMODEM's blocks do); with `E`,
 //! what's typed echoed online, `X`, XON and XOFF. `CONNECT 1`, the
 //! connection's number (`CONNECT` alone with `X0`); a place that isn't
 //! there, `NO ANSWER`. Its flow control `F`: `F0` the machine's RTS (as it
@@ -41,10 +47,18 @@
 //! S2 the escape's character; S46 and S48 its DCD and CTS, as they're up
 //! (0) or the other way round (1), always up (2) or never (3); S63=2, DTR
 //! dropped hanging up. `+++` hangs up, as it does a place dialled. Its
-//! WiFi is the host's network, so `ATW`, `ATB` and `AT+CONFIG` change
-//! nothing; its phone book, listening (`ATA`), packets (`ATC`, `ATT`),
-//! downloads (`AT&G`), SSH and PETSCII aren't here.
+//! phone book (`host::phone_book`): `ATP"5=host:port,note"` keeps a place
+//! as 5, with the dial modifiers before the quote (`ATPT"..."`, telnet's);
+//! `ATP` lists them, `ATP?` with their notes; `ATP"5=DELETE"`; `ATD5`
+//! dials it. `AT&F` leaves it be, which Zimodem's doesn't, so a program
+//! setting the modem up loses nobody's places. Its WiFi is the host's
+//! network, so `ATW`, `ATB` and `AT+CONFIG` change nothing; listening
+//! (`ATA`), packets (`ATC`, `ATT`), downloads (`AT&G`), SSH and PETSCII
+//! aren't here.
 
+use crate::host::phone_book::{self, Entry, PhoneBook};
+#[cfg(not(target_arch = "wasm32"))]
+use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::VecDeque;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{ErrorKind, Read, Write};
@@ -63,6 +77,17 @@ const GUARD_FRAMES: u32 = 60;
 #[cfg(not(target_arch = "wasm32"))]
 const DIAL_TIME: Duration = Duration::from_secs(20);
 
+/// What a modem's buffer holds of what's come for the machine: frames'
+/// worth at the port's rate, or this many bytes, if that's more.
+#[cfg(not(target_arch = "wasm32"))]
+const RECEIVE_BUFFER_FRAMES: usize = 4;
+#[cfg(not(target_arch = "wasm32"))]
+const RECEIVE_BUFFER_LEAST: usize = 512;
+/// The network's receive buffer for the modem's socket, in bytes: small,
+/// enough for 80K a second over a tenth of a second's round trip.
+#[cfg(not(target_arch = "wasm32"))]
+const SOCKET_RECEIVE_BUFFER: usize = 8192;
+
 /// Software flow control's pause and go on: Ctrl-S and Ctrl-Q.
 const XOFF: u8 = 0x13;
 const XON: u8 = 0x11;
@@ -79,6 +104,9 @@ const SE: u8 = 240;
 const BINARY: u8 = 0;
 const ECHO: u8 = 1;
 const SUPPRESS_GO_AHEAD: u8 = 3;
+/// The terminal type: Zimodem's only yes, and what it says it is.
+const TERMINAL_TYPE: u8 = 24;
+const ZIMODEM_TERMINAL: &[u8] = b"Zimodem";
 
 /// Its results, as words and as numbers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,9 +152,11 @@ enum Telnet {
     Command,
     /// An option's asked for or offered: WILL, WONT, DO or DONT.
     Option(u8),
-    /// A subnegotiation, to its end; and an IAC in it.
-    Sub,
-    SubCommand,
+    /// A subnegotiation: its option next; then the rest, to its end; and
+    /// an IAC in it.
+    SubOption,
+    Sub(u8),
+    SubCommand(u8),
 }
 
 /// The connection, once it's made; or being made.
@@ -174,6 +204,9 @@ pub struct Modem {
     /// never, as a Hayes modem's online echo; else as telnet has it.
     far_echoes: bool,
     online_echo: Option<bool>,
+    /// Whether the place sends in binary (`WILL BINARY`, said yes to):
+    /// then a return's NUL is its data, not telnet's.
+    far_binary: bool,
     /// Zimodem's commands, not Hayes's.
     zimodem: bool,
     /// Zimodem's flow control by the machine's RTS (`F0`); the end of its
@@ -186,6 +219,39 @@ pub struct Modem {
     registers: [u8; 64],
     dtr: bool,
     connections: u32,
+    /// Zimodem's phone book (`ATP`), kept where the host says.
+    pub phone_book: PhoneBook,
+}
+
+/// The number in the phone book that's dialled, if what's dialled is a
+/// number: digits, and any of `-@,;` (Zimodem's, between them); `None`
+/// in it if it's too long to be one kept.
+fn dialled_number(place: &str) -> Option<Option<u32>> {
+    let a_number = place.bytes().any(|c| c.is_ascii_digit())
+        && place
+            .bytes()
+            .all(|c| c.is_ascii_digit() || b"-@,;".contains(&c));
+    if !a_number {
+        return None;
+    }
+    let digits: String = place.chars().filter(char::is_ascii_digit).collect();
+    Some(
+        digits
+            .parse()
+            .ok()
+            .filter(|_| digits.len() <= phone_book::DIGITS),
+    )
+}
+
+/// Whether two sets of dial modifiers are the same, in any order.
+fn same_modifiers(these: &str, those: &str) -> bool {
+    let sorted = |modifiers: &str| {
+        let mut letters: Vec<char> = modifiers.to_ascii_lowercase().chars().collect();
+        letters.sort_unstable();
+        letters.dedup();
+        letters
+    };
+    sorted(these) == sorted(those)
 }
 
 impl Default for Modem {
@@ -216,6 +282,7 @@ impl Modem {
             held: false,
             far_echoes: false,
             online_echo: None,
+            far_binary: false,
             zimodem: false,
             hardware_flow: false,
             eol: b"\r\n",
@@ -223,6 +290,7 @@ impl Modem {
             registers: [0; 64],
             dtr: false,
             connections: 0,
+            phone_book: PhoneBook::default(),
         }
     }
 
@@ -543,17 +611,19 @@ impl Modem {
                         } else {
                             self.result(Result::Error);
                         }
-                    } else if modifiers.contains(&b'S') || place.bytes().all(|c| c.is_ascii_digit())
-                    {
-                        // SSH, or a number in its phone book: not here.
-                        self.result(Result::Error);
-                    } else {
-                        self.telnet = modifiers.contains(&b'T') && self.registers[62] != 0;
-                        self.online_echo = Some(modifiers.contains(&b'E'));
-                        if modifiers.contains(&b'X') {
-                            self.xon_xoff = true;
+                    } else if let Some(number) = dialled_number(&place) {
+                        // A number: its place in the phone book, dialled
+                        // with the modifiers kept with it, not these.
+                        match number.and_then(|number| self.phone_book.find(number)) {
+                            Some(entry) => {
+                                let modifiers = entry.modifiers.to_ascii_uppercase().into_bytes();
+                                let place = entry.place.clone();
+                                self.zimodem_dial(&place, &modifiers);
+                            }
+                            None => self.result(Result::Error),
                         }
-                        self.dial(&place.to_ascii_lowercase());
+                    } else {
+                        self.zimodem_dial(&place, &modifiers);
                     }
                     return;
                 }
@@ -598,9 +668,27 @@ impl Modem {
                         self.say("ONLINE BY THE HOST'S NETWORK");
                     }
                 },
-                // Its WiFi, its baud rate, its phone book: the host's, the
-                // port's, none.
-                b'W' | b'B' | b'P' => {
+                b'P' => {
+                    let mut modifiers = String::new();
+                    while let Some(
+                        &modifier @ (b'E' | b'X' | b'P' | b'R' | b'T' | b'S' | b'+' | b','),
+                    ) = line.get(at)
+                    {
+                        modifiers.push(modifier.to_ascii_lowercase() as char);
+                        at += 1;
+                    }
+                    let value = quoted(&mut at).unwrap_or_else(|| {
+                        let rest = String::from_utf8_lossy(&line[at..]).into_owned();
+                        at = line.len();
+                        rest
+                    });
+                    if !self.phone_book_command(&value, &modifiers) {
+                        self.result(Result::Error);
+                        return;
+                    }
+                }
+                // Its WiFi, its baud rate: the host's, the port's.
+                b'W' | b'B' => {
                     while matches!(line.get(at), Some(b'P' | b'T' | b'E' | b'X')) {
                         at += 1;
                     }
@@ -674,6 +762,93 @@ impl Modem {
         self.result(Result::Ok);
     }
 
+    /// A place dialled, Zimodem's way, with its dial `modifiers`: `T`,
+    /// telnet's, if S62 isn't 0; `E`, what's typed echoed online; `X`, XON
+    /// and XOFF; `S`, SSH's, which isn't here.
+    fn zimodem_dial(&mut self, place: &str, modifiers: &[u8]) {
+        if modifiers.contains(&b'S') {
+            self.result(Result::Error);
+            return;
+        }
+        self.telnet = modifiers.contains(&b'T') && self.registers[62] != 0;
+        self.online_echo = Some(modifiers.contains(&b'E'));
+        if modifiers.contains(&b'X') {
+            self.xon_xoff = true;
+        }
+        self.dial(&place.to_ascii_lowercase());
+    }
+
+    /// Zimodem's `ATP`, its phone book, with `value` and the dial
+    /// `modifiers` before it: whether it's done, as it's not with an
+    /// ERROR.
+    /// - No value, a number or a character (`ATP?`): the entries listed, a
+    ///   number's alone, those with these modifiers if there are any; their
+    ///   notes too, but for a number or no value.
+    /// - `5=host:port,note`: kept as 5, with these modifiers, over any 5
+    ///   there was; the port digits, if it's there.
+    /// - `5=DELETE`: 5 gone.
+    fn phone_book_command(&mut self, value: &str, modifiers: &str) -> bool {
+        let a_number = value.bytes().all(|c| c.is_ascii_digit() || c == b'-');
+        if a_number || value.len() == 1 {
+            let only: Option<u32> = if a_number && !value.is_empty() {
+                let digits: String = value.chars().filter(char::is_ascii_digit).collect();
+                digits.parse().ok().filter(|&number| number != 0)
+            } else {
+                None
+            };
+            let lines: Vec<String> = self
+                .phone_book
+                .entries()
+                .iter()
+                .filter(|entry| only.is_none_or(|number| entry.number == number))
+                .filter(|entry| modifiers.is_empty() || same_modifiers(modifiers, &entry.modifiers))
+                .map(|entry| {
+                    let mut line = format!(
+                        "{:<10} {:<4} {}",
+                        entry.number, entry.modifiers, entry.place
+                    );
+                    if !a_number {
+                        line += &format!(" ({})", entry.note);
+                    }
+                    line
+                })
+                .collect();
+            for line in lines {
+                self.to_machine.extend(line.bytes());
+                self.to_machine.extend(self.eol);
+            }
+            return true;
+        }
+        let Some((number, rest)) = value.split_once('=') else {
+            return false;
+        };
+        if number.len() > phone_book::DIGITS || !number.bytes().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+        let number = number.parse().unwrap_or(0);
+        if rest == "DELETE" || rest == "delete" {
+            return self.phone_book.delete(number);
+        }
+        let Some(colon) = rest.find(':') else {
+            return false;
+        };
+        let (place, note) = match rest[colon..].find(',') {
+            Some(comma) => (&rest[..colon + comma], &rest[colon + comma + 1..]),
+            None => (rest, ""),
+        };
+        let port = &place[colon + 1..];
+        if port.len() > phone_book::DIGITS || !port.bytes().all(|c| c.is_ascii_digit()) {
+            return false;
+        }
+        self.phone_book.add(Entry {
+            number,
+            place: place.to_string(),
+            modifiers: modifiers.to_string(),
+            note: note.to_string(),
+        });
+        true
+    }
+
     /// Zimodem's flow control `value`: by RTS if it's one of `rts`, XON and
     /// XOFF if it's one of `xon`, else none.
     fn flow_control<const R: usize, const X: usize>(
@@ -737,7 +912,18 @@ impl Modem {
                     let address = addresses
                         .next()
                         .ok_or_else(|| std::io::Error::from(ErrorKind::NotFound))?;
-                    TcpStream::connect_timeout(&address, DIAL_TIME)
+                    // Its receive buffer small, set before it connects (the
+                    // window it offers is set then): what the modem hasn't
+                    // room for waits at the other end, not in this
+                    // computer's network buffers, a hundred K or more.
+                    let socket = Socket::new(
+                        Domain::for_address(address),
+                        Type::STREAM,
+                        Some(Protocol::TCP),
+                    )?;
+                    let _ = socket.set_recv_buffer_size(SOCKET_RECEIVE_BUFFER);
+                    socket.connect_timeout(&address.into(), DIAL_TIME)?;
+                    Ok(TcpStream::from(socket))
                 });
                 let _ = sent.send(connected);
             });
@@ -817,6 +1003,14 @@ impl Modem {
         self.connection();
     }
 
+    /// Between frames: the network's sending and taking only, as a modem
+    /// does all the time; its timing (the escape's guard) left to the
+    /// frames.
+    pub fn poll(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.connection();
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn connection(&mut self) {
         if let Some(Line::Dialling(answered)) = &self.line {
@@ -827,6 +1021,7 @@ impl Modem {
                     self.line = Some(Line::Up(stream));
                     self.online = true;
                     self.far_echoes = false;
+                    self.far_binary = false;
                     self.quiet_frames = 0;
                     self.connections += 1;
                     self.result(Result::Connect);
@@ -861,10 +1056,22 @@ impl Modem {
                 Err(_) => gone = true,
             }
         }
+        // What's come, as its buffer has room: a few frames of it at the
+        // port's rate, the rest left in the network, for its flow control to
+        // hold back at the other end. A machine slower than its port (a
+        // terminal program drawing its screen) takes it slower still; with
+        // more held, a place's output could be minutes ahead of the
+        // machine, a break or a key answered only once it was all through.
+        let most = (self.rate as usize / 10 / 60 * RECEIVE_BUFFER_FRAMES).max(RECEIVE_BUFFER_LEAST);
+        let room = most.saturating_sub(self.to_machine.len());
         let mut buffer = [0; 4096];
         let mut came = Vec::new();
         loop {
-            match stream.read(&mut buffer) {
+            let want = (room - came.len()).min(buffer.len());
+            if want == 0 {
+                break;
+            }
+            match stream.read(&mut buffer[..want]) {
                 Ok(0) => {
                     gone = true;
                     break;
@@ -895,9 +1102,12 @@ impl Modem {
             self.to_machine.push_back(byte);
             return;
         }
+        // A return's NUL, telnet's (RFC 854), left out; not in binary
+        // (RFC 856), nor ever by Zimodem, which leaves all data be.
+        let drops_nul = !self.zimodem && !self.far_binary;
         self.taking = match (self.taking, byte) {
             (Telnet::Data | Telnet::Return, IAC) => Telnet::Command,
-            (Telnet::Return, 0) => Telnet::Data,
+            (Telnet::Return, 0) if drops_nul => Telnet::Data,
             (Telnet::Data | Telnet::Return, byte) => {
                 self.to_machine.push_back(byte);
                 if byte == b'\r' {
@@ -911,24 +1121,57 @@ impl Modem {
                 Telnet::Data
             }
             (Telnet::Command, WILL | WONT | DO | DONT) => Telnet::Option(byte),
-            (Telnet::Command, SB) => Telnet::Sub,
+            (Telnet::Command, SB) => Telnet::SubOption,
             (Telnet::Command, _) => Telnet::Data,
             (Telnet::Option(asked), option) => {
                 self.answer(asked, option);
                 Telnet::Data
             }
-            (Telnet::Sub, IAC) => Telnet::SubCommand,
-            (Telnet::Sub, _) => Telnet::Sub,
-            (Telnet::SubCommand, SE) => Telnet::Data,
-            (Telnet::SubCommand, _) => Telnet::Sub,
+            (Telnet::SubOption, IAC) => Telnet::SubCommand(IAC),
+            (Telnet::SubOption, option) => Telnet::Sub(option),
+            (Telnet::Sub(option), IAC) => Telnet::SubCommand(option),
+            (Telnet::Sub(option), _) => Telnet::Sub(option),
+            (Telnet::SubCommand(option), SE) => {
+                self.subnegotiated(option);
+                Telnet::Data
+            }
+            (Telnet::SubCommand(option), _) => Telnet::Sub(option),
         };
+    }
+
+    /// A subnegotiation ended: Zimodem's terminal type sent, for one about
+    /// the terminal type (its `SEND` not looked at, as Zimodem doesn't).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    fn subnegotiated(&mut self, option: u8) {
+        if self.zimodem && option == TERMINAL_TYPE {
+            self.to_place.extend([IAC, SB, TERMINAL_TYPE, 0]);
+            self.to_place.extend_from_slice(ZIMODEM_TERMINAL);
+            self.to_place.extend([IAC, SE]);
+        }
     }
 
     /// Telnet's option `option` asked for (`DO`) or offered (`WILL`): yes
     /// to those it does, no to the rest. Told no (`DONT`, `WONT`), nothing
-    /// said back, as that could go back and forth for ever.
+    /// said back, as that could go back and forth for ever. Zimodem's
+    /// answers are its own: no to all but the terminal type, and `DONT`
+    /// answered with `WONT`, each time, as its firmware does.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn answer(&mut self, asked: u8, option: u8) {
+        if self.zimodem {
+            // Zimodem's: no to all but the terminal type, every time.
+            let reply = match (asked, option == TERMINAL_TYPE) {
+                (WILL, true) => DO,
+                (WILL, false) => DONT,
+                (DO, true) => WILL,
+                (DO | DONT, _) => WONT,
+                _ => return,
+            };
+            self.to_place.extend([IAC, reply, option]);
+            return;
+        }
+        if option == BINARY && matches!(asked, WILL | WONT) {
+            self.far_binary = asked == WILL;
+        }
         if option == ECHO && matches!(asked, WILL | WONT) {
             self.far_echoes = asked == WILL;
         }

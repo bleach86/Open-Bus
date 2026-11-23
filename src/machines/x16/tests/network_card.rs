@@ -1,7 +1,8 @@
 //! The X16's network card, through its bus: found by its scratch register,
 //! set up as x16net sets it; its modem's commands and results through the
 //! UART; a place dialled, DCD up as it's connected, what's sent and what
-//! comes back, at its rate; DTR dropped hanging up, DCD down after.
+//! comes back, at its rate; DTR dropped hanging up, DCD down after. An
+//! answer's turned round in milliseconds, between frames, as Zimodem's.
 
 #[cfg(test)]
 mod tests {
@@ -143,5 +144,43 @@ mod tests {
             [0, 0xFF, b'+', 13],
             "as they were sent"
         );
+    }
+
+    #[test]
+    fn a_byte_and_its_answer_go_between_frames_as_zimodem_s_do() {
+        let server = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = server.local_addr().unwrap().port();
+        let place = thread::spawn(move || {
+            let (mut caller, _) = server.accept().unwrap();
+            caller.set_nodelay(true).unwrap();
+            // An XMODEM sender's turn: an ACK, and the next block's start.
+            let mut ack = [0; 1];
+            caller.read_exact(&mut ack).unwrap();
+            caller.write_all(&[0x01]).unwrap();
+            let mut rest = Vec::new();
+            let _ = caller.read_to_end(&mut rest);
+            ack[0]
+        });
+        let mut x16 = x16();
+        set_up(&mut x16);
+        send(&mut x16, b"ATE0Q0S63=2\r");
+        received(&mut x16, |got, _| got.ends_with(b"OK\r\n"));
+        send(&mut x16, format!("ATQ1D\"127.0.0.1:{port}\"\r").as_bytes());
+        received(&mut x16, |_, x16| x16.read(UART + 6) & 0x80 != 0);
+        // No frame from here: only the CPU's time, a millisecond at a time.
+        send(&mut x16, &[0x06]);
+        let start = Instant::now();
+        loop {
+            assert!(start.elapsed() < Duration::from_secs(5), "never came");
+            cycles(&mut x16, 8000);
+            if x16.read(UART + 5) & 1 != 0 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(x16.read(UART), 0x01, "the answer, with no frame gone by");
+        x16.write(UART + 4, 0x26);
+        received(&mut x16, |_, x16| x16.read(UART + 6) & 0x80 == 0);
+        assert_eq!(place.join().unwrap(), 0x06);
     }
 }

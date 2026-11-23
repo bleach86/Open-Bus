@@ -993,6 +993,11 @@ fn command_line(app: &AppHandle, machine: &Value) -> Result<Vec<String>, String>
         // Its card where the emulator keeps it, one from before moved there.
         let card = x16_card(app, machine)?;
         line.push(format!("--sd={}", card.to_string_lossy()));
+        // The X16's files, on its card as FILES.
+        line.push(format!(
+            "--files={}",
+            x16_files_folder(app)?.to_string_lossy()
+        ));
         return Ok(line);
     }
     let library = folder(app, "library")?.to_string_lossy().into_owned();
@@ -1088,6 +1093,176 @@ fn x16_card(app: &AppHandle, machine: &Value) -> Result<PathBuf, String> {
         move_file(&before, &card)?;
     }
     Ok(card)
+}
+
+/// The X16's files: one folder on this computer, on every X16 program's
+/// card as its FILES folder (the emulator's `--files`): as Settings has
+/// chosen it, else "Open Bus/X16 Files" in Documents (or, with none, the
+/// app's own folder). On Android, the device's own Documents, not the one
+/// Tauri means, in the app's folder in Android/data, which since Android 11
+/// no file manager or other app can reach.
+fn x16_files_folder(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Some(chosen) = library(app).app_setting("x16 files")? {
+        return Ok(PathBuf::from(chosen));
+    }
+    #[cfg(target_os = "android")]
+    let base = PathBuf::from(android::OWN_STORAGE).join("Documents");
+    #[cfg(not(target_os = "android"))]
+    let base = app
+        .path()
+        .document_dir()
+        .or_else(|_| app.path().app_data_dir())
+        .map_err(|e| e.to_string())?;
+    Ok(base.join("Open Bus").join("X16 Files"))
+}
+
+/// The saves' folder and the X16's files' kept apart, neither in the
+/// other: the X16's files are put on every X16 card, and every card's among
+/// the saves.
+fn apart(saves: &Path, x16_files: &Path) -> Result<(), String> {
+    if saves.starts_with(x16_files) || x16_files.starts_with(saves) {
+        return Err(format!(
+            "The saves and the X16's files need folders of their own: {} and {} are one in the other.",
+            saves.display(),
+            x16_files.display()
+        ));
+    }
+    Ok(())
+}
+
+/// The X16's files folder: `{ folder, chosen }`.
+#[tauri::command(async)]
+fn x16_files(app: AppHandle) -> Result<Value, String> {
+    Ok(json!({
+        "folder": x16_files_folder(&app)?.to_string_lossy(),
+        "chosen": library(&app).app_setting("x16 files")?.is_some(),
+    }))
+}
+
+/// The X16's files folder chosen (`None`, the default again): what's in
+/// the one before stays there. `{ folder, chosen }` after.
+#[tauri::command(async)]
+fn set_x16_files(app: AppHandle, path: Option<String>) -> Result<Value, String> {
+    if let Some(path) = &path {
+        apart(&saves_root(&app)?, Path::new(path))?;
+    }
+    library(&app).set_app_setting("x16 files", path.as_deref())?;
+    x16_files(app)
+}
+
+/// The X16's files folder opened in the system's file manager, made if it
+/// isn't there yet.
+#[tauri::command(async)]
+fn open_x16_files(app: AppHandle) -> Result<(), String> {
+    let folder = x16_files_folder(&app)?;
+    fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    let opener = if cfg!(target_os = "windows") {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    Command::new(opener)
+        .arg(&folder)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("{opener}: {e}"))
+}
+
+/// How long the update check may take before it's given up. It's a few
+/// KB, and nothing waits for it: this only stops a server that answers and
+/// then says nothing from holding it for ever.
+#[cfg(desktop)]
+const UPDATE_CHECK_TIME: Duration = Duration::from_secs(30);
+/// How long the update's download may go with nothing coming before it's
+/// given up. However long the whole takes, on a slow line, is fine.
+#[cfg(desktop)]
+const UPDATE_STALL_TIME: Duration = Duration::from_secs(60);
+
+/// The newer Open Bus, if the latest release on GitHub is one. Its
+/// `latest.json` says, for each system and kind of install, where the update
+/// is and its signature, which the app's key (tauri.conf.json's
+/// `plugins.updater.pubkey`) has to check.
+#[cfg(desktop)]
+async fn newer(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Update>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    app.updater_builder()
+        .timeout(UPDATE_CHECK_TIME)
+        .build()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// A newer Open Bus: `{ version, notes }`, or null. Android has no updates
+/// of Tauri's: null.
+#[tauri::command(async)]
+async fn update_check(app: AppHandle) -> Result<Value, String> {
+    #[cfg(desktop)]
+    {
+        Ok(newer(&app).await?.map_or(
+            Value::Null,
+            |update| json!({ "version": update.version, "notes": update.body }),
+        ))
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        Ok(Value::Null)
+    }
+}
+
+/// The newer Open Bus downloaded, its signature checked, installed, and
+/// started in this one's place. On Windows its installer finishes it, this
+/// app having closed. The download's progress goes to the page
+/// (`update-progress`: `{ got, total }`, in bytes, the total if it's known);
+/// a download that stalls is given up, but not the install, which on Linux
+/// may wait for the user's password.
+#[tauri::command(async)]
+async fn update_install(app: AppHandle) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        let mut update = newer(&app).await?.ok_or("there's no newer version now")?;
+        // The check's time limit isn't the download's: that has none, only
+        // the stall's.
+        update.timeout = None;
+        let heard = std::sync::Arc::new(Mutex::new(Instant::now()));
+        let (seen, told) = (heard.clone(), app.clone());
+        let (mut got, mut said) = (0u64, None);
+        let download = update.download(
+            move |chunk, total| {
+                *seen.lock().unwrap() = Instant::now();
+                got += chunk as u64;
+                // Each percent, or each megabyte without a total.
+                let step = total.map_or(got >> 20, |total| got * 100 / total.max(1));
+                if said != Some(step) {
+                    said = Some(step);
+                    let _ = told.emit("update-progress", json!({ "got": got, "total": total }));
+                }
+            },
+            || {},
+        );
+        tokio::pin!(download);
+        let bytes = loop {
+            tokio::select! {
+                bytes = &mut download => break bytes.map_err(|e| e.to_string())?,
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                    if heard.lock().unwrap().elapsed() > UPDATE_STALL_TIME {
+                        return Err("the download stopped: nothing came for a minute".into());
+                    }
+                }
+            }
+        };
+        update.install(bytes).map_err(|e| e.to_string())?;
+        app.restart()
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        Err("there are no updates on Android: install the new APK".into())
+    }
 }
 
 /// `from` moved to `to`: renamed, or, from one disk to another, copied and
@@ -1265,6 +1440,7 @@ fn set_saves_folder(app: AppHandle, path: Option<String>) -> Result<Value, Strin
     let from = saves_root(&app)?;
     let default = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let to = path.map_or_else(|| default.clone(), PathBuf::from);
+    apart(&to, &x16_files_folder(&app)?)?;
     if to != from {
         let inside = |root: &Path, other: &Path| {
             ["saves", "states"]
@@ -1684,6 +1860,9 @@ pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder.manage(Windowed::default());
+    // Updates, from the releases on GitHub (`update_check`).
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     builder
         .setup(|app| {
             // The page glides a mouse wheel's steps itself. WebKitGTK's own
@@ -1725,6 +1904,11 @@ pub fn run() {
         .manage(Learning::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            update_check,
+            update_install,
+            x16_files,
+            set_x16_files,
+            open_x16_files,
             all_files,
             known_files,
             file_bytes,

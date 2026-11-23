@@ -54,6 +54,7 @@ pub mod host {
     #[cfg(not(target_arch = "wasm32"))]
     pub mod pads;
     pub mod page;
+    pub mod phone_book;
     pub mod run;
     pub mod save_state;
     pub mod saves;
@@ -74,9 +75,12 @@ pub mod host {
         mod modem;
         mod notice;
         mod page;
+        mod phone_book;
         mod run;
         mod sound;
         mod stats;
+        #[cfg(not(target_arch = "wasm32"))]
+        mod terminal;
         #[cfg(not(target_arch = "wasm32"))]
         mod window;
         mod zip;
