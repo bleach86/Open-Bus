@@ -68,11 +68,18 @@ const isX16Itself = (name) => name === X16_ROM;
 /// in the library: its tile's name then, and its title.
 const BUSTERM_TILE = 'busterm:get';
 const BUSTERM_TITLE = 'busterm';
+/// The covers of the X16's own two: the Commander X16's logo (public domain,
+/// on Wikimedia Commons as CommanderX16_logo_icon_rainbow.svg), and busterm's
+/// start screen, as it shows it.
+const X16_ART = 'images/x16.png';
+const BUSTERM_ART = 'images/busterm.png';
 /// The tiles that aren't a game's file: the X16 itself, and busterm to get.
 const isStandIn = (name) => isX16Itself(name) || name === BUSTERM_TILE;
-/// busterm in the library (its release's zip, or before Open Bus 0.4.3 its
-/// program alone) or a folder: its name, or undefined.
-const bustermFile = () => files.find((name) => /(^|[\\/])busterm\.(prg|zip)$/i.test(name));
+/// busterm, the app's own copy, which it fetched and keeps up to date: in the
+/// library, its release's zip (or before Open Bus 0.4.3 its program alone).
+/// Its name, or undefined. A folder's busterm is the folder's, a game like
+/// any, never written to; with only that, the app's is still offered.
+const bustermFile = () => files.find((name) => /(^|[\\/])busterm\.(prg|zip)$/i.test(name) && native?.isOwn(name));
 /// Where the X16's games' SD cards are kept, each of its game's name; and
 /// the X16's own.
 const X16_CARDS = 'x16 cards/';
@@ -699,15 +706,19 @@ function fillGames(wanted) {
     const matches = (name) =>
         versionsOf.get(name).some((version) => found(wanted, titled(version), version, knownOf(version)));
     versionsOf = new Map();
-    const games = files.filter(isGame);
+    // The app's own busterm on the X16's shelf alone, second: not one of
+    // the games, nor a version of a folder's busterm.
+    const ownBusterm = bustermFile();
+    const games = files.filter((name) => isGame(name) && name !== ownBusterm);
     for (const [system, name] of Object.entries(CONSOLES)) {
         const all = oneEach(games.filter((game) => systemOf(game) === system));
         const shown = arranged(system, all.filter(matches), titled, knownOf);
-        // The X16 itself, first, and in the app busterm: there even before
-        // their files are, which they offer to download.
+        // The X16 itself, first, and in the app busterm, second, whatever
+        // the order: there even before their files are, which they offer to
+        // download.
         if (system === 'x16') {
-            if (native && !bustermFile() && found(wanted, BUSTERM_TITLE, 'bbs terminal')) {
-                shown.unshift(BUSTERM_TILE);
+            if (native && found(wanted, BUSTERM_TITLE, 'bbs terminal')) {
+                shown.unshift(ownBusterm ?? BUSTERM_TILE);
             }
             if (found(wanted, X16_TITLE, 'basic')) {
                 shown.unshift(X16_ROM);
@@ -875,9 +886,12 @@ function gameTile(name, alone = false) {
     const button = document.createElement('button');
     button.className = 'play';
     const facts = factsOf.get(name);
-    const machine = { kind: systemOf(name), game: name };
+    // The app's own busterm: as its tile was before it was fetched.
+    const own = name === bustermFile();
+    const title = own ? BUSTERM_TITLE : titleOf(name);
+    const machine = { kind: own ? 'x16' : systemOf(name), game: name };
     button.dataset.tip = [
-        titleOf(name),
+        title,
         known?.developer,
         name,
         boardOf(facts),
@@ -890,10 +904,10 @@ function gameTile(name, alone = false) {
     // One the emulator says won't load, greyed out, and why it won't said.
     if (facts?.problem) {
         item.classList.add('unplayable');
-        button.onclick = () => say(`${titleOf(name)} won't load: ${facts.problem}.`, true);
+        button.onclick = () => say(`${title} won't load: ${facts.problem}.`, true);
     }
     // How many versions there are, on its cover's corner.
-    let art = cover(key, titleOf(name));
+    let art = own ? picture(BUSTERM_ART) : cover(key, title);
     if (versions.length > 1) {
         const badge = document.createElement('span');
         badge.className = 'versions';
@@ -903,8 +917,8 @@ function gameTile(name, alone = false) {
         box.append(art, badge);
         art = box;
     }
-    button.append(art, caption(titleOf(name), known, tagsOf(name)));
-    item.append(button, removeButton(name), starButton(machine, titleOf(name)));
+    button.append(art, caption(title, known, own ? 'BBS terminal' : tagsOf(name)));
+    item.append(button, removeButton(name), starButton(machine, title));
     return item;
 }
 
@@ -918,7 +932,7 @@ function bustermTile() {
     button.className = 'play';
     button.dataset.tip = `${BUSTERM_TITLE}\nA BBS terminal for the X16's modem, downloaded the first time`;
     button.onclick = () => getBusterm();
-    button.append(cover('', BUSTERM_TITLE), caption(BUSTERM_TITLE, null, 'BBS terminal'));
+    button.append(picture(BUSTERM_ART), caption(BUSTERM_TITLE, null, 'BBS terminal'));
     item.append(button);
     return item;
 }
@@ -958,7 +972,7 @@ let newerBusterm = null;
 /// one's, which may be somewhere new (in its own folder, both its files).
 async function updateBusterm(machine) {
     const update = newerBusterm;
-    if (!update || machine.kind !== 'x16' || machine.game !== bustermFile() || !native.isOwn(machine.game)) {
+    if (!update || machine.kind !== 'x16' || machine.game !== bustermFile()) {
         return machine;
     }
     newerBusterm = null;
@@ -987,7 +1001,7 @@ function x16Tile() {
     button.className = 'play';
     button.dataset.tip = `${X16_TITLE}\nBASIC, with an SD card of its own`;
     button.onclick = () => playGame({ kind: 'x16' });
-    button.append(cover('', X16_TITLE), caption(X16_TITLE, null, 'BASIC'));
+    button.append(picture(X16_ART), caption(X16_TITLE, null, 'BASIC'));
     item.append(button);
     return item;
 }
@@ -1243,6 +1257,18 @@ async function openGameSettings(name) {
         playGame(machine);
     };
     page('game-settings-close').onclick = () => dialog.close();
+    // Out of the library, as the tile's × does: here too, for a gamepad or
+    // a TV's remote, which never hover over a tile to show it.
+    const remove = page('game-remove');
+    const { verb, question } = removing(name, title);
+    remove.textContent = `${verb}…`;
+    remove.onclick = async () => {
+        dialog.close();
+        if (await sure(question)) {
+            await forget(name);
+            refresh();
+        }
+    };
     dialog.showModal();
     // A gamepad's on Play; a finger or the mouse, on nothing yet, not its
     // first choice ringed for no reason.
@@ -2323,13 +2349,7 @@ if (native) {
 function cover(key, title, media = '') {
     const url = covers.get(key);
     if (url) {
-        const image = document.createElement('img');
-        image.className = 'art';
-        image.src = url;
-        image.alt = '';
-        image.loading = 'lazy';
-        image.decoding = 'async';
-        return image;
+        return picture(url);
     }
     const blank = document.createElement('span');
     blank.className = `art blank ${media}`;
@@ -2340,6 +2360,17 @@ function cover(key, title, media = '') {
     const hue = [...title].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 360, 7);
     blank.style.setProperty('--hue', 180 + (hue % 170));
     return blank;
+}
+
+/// A cover from `url`.
+function picture(url) {
+    const image = document.createElement('img');
+    image.className = 'art';
+    image.src = url;
+    image.alt = '';
+    image.loading = 'lazy';
+    image.decoding = 'async';
+    return image;
 }
 
 /// Its title under it, and what's known: the year, the genre, the players;
