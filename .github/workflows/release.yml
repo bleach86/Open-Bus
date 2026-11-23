@@ -221,6 +221,8 @@ jobs:
           # The desktop app's update manifest, which it checks for a newer
           # version: on the latest release, it's where the app looks.
           tools/updater-manifest artifacts "$GITHUB_REF_NAME" > artifacts/latest.json
-          find artifacts -type f -print0 |
+          # The updates' signatures are in latest.json, where the app reads
+          # them: their .sig files aren't put on the release.
+          find artifacts -type f ! -name '*.sig' -print0 |
             xargs -0 gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
