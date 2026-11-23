@@ -64,6 +64,14 @@ const HIGH_SCORE_ROM = 'highscre.bin';
 const X16_ROM = 'x16-rom.bin';
 const X16_TITLE = 'Commander X16';
 const isX16Itself = (name) => name === X16_ROM;
+/// busterm, the X16's BBS terminal, on its shelf in the app even before it's
+/// in the library: its tile's name then, and its title.
+const BUSTERM_TILE = 'busterm:get';
+const BUSTERM_TITLE = 'busterm';
+/// The tiles that aren't a game's file: the X16 itself, and busterm to get.
+const isStandIn = (name) => isX16Itself(name) || name === BUSTERM_TILE;
+/// busterm in the library or a folder: its name, or undefined.
+const bustermFile = () => files.find((name) => /(^|[\\/])busterm\.prg$/i.test(name));
 /// Where the X16's games' SD cards are kept, each of its game's name; and
 /// the X16's own.
 const X16_CARDS = 'x16 cards/';
@@ -602,7 +610,12 @@ const boardOf = (facts) =>
         .replace(/^COMMANDER X16 /, 'Program ');
 
 /// A game's title, by what's known of it, else its file.
-const titleOf = (name) => (isX16Itself(name) ? X16_TITLE : (art.get(nesArt(name))?.title ?? plainTitle(name)));
+const titleOf = (name) =>
+    isX16Itself(name)
+        ? X16_TITLE
+        : name === BUSTERM_TILE
+          ? BUSTERM_TITLE
+          : (art.get(nesArt(name))?.title ?? plainTitle(name));
 
 /// What's known of a NES game: what a game list beside it said, else what's
 /// been learned of it from libretro's database.
@@ -689,9 +702,15 @@ function fillGames(wanted) {
     for (const [system, name] of Object.entries(CONSOLES)) {
         const all = oneEach(games.filter((game) => systemOf(game) === system));
         const shown = arranged(system, all.filter(matches), titled, knownOf);
-        // The X16 itself, first, once there's its ROM to start it.
-        if (system === 'x16' && files.includes(X16_ROM) && found(wanted, X16_TITLE, 'basic')) {
-            shown.unshift(X16_ROM);
+        // The X16 itself, first, and in the app busterm: there even before
+        // their files are, which they offer to download.
+        if (system === 'x16') {
+            if (native && !bustermFile() && found(wanted, BUSTERM_TITLE, 'bbs terminal')) {
+                shown.unshift(BUSTERM_TILE);
+            }
+            if (found(wanted, X16_TITLE, 'basic')) {
+                shown.unshift(X16_ROM);
+            }
         }
         showCount(`tab-${system}`, name, shown.length);
         shelves.set(system, shown);
@@ -888,6 +907,71 @@ function gameTile(name, alone = false) {
     return item;
 }
 
+/// busterm, before it's in the library: its latest release offered for
+/// download, from GitHub, and started once it's here.
+function bustermTile() {
+    const item = document.createElement('li');
+    item.className = 'tile';
+    item.dataset.game = BUSTERM_TILE;
+    const button = document.createElement('button');
+    button.className = 'play';
+    button.dataset.tip = `${BUSTERM_TITLE}\nA BBS terminal for the X16's modem, downloaded the first time`;
+    button.onclick = () => getBusterm();
+    button.append(cover('', BUSTERM_TITLE), caption(BUSTERM_TITLE, null, 'BBS terminal'));
+    item.append(button);
+    return item;
+}
+
+/// busterm downloaded, asked first, the X16's ROM too if it isn't here; and
+/// started.
+async function getBusterm() {
+    if (!files.includes(X16_ROM) && !(await getX16Rom())) {
+        return;
+    }
+    const question =
+        "busterm, a BBS terminal for the X16's modem, isn't in the library yet. Download its latest release from GitHub? It's about 40 KB.";
+    if (!(await native.ask(question))) {
+        return;
+    }
+    say('Downloading busterm…');
+    try {
+        await native.fetchBusterm();
+    } catch (problem) {
+        say(`Couldn't get busterm: ${problem}`, true);
+        return;
+    }
+    say('');
+    await refresh();
+    const name = bustermFile();
+    if (name) {
+        playGame({ kind: 'x16', game: name });
+    }
+}
+
+/// A newer busterm than the library's, `{ have, latest }`, as the app found
+/// as it started; offered when it's next played, once.
+let newerBusterm = null;
+
+/// busterm, about to be played: the library's copy brought up to date first,
+/// if there's a newer one and that's wanted.
+async function updateBusterm(machine) {
+    const update = newerBusterm;
+    if (!update || machine.kind !== 'x16' || machine.game !== bustermFile() || !native.isOwn(machine.game)) {
+        return;
+    }
+    newerBusterm = null;
+    if (!(await native.ask(`busterm ${update.latest} is out (you have ${update.have}). Update it first?`))) {
+        return;
+    }
+    say('Downloading busterm…');
+    try {
+        await native.fetchBusterm(true);
+        say(`busterm updated to ${update.latest}`);
+    } catch (problem) {
+        say(`busterm not updated: ${problem}`, true);
+    }
+}
+
 /// The X16 itself: started to BASIC, with a card of its own, blank to begin
 /// with and kept, and what's saved on it.
 function x16Tile() {
@@ -976,6 +1060,7 @@ async function playGame(machine) {
         return;
     }
     if (native) {
+        await updateBusterm(machine);
         playNatively(machine);
     } else if (machine.kind === 'x16') {
         const card = x16Card(machine.game);
@@ -1172,7 +1257,7 @@ const settingsOpen = () => page('game-settings').open;
 /// Start pressed on a NES game: its details.
 function settingsOfSelected() {
     const tile = padFocus ? padFocus.closest('.tile') : gamesShowing() && tiles.get(selectedGame);
-    if (tile?.dataset.game && !isX16Itself(tile.dataset.game)) {
+    if (tile?.dataset.game && !isStandIn(tile.dataset.game)) {
         openGameSettings(tile.dataset.game);
     }
 }
@@ -1479,7 +1564,7 @@ function padHints() {
     if (tile) {
         return [
             [A, 'Play'],
-            ...(tile.dataset.game && !isX16Itself(tile.dataset.game) ? [[start, 'Details']] : []),
+            ...(tile.dataset.game && !isStandIn(tile.dataset.game) ? [[start, 'Details']] : []),
             [select, 'Favourite'],
             ...(!padFocus && gamesShowing() ? [[triggers, 'Page']] : []),
             shelves,
@@ -2118,7 +2203,7 @@ function placeShelf(force = true) {
     list.style.minHeight = `${Math.max(0, filled * (row + down) - down)}px`;
     const inView = shelf.slice(first * columns, (first + count) * columns).map((name) => {
         if (!tiles.has(name)) {
-            tiles.set(name, isX16Itself(name) ? x16Tile() : gameTile(name));
+            tiles.set(name, isX16Itself(name) ? x16Tile() : name === BUSTERM_TILE ? bustermTile() : gameTile(name));
         }
         return tiles.get(name);
     });
@@ -4082,6 +4167,14 @@ showShelf(!hasGames() ? 'settings' : lastShelf && lastShelf !== 'settings' ? las
 // A newer version offered, once the library's showing.
 if (native && !native.android) {
     offerUpdate(false);
+}
+// Whether busterm has a newer release than the library's, found meanwhile,
+// never waited for: offered when it's next played.
+if (native) {
+    native
+        .bustermUpdate()
+        .then((update) => (newerBusterm = update))
+        .catch(() => {});
 }
 if (native) {
     // With nothing known yet, the folders may yet turn something up.

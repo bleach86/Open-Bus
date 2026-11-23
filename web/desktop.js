@@ -321,6 +321,17 @@ export async function fetchX16Rom() {
     return sorted;
 }
 
+/// busterm, the X16's BBS terminal: its latest release downloaded into the
+/// library (with `replace`, over the library's copy), as `sortRoms` has it;
+/// and whether there's a newer one than the library's, `{ have, latest }`.
+export async function fetchBusterm(replace = false) {
+    const sorted = await invoke('fetch_busterm', { replace });
+    const paths = new Set(sorted.kept.map(({ path }) => path));
+    change('library', sorted.kept, (path) => paths.has(path));
+    return sorted;
+}
+export const bustermUpdate = () => invoke('busterm_update');
+
 /// Whether it's the app on Android: with no folder picker fit for a TV, the
 /// page's own list of folders; and the gamepads the webview's.
 export const android = /Android/.test(navigator.userAgent);
