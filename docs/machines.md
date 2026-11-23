@@ -213,6 +213,13 @@ The address goes in quotes. `atdt` speaks telnet, which most BBSes want, and
 `ati` says which modem it is. Programs that use the card directly, such as
 [x16net](https://github.com/retrodores/x16net), work too.
 
+In the desktop and Android apps, the X16's shelf always has
+[busterm](https://github.com/bleach86/busterm), an open-source BBS terminal
+for the card. The first time you choose it, the app offers to download its
+latest release from GitHub into the library. When a newer one comes out, the
+app offers it the next time you start busterm. busterm's downloads and
+uploads go through the X16's `FILES` folder (above).
+
 Zimodem's phone book keeps places by number, so you can dial a BBS without
 typing its address each time. Save one once, with `t` before the quote for
 telnet:

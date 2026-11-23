@@ -279,6 +279,17 @@ impl Library {
         Ok(added)
     }
 
+    /// The file at `path`, written again, its new `size` known.
+    pub fn resize(&self, path: &str, size: u64) -> Result<(), String> {
+        let db = self.lock()?;
+        db.execute(
+            "UPDATE files SET size = ?2 WHERE path = ?1",
+            params![path, size as i64],
+        )
+        .map(|_| ())
+        .map_err(said)
+    }
+
     /// Every file found in a folder under `path` forgotten, as when a
     /// watcher sees it's gone: whether there were any.
     pub fn forget_under(&self, path: &Path) -> Result<bool, String> {
