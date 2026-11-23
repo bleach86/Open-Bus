@@ -12,6 +12,7 @@
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -19,6 +20,14 @@ use std::sync::{Mutex, MutexGuard};
 /// A file found: its path, and its size (kept as SQLite's integers are,
 /// signed, as no file's too big for).
 pub type Found = (String, u64);
+
+/// A game nothing's known of, as `unknown` lists it: its path, and its row
+/// in the library, its id and size then, to know it's the same file still
+/// when what's said of it comes.
+pub struct Listed {
+    pub path: String,
+    pub row: (i64, i64),
+}
 
 /// Where a file was found: the app's own `library`, or a folder added.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -272,6 +281,10 @@ impl Library {
                     .map_err(said)?
                     == 1;
             if put {
+                // Nothing known of a file new here, whatever was of one at
+                // its path before.
+                tx.execute("DELETE FROM facts WHERE path = ?1", [&path])
+                    .map_err(said)?;
                 added.push((path, size));
             }
         }
@@ -279,23 +292,29 @@ impl Library {
         Ok(added)
     }
 
-    /// The library's own file at `path`, gone from it: no longer found.
+    /// The library's own file at `path`, gone from it: no longer found, and
+    /// what was known of it forgotten.
     pub fn forget_own(&self, path: &str) -> Result<(), String> {
         let db = self.lock()?;
         db.execute("DELETE FROM files WHERE path = ?1 AND own = 1", [path])
+            .map_err(said)?;
+        db.execute("DELETE FROM facts WHERE path = ?1", [path])
             .map(|_| ())
             .map_err(said)
     }
 
-    /// The file at `path`, written again, its new `size` known.
+    /// The file at `path`, written again, its new `size` known, and what
+    /// was known of it before forgotten.
     pub fn resize(&self, path: &str, size: u64) -> Result<(), String> {
         let db = self.lock()?;
         db.execute(
             "UPDATE files SET size = ?2 WHERE path = ?1",
             params![path, size as i64],
         )
-        .map(|_| ())
-        .map_err(said)
+        .map_err(said)?;
+        db.execute("DELETE FROM facts WHERE path = ?1", [path])
+            .map(|_| ())
+            .map_err(said)
     }
 
     /// Every file found in a folder under `path` forgotten, as when a
@@ -476,29 +495,39 @@ impl Library {
 
     /// The console games found, a NES's, a 2600's or a 7800's, that nothing's known
     /// of by `emulator`, the one there is now, or not at the size they are
-    /// now.
-    pub fn unknown(&self, emulator: &str) -> Result<Vec<String>, String> {
+    /// now: each as it's found, for `learned`.
+    pub fn unknown(&self, emulator: &str) -> Result<Vec<Listed>, String> {
         let db = self.lock()?;
         let mut statement = db
             .prepare(
-                "SELECT files.path FROM files LEFT JOIN facts
+                "SELECT files.path, files.id, files.size FROM files LEFT JOIN facts
                      ON facts.path = files.path AND facts.size = files.size AND facts.emulator = ?1
                  WHERE facts.path IS NULL ORDER BY files.id",
             )
             .map_err(said)?;
         let rows = statement
-            .query_map([emulator], |row| row.get::<_, String>(0))
+            .query_map([emulator], |row| {
+                Ok(Listed {
+                    path: row.get(0)?,
+                    row: (row.get(1)?, row.get(2)?),
+                })
+            })
             .map_err(said)?;
-        let paths: Vec<String> = rows.collect::<Result<_, _>>().map_err(said)?;
-        Ok(paths
+        let listed: Vec<Listed> = rows.collect::<Result<_, _>>().map_err(said)?;
+        Ok(listed
             .into_iter()
-            .filter(|path| is_cartridge(path))
+            .filter(|one| is_cartridge(&one.path))
             .collect())
     }
 
     /// What `emulator` said of games, a line each, as `cpu_emu facts` says
     /// it, kept for the size each is now. Whether any were.
-    pub fn learned(&self, lines: &[String], emulator: &str) -> Result<bool, String> {
+    pub fn learned(
+        &self,
+        lines: &[String],
+        emulator: &str,
+        listed: &HashMap<String, (i64, i64)>,
+    ) -> Result<bool, String> {
         let mut db = self.lock()?;
         let tx = db.transaction().map_err(said)?;
         let mut any = false;
@@ -507,13 +536,21 @@ impl Library {
             let [crc, mapper, famicom, zapper, problem, path] = fields[..] else {
                 continue;
             };
-            let size: Option<i64> = tx
-                .query_row("SELECT size FROM files WHERE path = ?1", [path], |row| {
-                    row.get(0)
-                })
+            let row: Option<(i64, i64)> = tx
+                .query_row(
+                    "SELECT id, size FROM files WHERE path = ?1",
+                    [path],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
                 .optional()
                 .map_err(said)?;
-            let Some(size) = size else { continue };
+            // Only of the very file that was listed: not of one gone since,
+            // nor gone and found again, nor written again, which may have
+            // been read while it wasn't there ("No such file"). Those are
+            // left unknown, to be learned again.
+            let Some((_, size)) = row.filter(|row| listed.get(path) == Some(row)) else {
+                continue;
+            };
             tx.execute(
                 "INSERT OR REPLACE INTO facts
                      (path, size, crc, mapper, famicom, zapper, problem, emulator)
@@ -673,8 +710,71 @@ fn forget_under(db: &Connection, path: &Path) -> Result<bool, String> {
 mod tests {
     use super::{Found, Library, Section};
     use serde_json::json;
+    use std::collections::HashMap;
     use std::fs;
     use std::path::Path;
+
+    fn paths(library: &Library, emulator: &str) -> Vec<String> {
+        let unknown = library.unknown(emulator).unwrap();
+        unknown.into_iter().map(|one| one.path).collect()
+    }
+
+    fn listing(library: &Library, emulator: &str) -> HashMap<String, (i64, i64)> {
+        let unknown = library.unknown(emulator).unwrap();
+        unknown.into_iter().map(|one| (one.path, one.row)).collect()
+    }
+
+    #[test]
+    fn what_was_said_of_a_file_gone_or_written_again_since_its_listing_is_not_kept() {
+        let library = Library::in_memory().unwrap();
+        let busterm = "/data/library/BUSTERM.zip".to_string();
+        library
+            .add(Section::Library, vec![(busterm.clone(), 100)])
+            .unwrap();
+        // Written again in place, as an update is: what was read before isn't its.
+        let listed = listing(&library, "e1");
+        library.resize(&busterm, 120).unwrap();
+        let old = [format!(
+            "A247771C\tCOMMANDER X16 BUSTERM.PRG\t0\t0\t\t{busterm}"
+        )];
+        assert!(!library.learned(&old, "e1", &listed).unwrap());
+        assert_eq!(paths(&library, "e1"), std::slice::from_ref(&busterm));
+        // Gone since.
+        let listed = listing(&library, "e1");
+        library.forget_own(&busterm).unwrap();
+        assert!(!library.learned(&old, "e1", &listed).unwrap());
+        assert!(library.facts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_file_added_or_written_again_forgets_what_was_known_at_its_path() {
+        let library = Library::in_memory().unwrap();
+        let path = "/data/library/BUSTERM.zip".to_string();
+        library
+            .add(Section::Library, vec![(path.clone(), 100)])
+            .unwrap();
+        let said = [format!(
+            "\t\t0\t0\tNo such file or directory (os error 2)\t{path}"
+        )];
+        assert!(
+            library
+                .learned(&said, "e1", &listing(&library, "e1"))
+                .unwrap()
+        );
+        assert_eq!(library.facts().unwrap().len(), 1);
+        library.forget_own(&path).unwrap();
+        library
+            .add(Section::Library, vec![(path.clone(), 100)])
+            .unwrap();
+        assert!(library.facts().unwrap().is_empty(), "added again");
+        assert!(
+            library
+                .learned(&said, "e1", &listing(&library, "e1"))
+                .unwrap()
+        );
+        library.resize(&path, 100).unwrap();
+        assert!(library.facts().unwrap().is_empty(), "written again");
+    }
 
     fn found(path: &str, size: u64) -> Found {
         (path.to_string(), size)
@@ -741,13 +841,15 @@ mod tests {
     fn a_file_the_page_keeps_is_learned_of_and_again_if_its_replaced() {
         let library = Library::in_memory().unwrap();
         library.kept("/l/Galaga (USA).zip", 100).unwrap();
-        assert_eq!(library.unknown("e").unwrap(), ["/l/Galaga (USA).zip"]);
+        assert_eq!(paths(&library, "e"), ["/l/Galaga (USA).zip"]);
         let line = "1A0A3EB3\tATARI 7800 32K\t0\t0\t\t/l/Galaga (USA).zip".to_string();
-        library.learned(&[line], "e").unwrap();
+        library
+            .learned(&[line], "e", &listing(&library, "e"))
+            .unwrap();
         assert!(library.unknown("e").unwrap().is_empty());
         library.kept("/l/Galaga (USA).zip", 200).unwrap();
         assert_eq!(
-            library.unknown("e").unwrap(),
+            paths(&library, "e"),
             ["/l/Galaga (USA).zip"],
             "another in its place"
         );
@@ -897,17 +999,18 @@ mod tests {
             .replace(vec![found("/data/library/disksys.rom", 8192)], files)
             .unwrap();
         assert_eq!(
-            library.unknown("e1").unwrap(),
+            paths(&library, "e1"),
             ["/g/a.zip", "/g/b.nes"],
             "NES games only"
         );
+        let listed = listing(&library, "e1");
         let lines = [
             "52E2B5E0\tMAPPER 4 MMC3\t1\t0\t\t/g/a.zip".to_string(),
             "\t\t0\t0\tmapper 19, which isn't here yet\t/g/b.nes".to_string(),
             "garbled".to_string(),
             "00000000\tMAPPER 0 NROM\t0\t0\t\t/g/gone.nes".to_string(),
         ];
-        assert!(library.learned(&lines, "e1").unwrap());
+        assert!(library.learned(&lines, "e1", &listed).unwrap());
         assert!(library.unknown("e1").unwrap().is_empty());
         assert_eq!(
             library.facts().unwrap(),
@@ -921,10 +1024,10 @@ mod tests {
         library
             .replace(vec![], vec![found("/g/a.zip", 10), found("/g/b.nes", 21)])
             .unwrap();
-        assert_eq!(library.unknown("e1").unwrap(), ["/g/b.nes"]);
+        assert_eq!(paths(&library, "e1"), ["/g/b.nes"]);
         assert_eq!(library.facts().unwrap().len(), 1);
         assert_eq!(
-            library.unknown("e2").unwrap(),
+            paths(&library, "e2"),
             ["/g/a.zip", "/g/b.nes"],
             "a new emulator's to say it all again"
         );

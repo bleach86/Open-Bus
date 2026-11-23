@@ -29,6 +29,7 @@ use notify_debouncer_mini::{DebounceEventResult, Debouncer, new_debouncer};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -684,6 +685,10 @@ fn forget_path(app: AppHandle, path: String) -> Result<(), String> {
     let real = allowed(&app, &path)?;
     if fs::canonicalize(folder(&app, "library")?).is_ok_and(|library| real.starts_with(library)) {
         fs::remove_file(&real).map_err(|e| e.to_string())?;
+        // Not found any more either: the library's folder isn't watched,
+        // and a row left would keep what was known of it, or be learned of
+        // as "No such file" and keep that for the next file of its size.
+        library(&app).forget_own(&path)?;
         if let Some(parent) = real.parent() {
             let _ = fs::remove_dir(parent); // refused if there's anything in it
         }
@@ -868,14 +873,15 @@ fn learn_facts(app: &AppHandle) {
     let app = app.clone();
     thread::spawn(move || {
         loop {
-            if learn_unknown(&app).unwrap_or(false) {
+            let (learned, changed) = learn_unknown(&app).unwrap_or((false, false));
+            if learned {
                 let _ = app.emit("facts-changed", ());
             }
             let state = app.state::<Learning>();
             let Ok(mut learning) = state.0.lock() else {
                 return;
             };
-            if !learning.1 {
+            if !learning.1 && !changed {
                 learning.0 = false;
                 return;
             }
@@ -885,18 +891,23 @@ fn learn_facts(app: &AppHandle) {
 }
 
 /// The games nothing's known of told to `cpu_emu facts`, and what it says
-/// kept, a hundred at a time: whether anything was.
-fn learn_unknown(app: &AppHandle) -> Result<bool, String> {
+/// kept, a hundred at a time: whether anything was; and whether any were
+/// written while it was at it, what it said of them not kept, to be learned
+/// again.
+fn learn_unknown(app: &AppHandle) -> Result<(bool, bool), String> {
+    let began = SystemTime::now();
     let emulator = which_emulator()?;
     let unknown = library(app).unknown(&emulator)?;
     if unknown.is_empty() {
-        return Ok(false);
+        return Ok((false, false));
     }
     let list: String = unknown
         .iter()
-        .filter(|path| !path.contains('\n'))
-        .map(|path| format!("{path}\n"))
+        .filter(|one| !one.path.contains('\n'))
+        .map(|one| format!("{}\n", one.path))
         .collect();
+    let listed: HashMap<String, (i64, i64)> =
+        unknown.into_iter().map(|one| (one.path, one.row)).collect();
     let mut learner = emulator_command(app)?
         .arg("facts")
         .stdin(Stdio::piped())
@@ -907,16 +918,35 @@ fn learn_unknown(app: &AppHandle) -> Result<bool, String> {
     let mut input = learner.stdin.take().ok_or("no input")?;
     thread::spawn(move || input.write_all(list.as_bytes()));
     let output = learner.stdout.take().ok_or("no output")?;
-    let (mut lines, mut any) = (Vec::new(), false);
+    let (mut lines, mut any, mut changed) = (Vec::new(), false, false);
     for line in BufReader::new(output).lines().map_while(Result::ok) {
+        // One gone: nothing to know of it ("No such file" isn't). One
+        // removed and fetched again, say, while the list was gone through:
+        // read, maybe, while it wasn't there, so learned again.
+        let path = line.splitn(6, '\t').nth(5).unwrap_or_default();
+        if !Path::new(path).exists() {
+            continue;
+        }
+        if written_since(path, began) {
+            changed = true;
+            continue;
+        }
         lines.push(line);
         if lines.len() == 100 {
-            any |= library(app).learned(&std::mem::take(&mut lines), &emulator)?;
+            any |= library(app).learned(&std::mem::take(&mut lines), &emulator, &listed)?;
         }
     }
-    any |= library(app).learned(&lines, &emulator)?;
+    any |= library(app).learned(&lines, &emulator, &listed)?;
     let _ = learner.wait();
-    Ok(any)
+    Ok((any, changed))
+}
+
+/// Whether the file at `path` was written since `began` (and not, by a
+/// clock that's wrong, in the future, which would have it learned forever).
+fn written_since(path: &str, began: SystemTime) -> bool {
+    fs::metadata(path)
+        .and_then(|file| file.modified())
+        .is_ok_and(|at| at >= began && at <= SystemTime::now())
 }
 
 /// Which emulator there is, as what it says of games goes: its size and
@@ -1793,18 +1823,20 @@ fn fetch_busterm(app: AppHandle, replace: bool) -> Result<Value, String> {
     }
     let root = folder(&app, "library")?;
     let path = root.join(BUSTERM_ZIP);
-    let there = path.exists();
-    if there && !replace {
+    if path.exists() && !replace {
         return Err("busterm's in the library already".to_string());
     }
     write(&path, &zip)?;
     let entry = (path.to_string_lossy().into_owned(), zip.len() as u64);
-    if there {
-        library(&app).resize(&entry.0, entry.1)?;
-    } else {
-        library(&app).add(Section::Library, vec![entry.clone()])?;
-    }
+    // Found, if it wasn't, and either way its size now and nothing known of
+    // it till it's learned: not what was of a file before at its path.
+    library(&app).add(Section::Library, vec![entry.clone()])?;
+    library(&app).resize(&entry.0, entry.1)?;
     library(&app).set_app_setting(BUSTERM_VERSION, Some(&version))?;
+    // What the emulator says of it, learned again: what was known was the
+    // old file's, of its size. Till it's said, the zip's a NES's to the page
+    // (as an unknown zip is), and on the wrong shelf.
+    learn_facts(&app);
     // Open Bus 0.4.2's busterm, the program alone: this in its place.
     let before = root.join(BUSTERM_PRG);
     let mut gone = Vec::new();
@@ -2108,7 +2140,22 @@ pub fn run() {
 mod tests {
     use super::{
         X16_ROM_SHA256, busterm_version, card_name, fitted, is_x16_rom_zip, newer_version, walk,
+        written_since,
     };
+    use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn a_file_written_since_a_time_is_told_from_one_written_before() {
+        let path = std::env::temp_dir().join(format!("open-bus-written-{}", std::process::id()));
+        std::fs::write(&path, b"old").unwrap();
+        let file = path.to_string_lossy().into_owned();
+        let after = SystemTime::now() + Duration::from_millis(50);
+        assert!(!written_since(&file, after), "written before");
+        let before = SystemTime::now() - Duration::from_secs(5);
+        assert!(written_since(&file, before), "written since");
+        std::fs::remove_file(&path).unwrap();
+        assert!(!written_since(&file, before), "not there");
+    }
 
     #[test]
     fn busterms_version_is_read_from_its_start_screen_not_its_status_line() {
