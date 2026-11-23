@@ -650,7 +650,9 @@ fn all_files(app: AppHandle) -> Result<Value, String> {
 /// Everything looked through again, and kept: whether it's changed.
 fn look_again(app: &AppHandle) -> Result<bool, String> {
     let mut own = Vec::new();
-    walk(&folder(app, "library")?, &mut own);
+    let root = folder(app, "library")?;
+    walk(&root, &mut own);
+    own.retain(|(path, _)| !machines_own(&root, Path::new(path)));
     let mut added = Vec::new();
     for place in library(app).folders()? {
         walk(Path::new(&place), &mut added);
@@ -658,6 +660,15 @@ fn look_again(app: &AppHandle) -> Result<bool, String> {
     let changed = library(app).replace(own, added)?;
     learn_facts(app);
     Ok(changed)
+}
+
+/// Whether `path`, in the library's folder `root`, is one of the machines'
+/// own files there from before saves had a folder of their own, under
+/// roms/: the X16's clock's RAM (roms/x16/nvram.bin), still read if there's
+/// none where saves are. Not a game: its .bin had it on the NES's shelf.
+fn machines_own(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root)
+        .is_ok_and(|within| within.starts_with("roms"))
 }
 
 /// The games that are favourites, or have been played, as the library keeps
@@ -2139,9 +2150,22 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        X16_ROM_SHA256, busterm_version, card_name, fitted, is_x16_rom_zip, newer_version, walk,
-        written_since,
+        X16_ROM_SHA256, busterm_version, card_name, fitted, is_x16_rom_zip, machines_own,
+        newer_version, walk, written_since,
     };
+    use std::path::Path;
+
+    #[test]
+    fn the_x16s_old_clock_ram_in_the_library_is_not_a_game() {
+        let root = Path::new("/data/library");
+        assert!(machines_own(root, &root.join("roms/x16/nvram.bin")));
+        assert!(!machines_own(root, &root.join("Galaga.bin")));
+        assert!(!machines_own(root, &root.join("roms.zip")));
+        assert!(
+            !machines_own(root, Path::new("/games/roms/Pitfall.bin")),
+            "a folder of yours called roms"
+        );
+    }
     use std::time::{Duration, SystemTime};
 
     #[test]
