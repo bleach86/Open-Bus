@@ -70,8 +70,9 @@ const BUSTERM_TILE = 'busterm:get';
 const BUSTERM_TITLE = 'busterm';
 /// The tiles that aren't a game's file: the X16 itself, and busterm to get.
 const isStandIn = (name) => isX16Itself(name) || name === BUSTERM_TILE;
-/// busterm in the library or a folder: its name, or undefined.
-const bustermFile = () => files.find((name) => /(^|[\\/])busterm\.prg$/i.test(name));
+/// busterm in the library (its release's zip, or before Open Bus 0.4.3 its
+/// program alone) or a folder: its name, or undefined.
+const bustermFile = () => files.find((name) => /(^|[\\/])busterm\.(prg|zip)$/i.test(name));
 /// Where the X16's games' SD cards are kept, each of its game's name; and
 /// the X16's own.
 const X16_CARDS = 'x16 cards/';
@@ -953,15 +954,16 @@ async function getBusterm() {
 let newerBusterm = null;
 
 /// busterm, about to be played: the library's copy brought up to date first,
-/// if there's a newer one and that's wanted.
+/// if there's a newer one and that's wanted. The machine to play: the new
+/// one's, which may be somewhere new (in its own folder, both its files).
 async function updateBusterm(machine) {
     const update = newerBusterm;
     if (!update || machine.kind !== 'x16' || machine.game !== bustermFile() || !native.isOwn(machine.game)) {
-        return;
+        return machine;
     }
     newerBusterm = null;
     if (!(await native.ask(`busterm ${update.latest} is out (you have ${update.have}). Update it first?`))) {
-        return;
+        return machine;
     }
     say('Downloading busterm…');
     try {
@@ -969,7 +971,10 @@ async function updateBusterm(machine) {
         say(`busterm updated to ${update.latest}`);
     } catch (problem) {
         say(`busterm not updated: ${problem}`, true);
+        return machine;
     }
+    await refresh();
+    return { ...machine, game: bustermFile() ?? machine.game };
 }
 
 /// The X16 itself: started to BASIC, with a card of its own, blank to begin
@@ -1060,8 +1065,7 @@ async function playGame(machine) {
         return;
     }
     if (native) {
-        await updateBusterm(machine);
-        playNatively(machine);
+        playNatively(await updateBusterm(machine));
     } else if (machine.kind === 'x16') {
         const card = x16Card(machine.game);
         const x16 = () => Emulator.x16(X16_ROM, machine.game ?? '', card, localSeconds());

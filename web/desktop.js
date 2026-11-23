@@ -321,12 +321,13 @@ export async function fetchX16Rom() {
     return sorted;
 }
 
-/// busterm, the X16's BBS terminal: its latest release downloaded into the
-/// library (with `replace`, over the library's copy), as `sortRoms` has it;
+/// busterm, the X16's BBS terminal: its latest release's zip downloaded into
+/// the library (with `replace`, over the library's copy; Open Bus 0.4.2's
+/// BUSTERM.PRG gone), as `sortRoms` has it;
 /// and whether there's a newer one than the library's, `{ have, latest }`.
 export async function fetchBusterm(replace = false) {
     const sorted = await invoke('fetch_busterm', { replace });
-    const paths = new Set(sorted.kept.map(({ path }) => path));
+    const paths = new Set([...sorted.kept.map(({ path }) => path), ...sorted.gone]);
     change('library', sorted.kept, (path) => paths.has(path));
     return sorted;
 }

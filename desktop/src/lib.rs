@@ -1729,63 +1729,25 @@ fn fetch_x16_rom(app: AppHandle) -> Result<Value, String> {
     sorted
 }
 
-/// busterm, a BBS terminal for the X16 and its network card: its latest
-/// release, on GitHub (https://github.com/bleach86/busterm).
-const BUSTERM_PRG: &str =
-    "https://github.com/bleach86/busterm/releases/latest/download/BUSTERM.PRG";
-/// Its name in the library.
-const BUSTERM_NAME: &str = "BUSTERM.PRG";
-
-/// Where busterm's latest release is: GitHub sends it on to the release's
-/// page, `.../tag/vX.Y.Z`, which says its version.
-const BUSTERM_LATEST: &str = "https://github.com/bleach86/busterm/releases/latest";
-/// How long finding that may take: nothing waits for it.
+/// busterm, a BBS terminal for the X16 and its network card
+/// (https://github.com/bleach86/busterm): its releases, each with a zip of
+/// its files (busterm-X.Y.Z.zip), which the library keeps as an X16 game,
+/// as it is: what's in it goes on its card, however many files busterm
+/// comes as. Its name, BUSTERM.zip, names its card BUSTERM.img, as the
+/// BUSTERM.PRG kept before 0.4.3 did, so what busterm's saved on it stays.
+const BUSTERM_RELEASES: &str = "https://github.com/bleach86/busterm/releases";
+const BUSTERM_ZIP: &str = "BUSTERM.zip";
+/// What Open Bus 0.4.2 kept: the program alone, gone when the zip comes.
+const BUSTERM_PRG: &str = "BUSTERM.PRG";
+/// The app's setting: the version of the zip it fetched, as its zip doesn't
+/// say it where it can be read without unpacking it.
+const BUSTERM_VERSION: &str = "busterm";
+/// How long finding the latest release may take.
 const BUSTERM_CHECK_TIME: Duration = Duration::from_secs(15);
 
-/// busterm, asked for: its latest release downloaded into the library, as a
-/// game added to it would be, if it's an X16 program: loaded at $0801, and
-/// no bigger than the X16's memory below $9F00. With `replace`, over the
-/// library's copy, a newer release's. `{ kept }`, as `sort_roms` has it.
-#[tauri::command(async)]
-fn fetch_busterm(app: AppHandle, replace: bool) -> Result<Value, String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(DOWNLOAD_TIME))
-        .build()
-        .into();
-    let program = agent
-        .get(BUSTERM_PRG)
-        .call()
-        .and_then(|mut response| response.body_mut().read_to_vec())
-        .map_err(|e| format!("the download failed: {e}"))?;
-    if !is_x16_program(&program) {
-        return Err("what came wasn't an X16 program".to_string());
-    }
-    let path = folder(&app, "library")?.join(BUSTERM_NAME);
-    let there = path.exists();
-    if there && !replace {
-        return Err("busterm's in the library already".to_string());
-    }
-    write(&path, &program)?;
-    let entry = (path.to_string_lossy().into_owned(), program.len() as u64);
-    if there {
-        library(&app).resize(&entry.0, entry.1)?;
-    } else {
-        library(&app).add(Section::Library, vec![entry.clone()])?;
-    }
-    Ok(json!({ "kept": [as_entry(&entry)] }))
-}
-
-/// A newer busterm than the library's: `{ have, latest }`, its version and
-/// the latest release's; or null, with none in the library, or none newer.
-#[tauri::command(async)]
-fn busterm_update(app: AppHandle) -> Result<Value, String> {
-    let path = folder(&app, "library")?.join(BUSTERM_NAME);
-    let Some(have) = fs::read(&path)
-        .ok()
-        .and_then(|bytes| busterm_version(&bytes))
-    else {
-        return Ok(Value::Null);
-    };
+/// busterm's latest release's version: GitHub sends ".../latest" on to its
+/// page, ".../tag/vX.Y.Z".
+fn latest_busterm() -> Result<String, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(BUSTERM_CHECK_TIME))
         .max_redirects(0)
@@ -1793,17 +1755,86 @@ fn busterm_update(app: AppHandle) -> Result<Value, String> {
         .build()
         .into();
     let response = agent
-        .get(BUSTERM_LATEST)
+        .get(&format!("{BUSTERM_RELEASES}/latest"))
         .call()
         .map_err(|e| format!("the check failed: {e}"))?;
-    let latest = response
+    response
         .headers()
         .get("location")
         .and_then(|place| place.to_str().ok())
         .and_then(|place| place.rsplit_once("/tag/v"))
         .map(|(_, version)| version.to_string())
         .filter(|version| is_version(version))
-        .ok_or("GitHub didn't say busterm's latest release")?;
+        .ok_or_else(|| "GitHub didn't say busterm's latest release".to_string())
+}
+
+/// busterm, asked for: its latest release's zip downloaded into the
+/// library as BUSTERM.zip, if it's a zip with BUSTERM.PRG in it. With
+/// `replace`, over the library's copy, a newer release's; Open Bus 0.4.2's
+/// BUSTERM.PRG goes. `{ kept, gone }`, as `sort_roms` has it.
+#[tauri::command(async)]
+fn fetch_busterm(app: AppHandle, replace: bool) -> Result<Value, String> {
+    let version = latest_busterm()?;
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(DOWNLOAD_TIME))
+        .build()
+        .into();
+    let zip = agent
+        .get(&format!(
+            "{BUSTERM_RELEASES}/download/v{version}/busterm-{version}.zip"
+        ))
+        .call()
+        .and_then(|mut response| response.body_mut().read_to_vec())
+        .map_err(|e| format!("the download failed: {e}"))?;
+    if !zip.starts_with(b"PK\x03\x04")
+        || !zip.windows(11).any(|name| name == BUSTERM_PRG.as_bytes())
+    {
+        return Err("what came wasn't busterm's zip".to_string());
+    }
+    let root = folder(&app, "library")?;
+    let path = root.join(BUSTERM_ZIP);
+    let there = path.exists();
+    if there && !replace {
+        return Err("busterm's in the library already".to_string());
+    }
+    write(&path, &zip)?;
+    let entry = (path.to_string_lossy().into_owned(), zip.len() as u64);
+    if there {
+        library(&app).resize(&entry.0, entry.1)?;
+    } else {
+        library(&app).add(Section::Library, vec![entry.clone()])?;
+    }
+    library(&app).set_app_setting(BUSTERM_VERSION, Some(&version))?;
+    // Open Bus 0.4.2's busterm, the program alone: this in its place.
+    let before = root.join(BUSTERM_PRG);
+    let mut gone = Vec::new();
+    if before.exists() {
+        fs::remove_file(&before).map_err(|e| format!("{}: {e}", before.display()))?;
+        let before = before.to_string_lossy().into_owned();
+        library(&app).forget_own(&before)?;
+        gone.push(before);
+    }
+    Ok(json!({ "kept": [as_entry(&entry)], "gone": gone }))
+}
+
+/// A newer busterm than the library's: `{ have, latest }`, its version and
+/// the latest release's; or null, with none in the library, or none newer.
+/// The library's is the zip's, as fetched; or, Open Bus 0.4.2's program's,
+/// as its start screen says.
+#[tauri::command(async)]
+fn busterm_update(app: AppHandle) -> Result<Value, String> {
+    let root = folder(&app, "library")?;
+    let have = if root.join(BUSTERM_ZIP).exists() {
+        library(&app).app_setting(BUSTERM_VERSION)?
+    } else {
+        fs::read(root.join(BUSTERM_PRG))
+            .ok()
+            .and_then(|bytes| busterm_version(&bytes))
+    };
+    let Some(have) = have else {
+        return Ok(Value::Null);
+    };
+    let latest = latest_busterm()?;
     Ok(if newer_version(&latest, &have) {
         json!({ "have": have, "latest": latest })
     } else {
@@ -1850,12 +1881,6 @@ fn newer_version(a: &str, b: &str) -> bool {
             .collect()
     };
     numbers(a) > numbers(b)
-}
-
-/// Whether `bytes` are an X16 program that BASIC's RUN starts: its load
-/// address $0801, and it fits below $9F00.
-fn is_x16_program(bytes: &[u8]) -> bool {
-    bytes.len() > 2 && bytes[..2] == [0x01, 0x08] && bytes.len() - 2 <= 0x9F00 - 0x0801
 }
 
 /// Whether `bytes` are R49's zip, as its hash says.
@@ -2082,8 +2107,7 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::{
-        X16_ROM_SHA256, busterm_version, card_name, fitted, is_x16_program, is_x16_rom_zip,
-        newer_version, walk,
+        X16_ROM_SHA256, busterm_version, card_name, fitted, is_x16_rom_zip, newer_version, walk,
     };
 
     #[test]
@@ -2102,18 +2126,6 @@ mod tests {
         assert!(!newer_version("0.1.0", "0.1.1"));
     }
     use std::fs;
-
-    /// busterm's download: an X16 program, BASIC's RUN can start, or nothing.
-    #[test]
-    fn only_a_program_loaded_at_0801_that_fits_below_9f00_is_taken_for_busterm() {
-        let program = |load: [u8; 2], size: usize| [load.to_vec(), vec![0xEA; size]].concat();
-        assert!(is_x16_program(&program([0x01, 0x08], 36714)));
-        assert!(is_x16_program(&program([0x01, 0x08], 0x9F00 - 0x0801)));
-        assert!(!is_x16_program(&program([0x01, 0x08], 0x9F00 - 0x0801 + 1)));
-        assert!(!is_x16_program(&program([0x00, 0x10], 100)));
-        assert!(!is_x16_program(b"<!DOCTYPE html><html>Not Found</html>"));
-        assert!(!is_x16_program(&[0x01, 0x08]));
-    }
 
     /// 1280 by 800 at 125%, on a 1080p screen with a taskbar: too tall by
     /// its title bar and menu, as much taken off the page.
