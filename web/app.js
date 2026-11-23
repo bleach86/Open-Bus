@@ -87,7 +87,8 @@ const x16Card = (game) => `${X16_CARDS}${game ?? X16_TITLE}.img`;
 const isCard = (name) => name.startsWith(X16_CARDS) && kind(name) === 'img';
 const kind = (name) => name.split('.').pop().toLowerCase();
 /// A game's file: a .bin a 2600's or a 7800's, unless it's an Apple's ROM.
-const isGame = (name) => ['nes', 'fds', 'a26', 'a78', 'bin', 'zip', 'prg'].includes(kind(name)) && !isRom(name);
+const isGame = (name) =>
+    ['nes', 'fds', 'a26', 'a78', 'bin', 'zip', 'prg'].includes(kind(name)) && !isRom(name) && !isOurs(name);
 const isDisk = (name) => ['dsk', 'do', 'po', 'nib', 'woz', 'hdv', '2mg'].includes(kind(name));
 /// The consoles whose games are on the shelf of games, each its own tab; and
 /// which a game's is: as the emulator's said of it, else as its file says, a
@@ -126,7 +127,10 @@ function gamesShelf() {
     }
     return Object.keys(CONSOLES).find((system) => games.some((name) => systemOf(name) === system)) ?? 'nes';
 }
-const isOurs = (name) => ['srm', 'state', 'resume'].includes(kind(name));
+/// The machines' own files, kept with the games: saves, and the X16's
+/// clock's RAM (as src/web.rs names it), whose .bin isn't a game's.
+const X16_NVRAM = 'x16-nvram.bin';
+const isOurs = (name) => ['srm', 'state', 'resume'].includes(kind(name)) || name === X16_NVRAM;
 const isRom = (name) =>
     kind(name) === 'rom' ||
     name === HIGH_SCORE_ROM ||
