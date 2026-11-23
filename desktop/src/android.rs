@@ -30,7 +30,7 @@ const ANSWER: Duration = Duration::from_secs(5);
 /// Reading what's stored, as Android before 11 lets an app.
 const READ_STORAGE: &str = "android.permission.READ_EXTERNAL_STORAGE";
 /// The device's own storage, as an app has it.
-const OWN_STORAGE: &str = "/storage/emulated/0";
+pub const OWN_STORAGE: &str = "/storage/emulated/0";
 
 /// Where the app's native libraries are: this one's folder, as it's mapped.
 pub fn libraries() -> Result<PathBuf, String> {

@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""The desktop app's update manifest, latest.json, for a release: for each
+system and kind of install, where its update is on the release and its
+signature, as Tauri's updater looks for them (`{os}-{arch}-{installer}`, then
+`{os}-{arch}`).
+
+    tools/updater-manifest FOLDER VERSION > latest.json
+
+FOLDER holds the release's files, in folders or not, each update beside its
+`.sig`, as `cargo tauri build` makes them with `createUpdaterArtifacts`.
+Every system's update has to be there, or nothing's written: a release
+whose manifest left one out would leave its users behind.
+"""
+
+import datetime
+import json
+import sys
+from pathlib import Path
+
+REPOSITORY = "https://github.com/bleach86/Open-Bus"
+
+# The end of an update's file name, and the updater's names for it: the
+# first with its kind of install, the second (if any) for an app whose kind
+# isn't known, the one to fall back on.
+KINDS = [
+    (".AppImage", "linux-x86_64-appimage", "linux-x86_64"),
+    (".deb", "linux-x86_64-deb", None),
+    (".rpm", "linux-x86_64-rpm", None),
+    ("_aarch64.app.tar.gz", "darwin-aarch64-app", "darwin-aarch64"),
+    ("_x64.app.tar.gz", "darwin-x86_64-app", "darwin-x86_64"),
+    (".msi", "windows-x86_64-msi", None),
+    ("-setup.exe", "windows-x86_64-nsis", "windows-x86_64"),
+]
+
+
+def main():
+    folder, version = Path(sys.argv[1]), sys.argv[2].removeprefix("v")
+    signed = {path.with_suffix(""): path for path in folder.rglob("*.sig")}
+    platforms = {}
+    missing = []
+    for ending, name, fallback in KINDS:
+        found = [update for update in signed if update.name.endswith(ending)]
+        if len(found) != 1:
+            missing.append(f"{name}: {len(found)} signed files ending {ending}")
+            continue
+        update = found[0]
+        # As GitHub names a release's files: a space a dot.
+        asset = update.name.replace(" ", ".")
+        entry = {
+            "signature": signed[update].read_text().strip(),
+            "url": f"{REPOSITORY}/releases/download/v{version}/{asset}",
+        }
+        platforms[name] = entry
+        if fallback:
+            platforms[fallback] = entry
+    if missing:
+        sys.exit("no manifest, updates missing:\n  " + "\n  ".join(missing))
+    json.dump(
+        {
+            "version": version,
+            "pub_date": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "platforms": platforms,
+        },
+        sys.stdout,
+        indent=2,
+    )
+    print()
+
+
+main()

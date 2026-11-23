@@ -8,6 +8,12 @@
 # ANDROID_KEYSTORE_PASSWORD; ANDROID_KEY_ALIAS; and ANDROID_KEY_PASSWORD.
 # Without them, a tag's release fails rather than ship an APK that won't
 # install over the last; run by hand, it's signed with a key made for the run.
+#
+# The desktop app updates itself from the latest release's latest.json
+# (tools/updater-manifest), each update signed with the updater's key: two
+# more secrets, TAURI_SIGNING_PRIVATE_KEY (the key file's contents, from
+# `cargo tauri signer generate`) and TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
+# Without them, a tag's release fails too.
 name: Release
 
 on:
@@ -24,6 +30,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # The tag has to be the version the app says it is.
+      # An app released without the updater's real public key could never
+      # update itself.
+      - name: The updater's key is in
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if grep -q 'PUBKEY-TO-COME' desktop/tauri.conf.json; then
+            echo "::error::desktop/tauri.conf.json's plugins.updater.pubkey is still the placeholder"
+            exit 1
+          fi
       - name: Tag matches Cargo.toml
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -68,8 +83,40 @@ jobs:
             .
             desktop
       - run: cargo install tauri-cli --version 2.12.4 --locked
-      - run: tools/build-desktop
+      # With the updates the app installs itself, each signed with the
+      # updater's key (TAURI_SIGNING_PRIVATE_KEY, and its password, from
+      # `cargo tauri signer generate`), whose public half tauri.conf.json has.
+      # A release has to have them; a run by hand without the key goes
+      # without.
+      - name: The app, and its updates
         shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            tools/build-desktop --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          elif [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "::error::no TAURI_SIGNING_PRIVATE_KEY secret: a release has to have the app's updates"
+            exit 1
+          else
+            echo "::warning::no TAURI_SIGNING_PRIVATE_KEY secret: no updates made"
+            tools/build-desktop
+          fi
+      # The Mac's update is the app in a tarball, named the same on both
+      # Macs: named for its version and processor, as the .dmg is.
+      - name: The Mac's update named
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cd desktop/target/release/bundle/macos
+          if [ -f "Open Bus.app.tar.gz" ]; then
+            version=$(sed -n 's/^version = "\(.*\)"$/\1/p' ../../../../Cargo.toml | head -n 1)
+            arch=$([ "${{ matrix.name }}" = macos-arm64 ] && echo aarch64 || echo x64)
+            for end in "" .sig; do
+              mv "Open Bus.app.tar.gz$end" "Open Bus_${version}_${arch}.app.tar.gz$end"
+            done
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.name }}
@@ -80,6 +127,8 @@ jobs:
             desktop/target/release/bundle/msi/*.msi
             desktop/target/release/bundle/nsis/*.exe
             desktop/target/release/bundle/dmg/*.dmg
+            desktop/target/release/bundle/macos/*.app.tar.gz
+            desktop/target/release/bundle/*/*.sig
           if-no-files-found: error
 
   android:
@@ -152,6 +201,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      # For tools/updater-manifest.
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
@@ -167,6 +218,9 @@ jobs:
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft \
               --title "Open Bus ${GITHUB_REF_NAME#v}" --generate-notes
           fi
+          # The desktop app's update manifest, which it checks for a newer
+          # version: on the latest release, it's where the app looks.
+          tools/updater-manifest artifacts "$GITHUB_REF_NAME" > artifacts/latest.json
           find artifacts -type f -print0 |
             xargs -0 gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false

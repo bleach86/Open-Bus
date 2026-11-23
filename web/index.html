@@ -283,6 +283,9 @@
           </p>
           <p class="about for-desktop" id="data-place"></p>
           <p class="about" id="app-version"></p>
+          <p class="actions" id="update-actions" hidden>
+            <button id="update-check">Check for updates</button>
+          </p>
         </div>
         <div id="pane-saves" class="pane for-desktop" hidden>
           <h2>Saves</h2>
@@ -303,8 +306,8 @@
             there to upload. In <span id="x16-files-where"></span>.
           </p>
           <p class="actions">
-            <button id="x16-files-open">Open folder</button>
-            <button id="x16-files-change">Change folder…</button>
+            <button id="x16-files-open">Open the X16's folder</button>
+            <button id="x16-files-change">Change the X16's folder…</button>
             <button id="x16-files-default" hidden>Back to the default</button>
           </p>
         </div>
@@ -517,6 +520,21 @@
             type="file"
             accept=".zip,.bin"
         /></label>
+      </p>
+    </dialog>
+    <dialog id="update-dialog" aria-labelledby="update-title">
+      <h2 id="update-title">
+        Open Bus <span id="update-version"></span> is out
+      </h2>
+      <p>
+        You have <span id="update-have"></span>. Updating downloads the new
+        version, installs it and starts Open Bus again.
+      </p>
+      <p id="update-notes" class="quiet"></p>
+      <p id="update-status" class="quiet" role="status"></p>
+      <p class="row-actions">
+        <button id="update-later">Not now</button>
+        <button id="update-now" class="primary">Update</button>
       </p>
     </dialog>
 

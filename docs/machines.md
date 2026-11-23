@@ -173,6 +173,14 @@ desktop app can download it. On the command line it's read from `roms/x16/`.
   that was on it. Deleting the card in the game's saves starts it afresh.
 - **SD card.** `--sd IMAGE` uses a card image of your own, written back as the
   machine writes to it. `tools/make-x16-sd` makes one or adds files to it.
+- **The X16's files.** One folder on your computer is the `FILES` folder on
+  every card Open Bus makes, so X16 programs share files with your computer
+  and with each other: what a program writes there (a terminal's downloads,
+  say) lands in the folder, and what you put in it is there for them (to
+  upload, say). In the app it's `Documents/Open Bus/X16 Files`, or the folder
+  chosen under Settings → Saves; on the command line, `--files FOLDER`. It's
+  copied onto the card as the X16 starts and back as it stops, so a file put
+  in the folder while the X16 runs is there the next time it starts.
 - **Keyboard.** Keys go to the X16 by position, so its own layout applies.
   Pasted text is typed in.
 - **Mouse.** Click the picture to capture the mouse, and press Ctrl+M to let it
