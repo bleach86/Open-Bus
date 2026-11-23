@@ -279,6 +279,14 @@ impl Library {
         Ok(added)
     }
 
+    /// The library's own file at `path`, gone from it: no longer found.
+    pub fn forget_own(&self, path: &str) -> Result<(), String> {
+        let db = self.lock()?;
+        db.execute("DELETE FROM files WHERE path = ?1 AND own = 1", [path])
+            .map(|_| ())
+            .map_err(said)
+    }
+
     /// The file at `path`, written again, its new `size` known.
     pub fn resize(&self, path: &str, size: u64) -> Result<(), String> {
         let db = self.lock()?;
