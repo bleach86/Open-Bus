@@ -4,4 +4,7 @@
 # a page opened as a file can't load WebAssembly.
 set -e
 cd "$(dirname "$0")/.."
+# Afresh: wasm-pack leaves the last builds' snippets, which the page would
+# carry on serving.
+rm -rf web/pkg
 wasm-pack build --release --target web --out-dir web/pkg --no-pack

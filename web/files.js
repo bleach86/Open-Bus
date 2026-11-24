@@ -49,11 +49,20 @@ async function store(mode, use) {
 /// anything that isn't, which sorts after every number.
 const partsOf = (name) => IDBKeyRange.bound([name], [name, []]);
 
+/// The browser asked, once a file's kept, to keep what's here for good: not
+/// to clear it as it runs short of room, as it may what a site keeps unless
+/// it's asked. Chrome says yes for a page that's installed, or often used;
+/// Firefox asks you.
+let persisting = null;
+const persist = () => {
+    persisting ??= navigator.storage?.persist?.().catch(() => false);
+};
+
 const keepHere = (name, bytes) =>
     store('readwrite', (files, parts) => {
         parts.delete(partsOf(name));
         files.put(bytes, name);
-    });
+    }).finally(persist);
 
 /// `changed`, [where it starts, its bytes] each, kept all together.
 const keepPartsHere = (name, changed) =>

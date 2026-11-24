@@ -7,6 +7,17 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
     <title>Open Bus</title>
+    <meta
+      name="description"
+      content="Old machines, emulated cycle by cycle: the NES, Atari 2600 and 7800, Apple II and Commander X16, with a library of your games."
+    />
+    <meta name="theme-color" content="#0d0221" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/favicon-32.png" sizes="32x32" />
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <script src="shell.js"></script>
     <style>
       .loading body {
         visibility: hidden;
@@ -657,25 +668,8 @@
       // and a page of old files and new doesn't work. So each is asked after first:
       // the answer's in the cache for what follows, and no bytes if it's as it was.
       // Failing that, as when offline, what's kept will do.
-      const FILES = [
-        'style.css',
-        'app.js',
-        'art.js',
-        'controls.js',
-        'covers.js',
-        'desktop.js',
-        'details.js',
-        'versions.js',
-        'disks.js',
-        'files.js',
-        'kept.js',
-        'keys.js',
-        'scenes.js',
-        'sound.js',
-        'touch.js',
-        'pkg/cpu_emu.js',
-        'pkg/cpu_emu_bg.wasm',
-      ];
+      // shell.js names them.
+      const FILES = self.SHELL;
       const asked = (url) =>
         fetch(url, { cache: 'no-cache' }).catch(() => null);
       // In the desktop app they're built in, and can't be old.
@@ -706,6 +700,12 @@
           await import('./app.js');
         } finally {
           document.documentElement.classList.remove('loading');
+        }
+        // On the web, its files kept by the service worker, for it to open
+        // offline and be installed as an app. Not in the desktop app, which
+        // has them built in.
+        if (!window.__TAURI__ && 'serviceWorker' in navigator) {
+          navigator.serviceWorker.register('sw.js').catch(() => {});
         }
       }
     </script>
