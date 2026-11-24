@@ -21,6 +21,13 @@ self.addEventListener('install', (event) => {
             const glue = await (await ask('pkg/cpu_emu.js')).text();
             const snippets = [...glue.matchAll(/from "\.\/(snippets\/[^"]+)"/g)].map(([, path]) => `pkg/${path}`);
             await kept.addAll(snippets.map((url) => new Request(url, { cache: 'no-cache' })));
+            // The last builds' snippets, under names no longer asked for, gone.
+            for (const request of await kept.keys()) {
+                const path = new URL(request.url).pathname;
+                if (path.includes('/pkg/snippets/') && !snippets.some((snippet) => path.endsWith(`/${snippet}`))) {
+                    await kept.delete(request);
+                }
+            }
             await self.skipWaiting();
         })(),
     );

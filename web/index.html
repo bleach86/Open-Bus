@@ -705,7 +705,9 @@
         // offline and be installed as an app. Not in the desktop app, which
         // has them built in.
         if (!window.__TAURI__ && 'serviceWorker' in navigator) {
-          navigator.serviceWorker.register('sw.js').catch(() => {});
+          navigator.serviceWorker
+            .register('sw.js', { updateViaCache: 'none' })
+            .catch(() => {});
         }
       }
     </script>
