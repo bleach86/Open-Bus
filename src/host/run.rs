@@ -474,12 +474,9 @@ impl<M: Machine> Host<M> {
             at: 0,
             before: self.display.gamepad(),
         });
-        // Tapped from now; the machine's mouse let go meanwhile, so a tap's
-        // the menu's, not taken for the mouse; and the keyboard the host's,
-        // not the machine's, whose keys aren't the menu's (a TV remote's OK,
-        // bound to choose, did nothing in the X16's menu).
-        self.display.tap();
-        self.display.mouse(false);
+        // The keyboard the host's while it's up, not the machine's, whose
+        // keys aren't the menu's (a TV remote's OK did nothing in the X16's
+        // menu).
         self.display.raw_keys(false);
     }
 
@@ -499,23 +496,10 @@ impl<M: Machine> Host<M> {
 
     /// A frame of the menu: the machine stands still, as for the controls.
     /// Up and down it by the gamepad or the keys, A or Return to choose, B,
-    /// Escape or F1 to go back to the game. Or tapped, or clicked: an item
-    /// chosen, or anywhere off the menu back to the game. A phone with no
-    /// gamepad has only that, its Back bringing the menu and taking it
-    /// away.
+    /// Escape or F1 to go back to the game.
     fn menu_frame(&mut self) -> bool {
         self.cycles += (self.cpu.clock_hz / FRAMES_A_SECOND) as u64;
         self.show();
-        let tapped = self.display.tap().and_then(|at| {
-            let lines = self.menu_lines()?;
-            let picture = self.cpu.memory.picture();
-            Some(notice::panel_line(
-                picture.width,
-                picture.height,
-                &lines,
-                at,
-            ))
-        });
         let Some(menu) = &mut self.menu else {
             return true;
         };
@@ -555,19 +539,9 @@ impl<M: Machine> Host<M> {
         if down {
             menu.at = (menu.at + 1) % count;
         }
-        // The menu's lines: its title, then its items.
-        match tapped {
-            Some(Some(line)) if (1..=count).contains(&line) => {
-                menu.at = line - 1;
-                choose = true;
-            }
-            Some(None) => back = true,
-            _ => {}
-        }
         let item = menu.items[menu.at];
         if back || choose {
             self.menu = None;
-            self.display.mouse(self.has_mouse);
             self.display.raw_keys(self.cpu.memory.raw_keys());
         }
         if choose && !back {

@@ -109,8 +109,6 @@ pub struct Window {
     /// The mouse on the picture; and whether the machine's aimed at, and
     /// the cross hairs it's shown as then.
     pointer: Pointer,
-    /// The last tap or click let go, as `tap` gives it.
-    tapped: Option<(f32, f32)>,
     aiming: bool,
     cross_hairs: Option<Cursor>,
     /// Whether the machine has a mouse, and whether it's captured; the
@@ -307,7 +305,6 @@ impl Window {
             picture: (width, height),
             logical: size,
             pointer: Pointer::default(),
-            tapped: None,
             aiming: false,
             cross_hairs: None,
             has_mouse: false,
@@ -466,18 +463,6 @@ impl Window {
         let mut toggle = false; // fullscreen, once the events are taken
         let events: Vec<Event> = self.events.poll_iter().collect();
         for event in events {
-            if let Event::MouseButtonUp {
-                mouse_btn: MouseButton::Left,
-                x,
-                y,
-                ..
-            } = event
-            {
-                // Off the picture too, on the bars beside it: outside its
-                // pixels then.
-                let (across, down) = scale(self.picture, self.logical);
-                self.tapped = Some((x as f32 * across, y as f32 * down));
-            }
             if let Event::Window {
                 win_event: WindowEvent::FocusLost,
                 ..
@@ -815,10 +800,6 @@ impl Display for Window {
 
     fn rewinding(&self) -> bool {
         self.held_for(Action::Rewind)
-    }
-
-    fn tap(&mut self) -> Option<(f32, f32)> {
-        self.tapped.take()
     }
 
     fn pointer(&self) -> Pointer {

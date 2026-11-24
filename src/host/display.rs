@@ -58,14 +58,6 @@ pub trait Display {
         Pointer::default()
     }
 
-    /// Where a tap, or a click, was last let go since this was last asked,
-    /// in the picture's pixels as it was last shown: off it, on the bars
-    /// beside it, outside them. A machine's mouse captured or not: for
-    /// what's drawn over the picture, as the menu.
-    fn tap(&mut self) -> Option<(f32, f32)> {
-        None
-    }
-
     /// Whether the machine's to be aimed at, as a light gun is: the pointer
     /// shown always, as cross hairs, and its clicks the machine's, none of
     /// them the display's own (a double click its fullscreen).
