@@ -1,15 +1,27 @@
 package app.openbus;
 
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.pm.PackageManager;
 import android.hardware.input.InputManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.view.ContextThemeWrapper;
+import android.view.Gravity;
 import android.view.InputDevice;
 import android.view.KeyEvent;
+import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import android.system.ErrnoException;
@@ -30,17 +42,20 @@ public class GameActivity extends SDLActivity {
     /** What the library's told, as a game closes. */
     private static final String ENDED = "ended\n";
 
-    /** A touch screen's pause: what it offers, as the game's own menu does. */
-    private static final String[] PAUSED = {"Resume", "Save state", "Load state", "Reset", "Quit"};
-    private static final int SAVE = 1, LOAD = 2, RESET = 3, QUIT = 4;
+    /**
+     * A touch screen's pause: what it offers, as the game's own menu does;
+     * and, with the touch screen's gamepad, its moving.
+     */
+    private static final String RESUME = "Resume", SAVE = "Save state", LOAD = "Load state";
+    private static final String RESET = "Reset", MOVE = "Move controls", QUIT = "Quit";
     /** How long Reset's held, F12, for the emulator to see it held. */
     private static final long RESET_HELD_MS = 250;
 
     private AlertDialog paused;
     /** A touch screen's gamepad, for the NES, or null: the app's not on one. */
     private TouchPad touchPad;
-    /** What was chosen from it, or -1, to be done as it's gone. */
-    private int chosen = -1;
+    /** What was chosen from it, or null, to be done as it's gone. */
+    private String chosen;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,7 +86,7 @@ public class GameActivity extends SDLActivity {
         }
         if (args.length > 0 && args[0].equals("nes") && !mBrokenLibraries && mLayout != null
                 && getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)) {
-            touchPad = new TouchPad(this, GameActivity::touched);
+            touchPad = new TouchPad(this, GameActivity::touched, false);
             mLayout.addView(touchPad, new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             showTouchPad();
@@ -210,37 +225,93 @@ public class GameActivity extends SDLActivity {
         if (paused != null && paused.isShowing()) {
             return;
         }
-        chosen = -1;
+        chosen = null;
+        List<String> offered = new ArrayList<>(Arrays.asList(RESUME, SAVE, LOAD, RESET));
+        if (touchPad != null && touchPad.getVisibility() == View.VISIBLE) {
+            offered.add(MOVE);
+        }
+        offered.add(QUIT);
+        String[] items = offered.toArray(new String[0]);
         paused = new AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK)
                 .setTitle("Paused")
-                .setItems(PAUSED, (dialog, which) -> chosen = which)
+                .setItems(items, (dialog, which) -> chosen = items[which])
                 .setOnDismissListener(dialog -> act(chosen))
                 .create();
         paused.show();
     }
 
     /** What's chosen done: as the game's menu does it, by its keys. */
-    private void act(int choice) {
-        switch (choice) {
-            case SAVE:
-                press(KeyEvent.KEYCODE_F2);
-                break;
-            case LOAD:
-                press(KeyEvent.KEYCODE_F4);
-                break;
-            case RESET:
-                SDLActivity.onNativeKeyDown(KeyEvent.KEYCODE_F12);
-                new Handler(Looper.getMainLooper()).postDelayed(
-                        () -> SDLActivity.onNativeKeyUp(KeyEvent.KEYCODE_F12), RESET_HELD_MS);
-                break;
-            case QUIT:
-                // As Android closing it: SDL's quit, the game saving as it
-                // goes, and back to the library.
-                finish();
-                break;
-            default:
-                break;
+    private void act(String choice) {
+        if (SAVE.equals(choice)) {
+            press(KeyEvent.KEYCODE_F2);
+        } else if (LOAD.equals(choice)) {
+            press(KeyEvent.KEYCODE_F4);
+        } else if (RESET.equals(choice)) {
+            SDLActivity.onNativeKeyDown(KeyEvent.KEYCODE_F12);
+            new Handler(Looper.getMainLooper()).postDelayed(
+                    () -> SDLActivity.onNativeKeyUp(KeyEvent.KEYCODE_F12), RESET_HELD_MS);
+        } else if (MOVE.equals(choice)) {
+            moveControls();
+        } else if (QUIT.equals(choice)) {
+            // As Android closing it: SDL's quit, the game saving as it
+            // goes, and back to the library.
+            finish();
         }
+    }
+
+    /**
+     * The touch screen's gamepad moved and resized: a copy of it over the
+     * whole screen, the game standing still behind it as it has the focus,
+     * each piece dragged where it's wanted, kept as it's let go; Smaller,
+     * Bigger and Reset at the top, and Done, or Back, the game going again
+     * with it as it's been made.
+     */
+    private void moveControls() {
+        Dialog moving = new Dialog(this, android.R.style.Theme_Translucent_NoTitleBar_Fullscreen);
+        TouchPad editing = new TouchPad(this, buttons -> {}, true);
+        FrameLayout screen = new FrameLayout(this);
+        screen.setBackgroundColor(0x66000000);
+        screen.addView(editing, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        LinearLayout tools = new LinearLayout(this);
+        tools.setOrientation(LinearLayout.HORIZONTAL);
+        tools.addView(tool("Smaller", v -> editing.resize(-0.1f)));
+        tools.addView(tool("Bigger", v -> editing.resize(0.1f)));
+        tools.addView(tool("Reset", v -> editing.reset()));
+        tools.addView(tool("Done", v -> moving.dismiss()));
+        FrameLayout.LayoutParams top = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        top.topMargin = (int) (12 * getResources().getDisplayMetrics().density);
+        screen.addView(tools, top);
+        moving.setContentView(screen);
+        // The game's own hidden as its copy's moved, back as it's done.
+        touchPad.setVisibility(View.INVISIBLE);
+        moving.setOnDismissListener(dialog -> {
+            touchPad.reload();
+            showTouchPad();
+        });
+        // As the game's window is: the whole screen, under any cutout, no
+        // bars, so the pieces are where they'll be.
+        Window window = moving.getWindow();
+        if (window != null) {
+            window.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                WindowManager.LayoutParams attributes = window.getAttributes();
+                attributes.layoutInDisplayCutoutMode =
+                        getWindow().getAttributes().layoutInDisplayCutoutMode;
+                window.setAttributes(attributes);
+            }
+            window.getDecorView().setSystemUiVisibility(getWindow().getDecorView().getSystemUiVisibility());
+        }
+        moving.show();
+    }
+
+    private Button tool(String name, View.OnClickListener clicked) {
+        Button button = new Button(new ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault));
+        button.setText(name);
+        button.setOnClickListener(clicked);
+        return button;
     }
 
     private static void press(int keyCode) {
