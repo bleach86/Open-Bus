@@ -25,10 +25,11 @@
 //! 0x1F, its control registers, holding what's written; 0x20 to 0x5F, its
 //! RAM. Its address steps on with each byte, round within the clock's
 //! registers or its RAM. It starts as a new one does, stopped: its
-//! oscillator on once ST is set, the time counted each second from then;
-//! or set, as an X16's is, its battery keeping it (`set`).
+//! oscillator on once ST is set, the time counted each second from then,
+//! by the host's clock, not the CPU's; or set, as an X16's is, its battery
+//! keeping it (`set`).
 
-use crate::host::clock::DateTime;
+use crate::host::clock::{self, DateTime};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
@@ -204,21 +205,6 @@ impl I2c {
         self.phase = Phase::Giving;
         self.clocks = 0;
         self.holding = self.byte & 0x80 == 0;
-    }
-
-    /// A CPU cycle, for the RTC's time.
-    pub fn tick(&mut self) {
-        self.rtc.tick();
-    }
-
-    /// `cycles` CPU cycles, no more than it's `due`.
-    pub fn run(&mut self, cycles: u32) {
-        self.rtc.run(cycles);
-    }
-
-    /// The CPU cycles until the RTC's next second, if it's running.
-    pub fn due(&self) -> u32 {
-        self.rtc.due()
     }
 }
 
@@ -398,11 +384,11 @@ pub struct Rtc {
     pub ram_written: bool,
     /// The register at its address.
     address: u8,
-    /// The CPU's cycles to the next second.
-    cycles: u32,
+    /// When its second began, as `clock::seconds` has it: none till it's
+    /// counted from (as a state's loaded, it's counted from then).
+    #[serde(skip)]
+    counted: Option<f64>,
 }
-
-const CPU_HZ: u32 = 8_000_000;
 
 fn bcd(n: u8) -> u8 {
     ((n / 10) << 4) | (n % 10)
@@ -431,7 +417,7 @@ impl Rtc {
             ram: vec![0; 0x40],
             ram_written: false,
             address: 0,
-            cycles: 0,
+            counted: None,
         }
     }
 
@@ -451,7 +437,36 @@ impl Rtc {
         self.month = now.month as u8;
         self.year = (now.year - 2000).clamp(0, 99) as u8;
         (self.running, self.twelve, self.battery) = (true, false, true);
-        self.cycles = 0;
+        // Its second begun as the host's did, to turn over as it does.
+        self.counted = Some(clock::seconds() - clock::into_second());
+    }
+
+    /// The seconds gone by since it last counted, by the host's clock,
+    /// counted, if it's running: as a real one's crystal keeps time,
+    /// whatever the machine's speed. (Counted by the CPU's cycles, it gained
+    /// 5 seconds in 10 minutes as its frames were kept in step with a 60 Hz
+    /// display, VERA's being 59.52 a second; and it ran on in fast-forward,
+    /// and stood still as the machine was paused.) Stopped, its time stands
+    /// still, and its second begins again as it's started.
+    fn catch_up(&mut self) {
+        let now = clock::seconds();
+        match self.counted {
+            Some(mut from) if self.running => {
+                while now - from >= 1.0 {
+                    self.second();
+                    from += 1.0;
+                }
+                self.counted = Some(from);
+            }
+            _ => self.counted = Some(now),
+        }
+    }
+
+    /// `seconds` gone by, as if they had, to be counted as it's next read.
+    #[cfg(test)]
+    pub fn pass(&mut self, seconds: f64) {
+        self.catch_up();
+        self.counted = self.counted.map(|from| from - seconds);
     }
 
     /// Its address stepped on: round within its clock's registers, or its
@@ -470,6 +485,9 @@ impl Rtc {
     }
 
     fn read(&mut self) -> u8 {
+        if self.address <= 0x06 {
+            self.catch_up();
+        }
         let byte = match self.address {
             0x00 => bcd(self.seconds) | (self.running as u8) << 7,
             0x01 => bcd(self.minutes),
@@ -499,10 +517,15 @@ impl Rtc {
             self.address = byte;
             return;
         }
+        if self.address <= 0x06 {
+            self.catch_up();
+        }
         match self.address {
             0x00 => {
                 self.running = byte & 0x80 != 0;
                 self.seconds = unbcd(byte & 0x7F);
+                // Its seconds set: the second they're of begins now.
+                self.counted = Some(clock::seconds());
             }
             0x01 => self.minutes = unbcd(byte & 0x7F),
             0x02 => {
@@ -528,36 +551,6 @@ impl Rtc {
             _ => {}
         }
         self.step();
-    }
-
-    /// `cycles` CPU cycles, no more than it's `due`: those before the
-    /// last only counted, as no second ends on them.
-    fn run(&mut self, cycles: u32) {
-        if self.running {
-            self.cycles += cycles - 1;
-            self.tick();
-        }
-    }
-
-    fn due(&self) -> u32 {
-        if self.running {
-            CPU_HZ - self.cycles
-        } else {
-            u32::MAX
-        }
-    }
-
-    /// A CPU cycle: a second on, as one's gone by, if it's running.
-    fn tick(&mut self) {
-        if !self.running {
-            return;
-        }
-        self.cycles += 1;
-        if self.cycles < CPU_HZ {
-            return;
-        }
-        self.cycles = 0;
-        self.second();
     }
 
     fn second(&mut self) {
