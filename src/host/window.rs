@@ -22,12 +22,13 @@
 //! Ctrl+Shift+C or Ctrl+Insert, the screen copied to it, for a machine with
 //! a keyboard. Closed, it tells the machine, to turn itself off.
 
-use crate::host::controls::{Action, Controls, said};
+use crate::host::controls::{Action, Controls, REMOTE_OK, said};
 use crate::host::display::{
     CHANNELS, COPY_KEY, Display, Gamepad, Joystick, Key, PASTE_KEY, Pointer, SAMPLE_RATE, Scancode,
 };
 use crate::host::pads::{self, Pads};
 use crate::host::sound::Stretch;
+use crate::host::touch;
 use sdl2::EventPump;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::clipboard::ClipboardUtil;
@@ -314,7 +315,9 @@ impl Window {
             key_changes: VecDeque::new(),
             raw_held: HashSet::new(),
         };
-        if fullscreen {
+        // On Android, always: SDL's activity then hides the system's bars,
+        // and draws to the screen's edges, a camera's cutout too.
+        if fullscreen || cfg!(target_os = "android") {
             window.toggle_fullscreen();
         }
         window
@@ -350,7 +353,8 @@ impl Window {
             start: held(Action::Start),
             turbo_a: held(Action::TurboA),
             turbo_b: held(Action::TurboB),
-            accept: held(Action::MenuAccept),
+            // A TV remote's OK, always, whatever's bound.
+            accept: held(Action::MenuAccept) || self.held.contains(REMOTE_OK),
             back: held(Action::MenuBack),
         }
     }
@@ -394,7 +398,10 @@ impl Window {
 
     /// Fullscreen, at the screen's own size; or back to the window.
     fn toggle_fullscreen(&mut self) {
-        let fullscreen = self.canvas.window().fullscreen_state() == FullscreenType::Off;
+        // On Android, fullscreen it stays: windowed, a phone's bars are over
+        // the picture.
+        let fullscreen = cfg!(target_os = "android")
+            || self.canvas.window().fullscreen_state() == FullscreenType::Off;
         let state = if fullscreen {
             FullscreenType::Desktop
         } else {
@@ -940,8 +947,13 @@ impl Display for Window {
 
     /// The first gamepad's, or the
     /// keyboard's.
+    fn held_still(&self) -> bool {
+        touch::still()
+    }
+
     fn gamepad(&self) -> Gamepad {
-        self.mapped(0)
+        // With a touch screen's buttons, on Android, as it has them.
+        touch::onto(self.mapped(0))
     }
 
     fn gamepad_2(&self) -> Gamepad {

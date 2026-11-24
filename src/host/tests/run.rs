@@ -44,6 +44,10 @@ mod tests {
         key_changes: Vec<(Scancode, bool)>,
         /// Whether the machine has a mouse, each time it's told.
         mouse: Vec<bool>,
+        /// Whether the keyboard's the machine's, each time it's told.
+        raw_keys: Vec<bool>,
+        /// Whether it's holding the game still.
+        still: bool,
     }
 
     /// The test's window: its own controls, never saved, as the window's
@@ -106,6 +110,10 @@ mod tests {
             self.0.borrow().rewind
         }
 
+        fn held_still(&self) -> bool {
+            self.0.borrow().still
+        }
+
         fn closed(&self) -> bool {
             let seen = self.0.borrow();
             seen.closed
@@ -125,6 +133,10 @@ mod tests {
 
         fn play(&mut self, samples: &[f32]) {
             self.0.borrow_mut().samples += samples.len();
+        }
+
+        fn raw_keys(&mut self, on: bool) {
+            self.0.borrow_mut().raw_keys.push(on);
         }
 
         fn mouse(&mut self, on: bool) {
@@ -642,5 +654,51 @@ mod tests {
             [false, true, false],
             "told as it changes, only"
         );
+    }
+
+    #[test]
+    fn the_keyboard_is_the_menus_while_its_up_not_the_machines() {
+        use crate::machines::x16::X16;
+        let mut cpu = CPU::with_bus(X16::new(&[0xEA; 0x4000]).unwrap());
+        cpu.variant = Variant::Wdc65C02;
+        cpu.reset();
+        let seen = Rc::new(RefCell::new(Seen::default()));
+        let state = std::env::temp_dir().join(format!(
+            "cpu_emu_{}_host_menu_keys.state",
+            std::process::id()
+        ));
+        let window = Window(seen.clone(), Controls::default());
+        let mut host = Host::new(cpu, Box::new(window), state);
+        assert_eq!(seen.borrow().raw_keys, [true], "the X16's from the first");
+        seen.borrow_mut().function_keys.push(1);
+        host.frame();
+        host.frame();
+        assert!(host.menu_lines().is_some(), "no menu");
+        assert_eq!(seen.borrow().raw_keys, [true, false], "not the menu's");
+        seen.borrow_mut().keys.push(Key::Char(27));
+        host.frame();
+        assert!(host.menu_lines().is_none(), "not back to the game");
+        assert_eq!(
+            seen.borrow().raw_keys,
+            [true, false, true],
+            "not the X16's again"
+        );
+    }
+
+    #[test]
+    fn held_still_the_machine_stands_still_and_goes_on_after() {
+        let (mut host, seen, _) = host("held_still");
+        host.frame();
+        let ran = host.cpu.clock;
+        assert!(ran > 0, "not running");
+        seen.borrow_mut().still = true;
+        let shown = seen.borrow().pictures;
+        host.frame();
+        host.frame();
+        assert_eq!(host.cpu.clock, ran, "it ran, held still");
+        assert_eq!(seen.borrow().pictures, shown + 2, "its picture not kept");
+        seen.borrow_mut().still = false;
+        host.frame();
+        assert!(host.cpu.clock > ran, "not going again");
     }
 }

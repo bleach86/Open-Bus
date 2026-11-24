@@ -186,8 +186,8 @@ desktop app can download it. On the command line it's read from `roms/x16/`.
 - **Mouse.** Click the picture to capture the mouse, and press Ctrl+M to let it
   go.
 - **Controllers.** Gamepads are its SNES controllers 1 and 2.
-- **Clock.** It starts from the host's time. Its NVRAM is kept with your
-  saves.
+- **Clock.** It starts from the host's time and keeps real time after that,
+  even when the emulator runs fast. Its NVRAM is kept with your saves.
 - **Network card.** TexElec's Serial & ESP32 Network Card is in its expansion
   slot, at `$9FE0` (below).
 

@@ -394,7 +394,7 @@ function showShelf(name) {
     }
     const tab = document.querySelector(`.tabs button[data-tab="${name}"]`);
     page('shelf-name').textContent = (tab.querySelector('.tab-name') ?? tab).textContent;
-    showMenu(false);
+    showMenu(false, true);
     showSorts();
     // What a gamepad had, gone with the page it was on.
     if (padFocus && !focusable().includes(padFocus)) {
@@ -408,18 +408,36 @@ for (const tab of document.querySelectorAll('.tabs button[data-tab]')) {
 }
 
 /// The shelves, on a phone: the sidebar slid in over the shelf by the menu
-/// button, and out again by a shelf chosen, a tap beside it, or Esc.
-function showMenu(open) {
+/// button, and out again by a shelf chosen (`chosen`), a tap beside it, Esc,
+/// or a gamepad's B. A gamepad's ring goes with it: onto the shelf it's on
+/// as it opens, and back to the menu button as it closes, unless a shelf
+/// was chosen, whose games it's on then.
+function showMenu(open, chosen = false) {
     const sidebar = page('sidebar');
     const was = sidebar.classList.contains('open');
     sidebar.classList.toggle('open', open);
     page('menu').setAttribute('aria-expanded', open);
+    const byPad = padFocus !== null || document.body.classList.contains('pointer-gone');
     if (open) {
-        sidebar.querySelector('button.on')?.focus();
-    } else if (was && sidebar.contains(document.activeElement)) {
-        page('menu').focus();
+        const tab = sidebar.querySelector('button.on');
+        tab?.focus();
+        if (tab && byPad) {
+            focusOn(tab);
+        }
+    } else if (was) {
+        if (sidebar.contains(document.activeElement)) {
+            page('menu').focus();
+        }
+        if (padFocus?.closest('#sidebar')) {
+            if (chosen) {
+                padFocus = null; // on the shelf chosen, as it shows it
+            } else {
+                focusOn(page('menu'));
+            }
+        }
     }
 }
+const menuOpen = () => page('sidebar').classList.contains('open');
 page('menu').onclick = () => showMenu(!page('sidebar').classList.contains('open'));
 page('shade').onclick = () => showMenu(false);
 addEventListener(
@@ -1709,18 +1727,22 @@ function focusable() {
     if (settingsOpen()) {
         return [...page('game-settings').querySelectorAll('select, button')];
     }
-    const all = document.querySelectorAll(
-        [
-            '.toolbar button',
-            '.toolbar select',
-            '.shelf:not([hidden]) button',
-            '.shelf:not([hidden]) select',
-            '.shelf:not([hidden]) summary',
-            '.shelf:not([hidden]) label.setting',
-            '.shelf:not([hidden]) label.button',
-            '#disks .tile label',
-        ].join(),
-    );
+    // The sidebar slid in over the page: its shelves alone, as the page
+    // behind's dimmed.
+    const all = menuOpen()
+        ? page('sidebar').querySelectorAll('button')
+        : document.querySelectorAll(
+              [
+                  '.toolbar button',
+                  '.toolbar select',
+                  '.shelf:not([hidden]) button',
+                  '.shelf:not([hidden]) select',
+                  '.shelf:not([hidden]) summary',
+                  '.shelf:not([hidden]) label.setting',
+                  '.shelf:not([hidden]) label.button',
+                  '#disks .tile label',
+              ].join(),
+          );
     return [...all].filter(
         (element) =>
             !element.closest('#games') &&
@@ -1815,6 +1837,19 @@ function backToShelf() {
 /// toolbar; anywhere else, to the nearest that way, down off the bottom of
 /// the toolbar onto the shelf of games.
 function move(way) {
+    // The sidebar slid in over the page, on a phone: up and down it, and
+    // right out of it again, as B is.
+    if (menuOpen()) {
+        if (way === 'right') {
+            return showMenu(false);
+        }
+        const options = focusable();
+        if (!options.includes(padFocus)) {
+            return focusOn(page('sidebar').querySelector('button.on') ?? options[0]);
+        }
+        const next = towards(padFocus, way, options);
+        return next && focusOn(next);
+    }
     if (gamesShowing() && !padFocus && !settingsOpen()) {
         const { columns } = shelfShape(page('games'));
         const at = shelf.indexOf(selectedGame);
@@ -1826,10 +1861,13 @@ function move(way) {
             return focusOn(page('letters').querySelector(`[data-letter="${letterOf(selectedGame)}"]`));
         }
         // Left off the first of a row, onto the shelf's own tab, the sidebar's
-        // to go along.
+        // to go along; on a phone, the sidebar slid in to it.
         const tab = document.querySelector('#sidebar button.on');
         if (way === 'left' && at % columns === 0 && tab?.checkVisibility()) {
             return focusOn(tab);
+        }
+        if (way === 'left' && at % columns === 0 && page('menu').checkVisibility()) {
+            return showMenu(true);
         }
         return above ? focusOn(above) : moveInGames(way);
     }
@@ -1887,16 +1925,25 @@ function moveInSettings(way) {
         return next && focusOn(next);
     }
     if (padFocus.closest('#sections')) {
+        // A phone's: its sidebar slid in, and its menu button over them.
+        const phone = page('menu').checkVisibility();
         if (way === back || way === on) {
             const next = sections[sections.indexOf(padFocus) + (way === back ? -1 : 1)];
-            return next && focusOn(next);
+            if (next) {
+                return focusOn(next);
+            }
+            // Back off the first, on a phone: the sidebar slid in.
+            return way === back && phone && showMenu(true);
         }
         if (way === into) {
             const first = rowsOf(settings)[0]?.[0];
             return first && focusOn(first);
         }
         const tab = document.querySelector('#sidebar button.on');
-        return way === 'left' && tab?.checkVisibility() && focusOn(tab);
+        if (way === 'left' && tab?.checkVisibility()) {
+            return focusOn(tab);
+        }
+        return way === 'up' && phone && focusOn(page('menu'));
     }
     // A section's own, a row at a time, down the page as it reads; along
     // a row, its buttons side by side.
@@ -2153,6 +2200,10 @@ function goBack() {
         page('game-settings').close();
         return true;
     }
+    if (menuOpen()) {
+        showMenu(false);
+        return true;
+    }
     if (padFocus && gamesShowing()) {
         backToShelf();
         return true;
@@ -2165,6 +2216,11 @@ function goBack() {
     const tab = document.querySelector('#sidebar button.on');
     if (padFocus?.closest('#sections') && tab?.checkVisibility()) {
         focusOn(tab);
+        return true;
+    }
+    // On a phone, its sidebar hidden: the menu button over them.
+    if (padFocus?.closest('#sections') && page('menu').checkVisibility()) {
+        focusOn(page('menu'));
         return true;
     }
     const search = page('filter');

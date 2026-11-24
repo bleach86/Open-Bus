@@ -94,9 +94,7 @@ mod tests {
         write(&mut i2c, RTC, &[0x00, 0x80 | 0x58, 0x59, 0x23]);
         assert_eq!(read(&mut i2c, RTC, 0x00, 3), [0xD8, 0x59, 0x23]);
         assert_eq!(read(&mut i2c, RTC, 0x03, 1)[0] & 0x20, 0x20, "OSCRUN");
-        for _ in 0..2 * 8_000_000 {
-            i2c.tick();
-        }
+        i2c.rtc.pass(2.0);
         assert_eq!(
             read(&mut i2c, RTC, 0x00, 5),
             [0x80, 0x00, 0x00, 0x22, 0x02],

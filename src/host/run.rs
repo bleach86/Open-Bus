@@ -14,7 +14,7 @@
 
 use crate::cpu::CPU;
 use crate::host::clock;
-use crate::host::controls::{ACTIONS, Action, BUTTONS, Controls, is_stick, name};
+use crate::host::controls::{ACTIONS, Action, BUTTONS, Controls, REMOTE_OK, is_stick, name};
 use crate::host::display::{COPY_KEY, Display, Gamepad, Key, PASTE_KEY, Scancode};
 use crate::host::files;
 use crate::host::machine::{Input, Machine};
@@ -129,6 +129,10 @@ const FRAMES_A_SECOND: u32 = 60;
 /// How far behind its clock a machine is before it leaves out a picture, if
 /// it can: half a frame.
 const LATE: Duration = Duration::from_millis(8);
+/// How far behind it is when it's been held up, not just slow: paused, as
+/// Android pauses it under a dialog, or its window held still. It goes on
+/// from there, the time gone let go, not rushing to make it up.
+const HELD_UP: Duration = Duration::from_millis(250);
 
 /// How near a display's refresh rate a machine's own frame rate is for its
 /// frames to be kept in step with the refresh, a frame to each, not by its
@@ -329,7 +333,9 @@ impl<M: Machine> Host<M> {
             let entries = changing.entries();
             if changing.waiting {
                 changing.waiting = false;
-                if source == CANCEL {
+                // A TV remote's OK, which isn't bound: nothing bound, as
+                // Escape, the remote having none.
+                if source == CANCEL || source == REMOTE_OK {
                     continue;
                 }
                 let (player, Entry::Bind(action)) = (changing.player, entries[changing.at]) else {
@@ -344,14 +350,14 @@ impl<M: Machine> Host<M> {
                 continue;
             }
             // Choosing and going back as the menus' are bound, as they are
-            // now; and by the keyboard, always.
+            // now; and by the keyboard, and a TV remote's OK, always.
             let mut bound = |action| {
                 self.display
                     .controls()
                     .is_some_and(|controls| controls.of(0, action).contains(&source.as_str()))
             };
             let (accept, back) = (
-                source == "key:Return" || bound(Action::MenuAccept),
+                source == "key:Return" || source == REMOTE_OK || bound(Action::MenuAccept),
                 source == CANCEL || bound(Action::MenuBack),
             );
             let Some(changing) = &mut self.changing else {
@@ -472,6 +478,10 @@ impl<M: Machine> Host<M> {
             at: 0,
             before: self.display.gamepad(),
         });
+        // The keyboard the host's while it's up, not the machine's, whose
+        // keys aren't the menu's (a TV remote's OK did nothing in the X16's
+        // menu).
+        self.display.raw_keys(false);
     }
 
     /// Whether the menu's asked for by the gamepad: Select and Start tapped
@@ -491,6 +501,20 @@ impl<M: Machine> Host<M> {
     /// A frame of the menu: the machine stands still, as for the controls.
     /// Up and down it by the gamepad or the keys, A or Return to choose, B,
     /// Escape or F1 to go back to the game.
+    /// A frame held still from outside, as Android's own menus over the
+    /// game hold it: the machine stands still, its picture kept, and the
+    /// time it would have taken let go, for it not to rush after.
+    fn still_frame(&mut self) -> bool {
+        self.cycles += (self.cpu.clock_hz / FRAMES_A_SECOND) as u64;
+        self.show();
+        if self.display.closed() {
+            self.cpu.memory.keep_saved(true);
+            files::all_saved();
+            return false;
+        }
+        true
+    }
+
     fn menu_frame(&mut self) -> bool {
         self.cycles += (self.cpu.clock_hz / FRAMES_A_SECOND) as u64;
         self.show();
@@ -534,10 +558,11 @@ impl<M: Machine> Host<M> {
             menu.at = (menu.at + 1) % count;
         }
         let item = menu.items[menu.at];
-        if back {
+        if back || choose {
             self.menu = None;
-        } else if choose {
-            self.menu = None;
+            self.display.raw_keys(self.cpu.memory.raw_keys());
+        }
+        if choose && !back {
             match item {
                 Item::Resume => {}
                 Item::Save => self.save_state(),
@@ -563,7 +588,7 @@ impl<M: Machine> Host<M> {
     }
 
     /// The menu's lines, with the one chosen marked.
-    fn menu_lines(&mut self) -> Option<Vec<String>> {
+    pub(crate) fn menu_lines(&mut self) -> Option<Vec<String>> {
         let menu = self.menu.as_ref()?;
         let mut lines = vec!["PAUSED".to_string()];
         lines.extend(menu.items.iter().enumerate().map(|(place, item)| {
@@ -620,6 +645,9 @@ impl<M: Machine> Host<M> {
         }
         if self.menu.is_some() {
             return self.menu_frame();
+        }
+        if self.display.held_still() {
+            return self.still_frame();
         }
         let began = clock::seconds();
         let rewinding = self.rewind();
@@ -781,7 +809,7 @@ impl<M: Machine> Host<M> {
 
     /// Frames, each when it's due at the CPU's clock, until the window's
     /// closed. The time due is from the start, so a late frame is made up
-    /// by the next.
+    /// by the next; but not the time it was held up for.
     pub fn run(mut self) {
         let resuming = RESUME.load(Ordering::Relaxed);
         if resuming {
@@ -816,6 +844,11 @@ impl<M: Machine> Host<M> {
             }
             let due_ns = (self.cycles - base) as u128 * 1_000_000_000 / self.cpu.clock_hz as u128;
             let due = Duration::from_nanos(due_ns as u64);
+            if elapsed > due + HELD_UP {
+                (start, base) = (Instant::now(), self.cycles);
+                self.late = false;
+                continue;
+            }
             if due > elapsed {
                 sleep(due - elapsed);
             }

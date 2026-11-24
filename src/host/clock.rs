@@ -31,6 +31,21 @@ extern "C" {
     pub fn seconds() -> f64;
 }
 
+/// How far into its second the host's time is, 0 to 1: for a clock set to
+/// `now`, which has whole seconds, to turn over as the host's does.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn into_second() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |since| since.subsec_nanos() as f64 / 1e9)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(inline_js = "export function into_second() { return (Date.now() % 1000) / 1000; }")]
+extern "C" {
+    pub fn into_second() -> f64;
+}
+
 /// A date and time: the day of the week 0 Sunday to 6 Saturday.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DateTime {
