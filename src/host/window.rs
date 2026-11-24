@@ -314,7 +314,9 @@ impl Window {
             key_changes: VecDeque::new(),
             raw_held: HashSet::new(),
         };
-        if fullscreen {
+        // On Android, always: SDL's activity then hides the system's bars,
+        // and draws to the screen's edges, a camera's cutout too.
+        if fullscreen || cfg!(target_os = "android") {
             window.toggle_fullscreen();
         }
         window
@@ -394,7 +396,10 @@ impl Window {
 
     /// Fullscreen, at the screen's own size; or back to the window.
     fn toggle_fullscreen(&mut self) {
-        let fullscreen = self.canvas.window().fullscreen_state() == FullscreenType::Off;
+        // On Android, fullscreen it stays: windowed, a phone's bars are over
+        // the picture.
+        let fullscreen = cfg!(target_os = "android")
+            || self.canvas.window().fullscreen_state() == FullscreenType::Off;
         let state = if fullscreen {
             FullscreenType::Desktop
         } else {
