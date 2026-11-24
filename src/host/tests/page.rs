@@ -27,20 +27,35 @@ mod tests {
     }
 
     /// The page asks the server after its files, as a browser left to itself
-    /// won't: one left out of its list could go on being an old one.
+    /// won't, and its service worker keeps them for it offline: one left out
+    /// of their list, shell.js's, could go on being an old one, or missing.
+    /// But for shell.js, which the page loads itself and the worker keeps by
+    /// name, and the worker, sw.js, which the browser asks after itself.
     #[test]
     fn the_page_asks_after_every_file_of_its_own() {
         let web = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web");
-        let page = std::fs::read_to_string(web.join("index.html")).unwrap();
+        let shell = std::fs::read_to_string(web.join("shell.js")).unwrap();
         for entry in std::fs::read_dir(&web).unwrap() {
             let name = entry.unwrap().file_name().to_string_lossy().into_owned();
-            if name.ends_with(".js") || name.ends_with(".css") {
+            if (name.ends_with(".js") || name.ends_with(".css"))
+                && !["shell.js", "sw.js"].contains(&name.as_str())
+            {
                 assert!(
-                    page.contains(&format!("'{name}'")),
-                    "{name} isn't in the page's list"
+                    shell.contains(&format!("'{name}'")),
+                    "{name} isn't in shell.js's list"
                 );
             }
         }
+        let page = std::fs::read_to_string(web.join("index.html")).unwrap();
+        let worker = std::fs::read_to_string(web.join("sw.js")).unwrap();
+        assert!(
+            page.contains(r#"<script src="shell.js">"#),
+            "the page doesn't load shell.js"
+        );
+        assert!(
+            worker.contains("'shell.js'"),
+            "the worker doesn't keep shell.js"
+        );
     }
 
     #[test]
