@@ -23,8 +23,10 @@ import android.view.View;
  * Any number of fingers at once; one that lands on the D-pad keeps it
  * however far it slides, and one between A and B holds both. What's held
  * is told as it changes, by the bits of the emulator's touch module, each
- * new press a tick of the phone's touch feedback, as its settings have it.
- * Being moved, it holds nothing: each piece goes where it's dragged.
+ * new press a tick of the phone's touch feedback, as its settings have it,
+ * unless it's been turned off. A higher than B, as a NES pad's are, or B
+ * higher, as it's been set. Being moved, it holds nothing: each piece goes
+ * where it's dragged.
  */
 public class TouchPad extends View {
     /** As the emulator's touch module has them. */
@@ -38,6 +40,7 @@ public class TouchPad extends View {
 
     /** Where it's kept: each piece's place, a share of the screen across and down; and its size. */
     private static final String KEPT = "touch_pad", SCALE = "scale";
+    private static final String TICKS = "haptics", B_HIGHER = "b_higher";
     private static final String[] PIECES = {"dpad", "buttons", "select", "start"};
     private static final int DPAD = 0, BUTTONS = 1, SELECT_PILL = 2, START_PILL = 3;
     static final float SMALLEST = 0.6f, BIGGEST = 1.8f;
@@ -71,6 +74,7 @@ public class TouchPad extends View {
     private final SparseBooleanArray onDpad = new SparseBooleanArray();
 
     private float scale;
+    private boolean ticks, bHigher;
     private int held;
     /** Being moved: the piece that's dragged, or -1, and how far the finger's off its middle. */
     private int dragged = -1;
@@ -86,7 +90,7 @@ public class TouchPad extends View {
         this.moving = moving;
         kept = context.getSharedPreferences(KEPT, Context.MODE_PRIVATE);
         dp = context.getResources().getDisplayMetrics().density;
-        scale = kept.getFloat(SCALE, 1);
+        read();
         fill.setColor(0x38ffffff);
         pressed.setColor(0x90ffffff);
         edge.setColor(0x99ffffff);
@@ -111,8 +115,37 @@ public class TouchPad extends View {
 
     /** Where it's kept and how big, read again: as it's been moved. */
     void reload() {
-        scale = kept.getFloat(SCALE, 1);
+        read();
         place();
+        invalidate();
+    }
+
+    private void read() {
+        scale = kept.getFloat(SCALE, 1);
+        ticks = kept.getBoolean(TICKS, true);
+        bHigher = kept.getBoolean(B_HIGHER, false);
+    }
+
+    /** Whether each press ticks. */
+    boolean ticks() {
+        return ticks;
+    }
+
+    /** Each press's tick turned on or off, and kept. */
+    void ticks(boolean on) {
+        ticks = on;
+        kept.edit().putBoolean(TICKS, on).apply();
+    }
+
+    /** Whether B's higher than A. */
+    boolean bHigher() {
+        return bHigher;
+    }
+
+    /** B made higher than A, or A than B, and kept. */
+    void bHigher(boolean higher) {
+        bHigher = higher;
+        kept.edit().putBoolean(B_HIGHER, higher).apply();
         invalidate();
     }
 
@@ -221,7 +254,7 @@ public class TouchPad extends View {
     }
 
     private float aY() {
-        return at[BUTTONS].y - BUTTONS_STAGGER * u();
+        return at[BUTTONS].y + (bHigher ? 1 : -1) * BUTTONS_STAGGER * u();
     }
 
     private float bX() {
@@ -229,7 +262,7 @@ public class TouchPad extends View {
     }
 
     private float bY() {
-        return at[BUTTONS].y + BUTTONS_STAGGER * u();
+        return at[BUTTONS].y - (bHigher ? 1 : -1) * BUTTONS_STAGGER * u();
     }
 
     @Override
@@ -348,7 +381,7 @@ public class TouchPad extends View {
                         dragged = piece;
                         dragX = x - at[piece].x;
                         dragY = y - at[piece].y;
-                        performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                        tick();
                         break;
                     }
                 }
@@ -430,12 +463,18 @@ public class TouchPad extends View {
         return 0;
     }
 
+    private void tick() {
+        if (ticks) {
+            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+        }
+    }
+
     private void tell(int buttons) {
         if (buttons == held) {
             return;
         }
         if ((buttons & ~held) != 0) {
-            performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+            tick();
         }
         held = buttons;
         told.held(buttons);

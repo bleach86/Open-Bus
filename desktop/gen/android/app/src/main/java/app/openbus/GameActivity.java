@@ -263,8 +263,9 @@ public class GameActivity extends SDLActivity {
      * The touch screen's gamepad moved and resized: a copy of it over the
      * whole screen, the game standing still behind it as it has the focus,
      * each piece dragged where it's wanted, kept as it's let go; Smaller,
-     * Bigger and Reset at the top, and Done, or Back, the game going again
-     * with it as it's been made.
+     * Bigger and Reset at the top, under them each press's tick turned on
+     * or off and which of A and B is higher; and Done, or Back, the game
+     * going again with it as it's been made.
      */
     private void moveControls() {
         Dialog moving = new Dialog(this, android.R.style.Theme_Translucent_NoTitleBar_Fullscreen);
@@ -274,11 +275,35 @@ public class GameActivity extends SDLActivity {
         screen.addView(editing, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         LinearLayout tools = new LinearLayout(this);
-        tools.setOrientation(LinearLayout.HORIZONTAL);
-        tools.addView(tool("Smaller", v -> editing.resize(-0.1f)));
-        tools.addView(tool("Bigger", v -> editing.resize(0.1f)));
-        tools.addView(tool("Reset", v -> editing.reset()));
-        tools.addView(tool("Done", v -> moving.dismiss()));
+        tools.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout sizes = new LinearLayout(this), choices = new LinearLayout(this);
+        choices.setGravity(Gravity.CENTER_HORIZONTAL);
+        Button ticks = tool("", null);
+        Button higher = tool("", null);
+        Runnable named = () -> {
+            ticks.setText(editing.ticks() ? "Vibrate: on" : "Vibrate: off");
+            higher.setText(editing.bHigher() ? "B higher" : "A higher");
+        };
+        ticks.setOnClickListener(v -> {
+            editing.ticks(!editing.ticks());
+            named.run();
+        });
+        higher.setOnClickListener(v -> {
+            editing.bHigher(!editing.bHigher());
+            named.run();
+        });
+        named.run();
+        sizes.addView(tool("Smaller", v -> editing.resize(-0.1f)));
+        sizes.addView(tool("Bigger", v -> editing.resize(0.1f)));
+        sizes.addView(tool("Reset", v -> {
+            editing.reset();
+            named.run();
+        }));
+        sizes.addView(tool("Done", v -> moving.dismiss()));
+        choices.addView(ticks);
+        choices.addView(higher);
+        tools.addView(sizes);
+        tools.addView(choices);
         FrameLayout.LayoutParams top = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.CENTER_HORIZONTAL);
