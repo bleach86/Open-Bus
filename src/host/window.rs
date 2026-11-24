@@ -947,6 +947,10 @@ impl Display for Window {
 
     /// The first gamepad's, or the
     /// keyboard's.
+    fn held_still(&self) -> bool {
+        touch::still()
+    }
+
     fn gamepad(&self) -> Gamepad {
         // With a touch screen's buttons, on Android, as it has them.
         touch::onto(self.mapped(0))

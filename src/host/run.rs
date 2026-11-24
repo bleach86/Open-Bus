@@ -501,6 +501,20 @@ impl<M: Machine> Host<M> {
     /// A frame of the menu: the machine stands still, as for the controls.
     /// Up and down it by the gamepad or the keys, A or Return to choose, B,
     /// Escape or F1 to go back to the game.
+    /// A frame held still from outside, as Android's own menus over the
+    /// game hold it: the machine stands still, its picture kept, and the
+    /// time it would have taken let go, for it not to rush after.
+    fn still_frame(&mut self) -> bool {
+        self.cycles += (self.cpu.clock_hz / FRAMES_A_SECOND) as u64;
+        self.show();
+        if self.display.closed() {
+            self.cpu.memory.keep_saved(true);
+            files::all_saved();
+            return false;
+        }
+        true
+    }
+
     fn menu_frame(&mut self) -> bool {
         self.cycles += (self.cpu.clock_hz / FRAMES_A_SECOND) as u64;
         self.show();
@@ -631,6 +645,9 @@ impl<M: Machine> Host<M> {
         }
         if self.menu.is_some() {
             return self.menu_frame();
+        }
+        if self.display.held_still() {
+            return self.still_frame();
         }
         let began = clock::seconds();
         let rewinding = self.rewind();

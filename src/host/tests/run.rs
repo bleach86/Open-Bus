@@ -46,6 +46,8 @@ mod tests {
         mouse: Vec<bool>,
         /// Whether the keyboard's the machine's, each time it's told.
         raw_keys: Vec<bool>,
+        /// Whether it's holding the game still.
+        still: bool,
     }
 
     /// The test's window: its own controls, never saved, as the window's
@@ -106,6 +108,10 @@ mod tests {
 
         fn rewinding(&self) -> bool {
             self.0.borrow().rewind
+        }
+
+        fn held_still(&self) -> bool {
+            self.0.borrow().still
         }
 
         fn closed(&self) -> bool {
@@ -677,5 +683,22 @@ mod tests {
             [true, false, true],
             "not the X16's again"
         );
+    }
+
+    #[test]
+    fn held_still_the_machine_stands_still_and_goes_on_after() {
+        let (mut host, seen, _) = host("held_still");
+        host.frame();
+        let ran = host.cpu.clock;
+        assert!(ran > 0, "not running");
+        seen.borrow_mut().still = true;
+        let shown = seen.borrow().pictures;
+        host.frame();
+        host.frame();
+        assert_eq!(host.cpu.clock, ran, "it ran, held still");
+        assert_eq!(seen.borrow().pictures, shown + 2, "its picture not kept");
+        seen.borrow_mut().still = false;
+        host.frame();
+        assert!(host.cpu.clock > ran, "not going again");
     }
 }

@@ -68,6 +68,12 @@ pub trait Display {
     /// them the gamepads' then.
     fn raw_keys(&mut self, _on: bool) {}
 
+    /// Whether the game's held still from outside, as Android's own menus
+    /// over it hold it: the machine standing still till it's let go.
+    fn held_still(&self) -> bool {
+        false
+    }
+
     /// The next key pressed or let go, as `raw_keys` has them, pressed
     /// again as it repeats; but those the display keeps for its own uses.
     fn key_change(&mut self) -> Option<(Scancode, bool)> {

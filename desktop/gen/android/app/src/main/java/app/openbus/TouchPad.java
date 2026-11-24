@@ -6,12 +6,14 @@ import android.graphics.Canvas;
 import android.graphics.DashPathEffect;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.RectF;
 import android.util.SparseBooleanArray;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.WindowManager;
 
 /**
  * A touch screen's gamepad, over the game: a D-pad, A and B as a NES pad
@@ -26,7 +28,9 @@ import android.view.View;
  * new press a tick of the phone's touch feedback, as its settings have it,
  * unless it's been turned off. A higher than B, as a NES pad's are, or B
  * higher, as it's been set. Being moved, it holds nothing: each piece goes
- * where it's dragged.
+ * where it's dragged. Each piece is placed on the screen itself, not in the
+ * game's window: as Android's bars come up over it, and the window's
+ * narrowed or moved for them, they stay where they are.
  */
 public class TouchPad extends View {
     /** As the emulator's touch module has them. */
@@ -72,6 +76,10 @@ public class TouchPad extends View {
     private final PointF[] at = {new PointF(), new PointF(), new PointF(), new PointF()};
     /** The fingers that landed on the D-pad, by their pointer ids. */
     private final SparseBooleanArray onDpad = new SparseBooleanArray();
+
+    /** The screen's size, and where the view is on it. */
+    private int screenWidth, screenHeight;
+    private final int[] onScreen = new int[2];
 
     private float scale;
     private boolean ticks, bHigher;
@@ -173,12 +181,22 @@ public class TouchPad extends View {
 
     @Override
     protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
+        Point size = new Point();
+        getContext().getSystemService(WindowManager.class).getDefaultDisplay().getRealSize(size);
+        screenWidth = size.x;
+        screenHeight = size.y;
         place();
+    }
+
+    @Override
+    protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+        super.onLayout(changed, left, top, right, bottom);
+        invalidate();
     }
 
     /** Each piece where it's kept, or where it comes. */
     private void place() {
-        int width = getWidth(), height = getHeight();
+        int width = screenWidth, height = screenHeight;
         if (width == 0 || height == 0) {
             return;
         }
@@ -203,8 +221,8 @@ public class TouchPad extends View {
     private void keep() {
         SharedPreferences.Editor editor = kept.edit().putFloat(SCALE, scale);
         for (int piece = 0; piece < at.length; piece++) {
-            editor.putFloat(PIECES[piece] + "_x", at[piece].x / getWidth());
-            editor.putFloat(PIECES[piece] + "_y", at[piece].y / getHeight());
+            editor.putFloat(PIECES[piece] + "_x", at[piece].x / screenWidth);
+            editor.putFloat(PIECES[piece] + "_y", at[piece].y / screenHeight);
         }
         editor.apply();
     }
@@ -213,8 +231,8 @@ public class TouchPad extends View {
     private void clamp(int piece) {
         bounds(piece, box);
         PointF point = at[piece];
-        point.x += Math.max(0, -box.left) - Math.max(0, box.right - getWidth());
-        point.y += Math.max(0, -box.top) - Math.max(0, box.bottom - getHeight());
+        point.x += Math.max(0, -box.left) - Math.max(0, box.right - screenWidth);
+        point.y += Math.max(0, -box.top) - Math.max(0, box.bottom - screenHeight);
     }
 
     /** What `piece` covers, into `into`. */
@@ -267,6 +285,15 @@ public class TouchPad extends View {
 
     @Override
     protected void onDraw(Canvas canvas) {
+        // Where it is on the screen, its pieces where they are on it.
+        getLocationOnScreen(onScreen);
+        canvas.save();
+        canvas.translate(-onScreen[0], -onScreen[1]);
+        drawPieces(canvas);
+        canvas.restore();
+    }
+
+    private void drawPieces(Canvas canvas) {
         float u = u(), pad = PAD * u, half = ARM * u, round = 6 * u;
         float x = at[DPAD].x, y = at[DPAD].y;
         canvas.drawPath(cross, fill);
@@ -336,6 +363,7 @@ public class TouchPad extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        getLocationOnScreen(onScreen);
         if (moving) {
             return move(event);
         }
@@ -350,14 +378,14 @@ public class TouchPad extends View {
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             int landed = event.getActionIndex();
             onDpad.put(event.getPointerId(landed),
-                    onDpad(event.getX(landed), event.getY(landed)));
+                    onDpad(event.getX(landed) + onScreen[0], event.getY(landed) + onScreen[1]));
         }
         int buttons = 0;
         for (int n = 0; n < event.getPointerCount(); n++) {
             if (n == lifted) {
                 continue;
             }
-            float x = event.getX(n), y = event.getY(n);
+            float x = event.getX(n) + onScreen[0], y = event.getY(n) + onScreen[1];
             buttons |= onDpad.get(event.getPointerId(n)) ? directions(x, y) : buttons(x, y);
         }
         if (lifted >= 0) {
@@ -369,7 +397,7 @@ public class TouchPad extends View {
 
     /** Being moved: the piece a finger lands on dragged with it, one at a time, and kept as it's let go. */
     private boolean move(MotionEvent event) {
-        float x = event.getX(), y = event.getY();
+        float x = event.getX() + onScreen[0], y = event.getY() + onScreen[1];
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 dragged = -1;

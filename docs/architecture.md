@@ -298,7 +298,10 @@ use. The emulator is also shipped as a program (`libcpu_emu_exe.so`) for the
 windowless subcommands.
 
 On a touch screen with no gamepad plugged in, `GameActivity` handles Back
-itself, with Android's own pause dialog. For the NES it also lays `TouchPad`,
+itself, with a pause menu of its own. That menu and the touch controls' editor
+are views in the game's window, not dialogs. They hold the game still through
+`host::touch::hold_still`, not SDL's pause, which takes the window out of
+fullscreen and brings Android's bars up. For the NES it also lays `TouchPad`,
 an Android view, over SDL's surface. Its presses go through the JNI call
 `GameActivity.touched` into `host::touch`, a fixed slot that the first player's
 gamepad adds onto in `Window::gamepad`. They're not a control, so rebinding
