@@ -44,6 +44,13 @@ pub trait Display {
         Gamepad::default()
     }
 
+    /// The first gamepad as Select and Start ask for the menu with: as
+    /// `gamepad`, but for a touch screen's buttons, which can't work the
+    /// menu once it's up (it has its own pause), so are only the game's.
+    fn menu_pad(&self) -> Gamepad {
+        self.gamepad()
+    }
+
     /// A frame gone by with nothing to show: what's come in still taken in.
     fn no_picture(&mut self) {}
 

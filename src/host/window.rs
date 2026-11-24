@@ -956,6 +956,10 @@ impl Display for Window {
         touch::onto(self.mapped(0))
     }
 
+    fn menu_pad(&self) -> Gamepad {
+        self.mapped(0)
+    }
+
     fn gamepad_2(&self) -> Gamepad {
         self.mapped(1)
     }
