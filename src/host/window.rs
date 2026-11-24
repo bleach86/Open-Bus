@@ -28,6 +28,7 @@ use crate::host::display::{
 };
 use crate::host::pads::{self, Pads};
 use crate::host::sound::Stretch;
+use crate::host::touch;
 use sdl2::EventPump;
 use sdl2::audio::{AudioQueue, AudioSpecDesired};
 use sdl2::clipboard::ClipboardUtil;
@@ -947,7 +948,8 @@ impl Display for Window {
     /// The first gamepad's, or the
     /// keyboard's.
     fn gamepad(&self) -> Gamepad {
-        self.mapped(0)
+        // With a touch screen's buttons, on Android, as it has them.
+        touch::onto(self.mapped(0))
     }
 
     fn gamepad_2(&self) -> Gamepad {

@@ -62,6 +62,8 @@ pub mod host {
     pub mod stats;
     pub mod terminal;
     #[cfg(not(target_arch = "wasm32"))]
+    pub mod touch;
+    #[cfg(not(target_arch = "wasm32"))]
     pub mod window;
     pub mod zip;
 
@@ -81,6 +83,8 @@ pub mod host {
         mod stats;
         #[cfg(not(target_arch = "wasm32"))]
         mod terminal;
+        #[cfg(not(target_arch = "wasm32"))]
+        mod touch;
         #[cfg(not(target_arch = "wasm32"))]
         mod window;
         mod zip;

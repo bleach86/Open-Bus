@@ -2,12 +2,14 @@ package app.openbus;
 
 import android.app.AlertDialog;
 import android.content.pm.PackageManager;
+import android.hardware.input.InputManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.InputDevice;
 import android.view.KeyEvent;
+import android.view.ViewGroup;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import android.system.ErrnoException;
@@ -35,6 +37,8 @@ public class GameActivity extends SDLActivity {
     private static final long RESET_HELD_MS = 250;
 
     private AlertDialog paused;
+    /** A touch screen's gamepad, for the NES, or null: the app's not on one. */
+    private TouchPad touchPad;
     /** What was chosen from it, or -1, to be done as it's gone. */
     private int chosen = -1;
 
@@ -60,8 +64,56 @@ public class GameActivity extends SDLActivity {
         }
         tell("", false);
         super.onCreate(savedInstanceState);
-        if (getIntent().getStringArrayExtra("args") == null) {
+        String[] args = getIntent().getStringArrayExtra("args");
+        if (args == null) {
             finish();
+            return;
+        }
+        if (args.length > 0 && args[0].equals("nes") && !mBrokenLibraries && mLayout != null
+                && getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)) {
+            touchPad = new TouchPad(this, GameActivity::touched);
+            mLayout.addView(touchPad, new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            showTouchPad();
+            getSystemService(InputManager.class).registerInputDeviceListener(pads, null);
+        }
+    }
+
+    /** The touch screen's gamepad gone as a gamepad's plugged in, back as it's taken out. */
+    private final InputManager.InputDeviceListener pads = new InputManager.InputDeviceListener() {
+        @Override
+        public void onInputDeviceAdded(int id) {
+            showTouchPad();
+        }
+
+        @Override
+        public void onInputDeviceRemoved(int id) {
+            showTouchPad();
+        }
+
+        @Override
+        public void onInputDeviceChanged(int id) {
+            showTouchPad();
+        }
+    };
+
+    private void showTouchPad() {
+        boolean shown = !padPlugged();
+        if (!shown) {
+            touchPad.letGo();
+        }
+        touchPad.setVisibility(shown ? ViewGroup.VISIBLE : ViewGroup.GONE);
+    }
+
+    /** The touch screen's buttons held, as the emulator's touch module has them. */
+    private static native void touched(int buttons);
+
+    /** What's held let go as the game's paused, a dialog over it or another app. */
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (!hasFocus && touchPad != null) {
+            touchPad.letGo();
         }
     }
 
@@ -71,6 +123,9 @@ public class GameActivity extends SDLActivity {
      */
     @Override
     protected void onDestroy() {
+        if (touchPad != null) {
+            getSystemService(InputManager.class).unregisterInputDeviceListener(pads);
+        }
         super.onDestroy();
         tell(ENDED, true);
         System.exit(0);
@@ -111,16 +166,18 @@ public class GameActivity extends SDLActivity {
         if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)) {
             return false;
         }
-        if (isPad(event.getSource())) {
-            return false;
-        }
+        return !isPad(event.getSource()) && !padPlugged();
+    }
+
+    /** Whether there's a gamepad plugged in or paired. */
+    private static boolean padPlugged() {
         for (int id : InputDevice.getDeviceIds()) {
             InputDevice device = InputDevice.getDevice(id);
             if (device != null && plugged(device) && isPad(device.getSources())) {
-                return false;
+                return true;
             }
         }
-        return true;
+        return false;
     }
 
     /**
