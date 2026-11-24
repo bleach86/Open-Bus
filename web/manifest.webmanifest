@@ -1,0 +1,62 @@
+{
+  "name": "Open Bus",
+  "short_name": "Open Bus",
+  "description": "Old machines, emulated cycle by cycle: the NES, Atari 2600 and 7800, Apple II and Commander X16, with a library of your games.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d0221",
+  "theme_color": "#0d0221",
+  "categories": ["games", "entertainment"],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "screenshots/library-wide.webp",
+      "sizes": "1920x1080",
+      "type": "image/webp",
+      "form_factor": "wide",
+      "label": "The library: your games by system, with covers, years and genres"
+    },
+    {
+      "src": "screenshots/game-wide.webp",
+      "sizes": "1920x1080",
+      "type": "image/webp",
+      "form_factor": "wide",
+      "label": "A NES game playing"
+    },
+    {
+      "src": "screenshots/library-narrow.webp",
+      "sizes": "1030x2288",
+      "type": "image/webp",
+      "form_factor": "narrow",
+      "label": "The library on a phone"
+    },
+    {
+      "src": "screenshots/game-narrow.webp",
+      "sizes": "1030x2288",
+      "type": "image/webp",
+      "form_factor": "narrow",
+      "label": "A NES game on a phone, with on-screen controls"
+    }
+  ]
+}
