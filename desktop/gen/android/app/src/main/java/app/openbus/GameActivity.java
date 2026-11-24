@@ -123,12 +123,27 @@ public class GameActivity extends SDLActivity {
     /** The touch screen's buttons held, as the emulator's touch module has them. */
     private static native void touched(int buttons);
 
-    /** What's held let go as the game's paused, a dialog over it or another app. */
+    /**
+     * The game paused as anything takes its focus: the pause dialog, the
+     * controls being moved, Android's notifications pulled down. SDL only
+     * pauses it so as the app's put away, where a phone could show two apps
+     * at once (any since Android 7), so it's paused here, as SDL would
+     * have; and it goes again as SDL has it, its focus back. Showing beside
+     * another app, it's left going, as SDL leaves it. What's held on the
+     * screen's let go.
+     */
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
-        if (!hasFocus && touchPad != null) {
+        if (hasFocus || mBrokenLibraries) {
+            return;
+        }
+        if (touchPad != null) {
             touchPad.letGo();
+        }
+        if (!isInMultiWindowMode()) {
+            mNextNativeState = NativeState.PAUSED;
+            handleNativeState();
         }
     }
 

@@ -129,6 +129,10 @@ const FRAMES_A_SECOND: u32 = 60;
 /// How far behind its clock a machine is before it leaves out a picture, if
 /// it can: half a frame.
 const LATE: Duration = Duration::from_millis(8);
+/// How far behind it is when it's been held up, not just slow: paused, as
+/// Android pauses it under a dialog, or its window held still. It goes on
+/// from there, the time gone let go, not rushing to make it up.
+const HELD_UP: Duration = Duration::from_millis(250);
 
 /// How near a display's refresh rate a machine's own frame rate is for its
 /// frames to be kept in step with the refresh, a frame to each, not by its
@@ -788,7 +792,7 @@ impl<M: Machine> Host<M> {
 
     /// Frames, each when it's due at the CPU's clock, until the window's
     /// closed. The time due is from the start, so a late frame is made up
-    /// by the next.
+    /// by the next; but not the time it was held up for.
     pub fn run(mut self) {
         let resuming = RESUME.load(Ordering::Relaxed);
         if resuming {
@@ -823,6 +827,11 @@ impl<M: Machine> Host<M> {
             }
             let due_ns = (self.cycles - base) as u128 * 1_000_000_000 / self.cpu.clock_hz as u128;
             let due = Duration::from_nanos(due_ns as u64);
+            if elapsed > due + HELD_UP {
+                (start, base) = (Instant::now(), self.cycles);
+                self.late = false;
+                continue;
+            }
             if due > elapsed {
                 sleep(due - elapsed);
             }
