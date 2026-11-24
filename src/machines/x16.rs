@@ -208,8 +208,8 @@ pub struct X16 {
     /// The YM2151's clock, in 8ths of a microsecond: its next tick due as
     /// this passes the CPU's.
     ym_clock: u32,
-    /// The cycles gone by since VERA, the YM2151, the RTC and the sound
-    /// were brought up to date, and those until one of them's next due
+    /// The cycles gone by since VERA, the YM2151 and the sound were brought
+    /// up to date, and those until one of them's next due
     /// to do something: run all at once, as they come due, or as the CPU
     /// reaches them, not a cycle at a time.
     #[serde(skip)]
@@ -340,7 +340,6 @@ impl X16 {
     /// SDA as a device does; the SNES controllers latched or clocked, and
     /// their data.
     fn port_a_changed(&mut self) {
-        // The RTC's time as it is, before it's asked, or set.
         self.catch_up();
         let via = &self.vias[0];
         // A pin's high unless it's an output set low: pulled up, let go.
@@ -401,7 +400,7 @@ impl X16 {
         }
     }
 
-    /// VERA, the YM2151, the RTC and the sound brought up to date, run the
+    /// VERA, the YM2151 and the sound brought up to date, run the
     /// cycles gone by: no more than until the first's due, as they're
     /// counted down to it, so as it is each cycle at a time. And those
     /// until the next is due counted. To be done as any's reached, before
@@ -414,7 +413,6 @@ impl X16 {
                 self.sounded += gone - 1;
             }
             self.vera.run(gone);
-            self.i2c.run(gone);
             self.network.run(gone);
             let ym_clock = self.ym_clock as u64 + gone as u64 * YM_CLOCK_HZ as u64;
             self.ym_clock = (ym_clock % CLOCK_HZ as u64) as u32;
@@ -434,7 +432,8 @@ impl X16 {
         self.count();
     }
 
-    /// The cycles until VERA, the YM2151 or the RTC is next due, counted.
+    /// The cycles until VERA, the YM2151 or the network card is next due,
+    /// counted.
     fn count(&mut self) {
         // The YM2151's ticks to its next, as the CPU's cycles.
         let ym_due = (self.ym.due() as u64 * CLOCK_HZ as u64 - self.ym_clock as u64)
@@ -442,7 +441,6 @@ impl X16 {
         self.until = self
             .vera
             .due()
-            .min(self.i2c.due())
             .min(self.network.due())
             .min(ym_due.min(u32::MAX as u64) as u32);
     }
