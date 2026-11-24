@@ -108,6 +108,12 @@ pub fn said(source: &str) -> String {
 
 /// Whether a binding's a stick's: left alone when a button's bound over it,
 /// a stick steering whatever the D-pad is.
+/// A TV remote's OK, the middle of its arrows, as Android gives it: the key
+/// Select, which a computer's keyboard hasn't. Not a control: never bound,
+/// nor kept, so nothing bound to a keyboard or a gamepad touches it. It
+/// chooses in the menus, always (and in a game is nothing).
+pub const REMOTE_OK: &str = "key:Select";
+
 pub fn is_stick(source: &str) -> bool {
     source.starts_with("pad:left") && source.ends_with(['+', '-'])
 }
@@ -168,11 +174,6 @@ impl Default for Controls {
         for (action, source) in KEYBOARD {
             bindings.push((0, action, source.to_string()));
         }
-        // A TV remote's OK button, the middle of its arrows: A, to choose.
-        #[cfg(target_os = "android")]
-        bindings.push((0, Action::A, "key:Select".to_string()));
-        #[cfg(target_os = "android")]
-        bindings.push((0, Action::MenuAccept, "key:Select".to_string()));
         bindings.push((0, Action::MenuAccept, "pad:a".to_string()));
         bindings.push((0, Action::MenuBack, "pad:b".to_string()));
         bindings.push((0, Action::Library, "pad:guide".to_string()));
@@ -202,8 +203,12 @@ impl Controls {
     /// `source` bound to `action` for `player`: in place of the same kind
     /// bound to it before, a key's of a key, a button's of a button, a stick
     /// staying; and no longer anything else of that player's, but for the
-    /// menus', a game's and a menu's each having it.
+    /// menus', a game's and a menu's each having it. A TV remote's OK
+    /// isn't bound.
     pub fn bind(&mut self, player: usize, action: Action, source: &str) {
+        if source == REMOTE_OK {
+            return;
+        }
         let kind = |source: &str| source.split(':').next().unwrap_or("").to_string();
         let new_kind = kind(source);
         self.bindings.retain(|(who, what, old)| {
@@ -248,6 +253,10 @@ impl Controls {
                 "2" => 1,
                 _ => continue,
             };
+            // A TV remote's OK, as was kept before it wasn't a control: not.
+            if source == REMOTE_OK {
+                continue;
+            }
             if let Some(&action) = ACTIONS.iter().find(|&&action| word(action) == what) {
                 bindings.push((player, action, source.to_string()));
             }

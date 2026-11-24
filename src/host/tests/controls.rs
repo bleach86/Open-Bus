@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::host::controls::{ACTIONS, Action, Controls, said};
+    use crate::host::controls::{ACTIONS, Action, Controls, REMOTE_OK, said};
 
     #[test]
     fn the_defaults_are_the_controls_as_they_were() {
@@ -37,6 +37,33 @@ mod tests {
         controls.bind(0, Action::A, "key:C");
         let bound = controls.of(0, Action::A);
         assert!(bound.contains(&"pad:a") && bound.contains(&"key:C") && !bound.contains(&"key:X"));
+    }
+
+    #[test]
+    fn a_tv_remotes_ok_is_never_bound_nor_kept() {
+        let mut controls = Controls::default();
+        for action in ACTIONS {
+            assert!(
+                !controls.of(0, action).contains(&REMOTE_OK),
+                "{action:?} by default"
+            );
+        }
+        controls.bind(0, Action::A, REMOTE_OK);
+        controls.bind(0, Action::MenuAccept, REMOTE_OK);
+        assert_eq!(controls, Controls::default(), "bound");
+        let kept = Controls::parse(&format!(
+            "1 a {REMOTE_OK}\n1 menu-accept {REMOTE_OK}\n1 b key:Z\n"
+        ));
+        for action in ACTIONS {
+            assert!(
+                !kept.of(0, action).contains(&REMOTE_OK),
+                "{action:?} from a file"
+            );
+        }
+        assert!(
+            kept.of(0, Action::B).contains(&"key:Z"),
+            "the rest not kept"
+        );
     }
 
     #[test]

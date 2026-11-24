@@ -14,7 +14,7 @@
 
 use crate::cpu::CPU;
 use crate::host::clock;
-use crate::host::controls::{ACTIONS, Action, BUTTONS, Controls, is_stick, name};
+use crate::host::controls::{ACTIONS, Action, BUTTONS, Controls, REMOTE_OK, is_stick, name};
 use crate::host::display::{COPY_KEY, Display, Gamepad, Key, PASTE_KEY, Scancode};
 use crate::host::files;
 use crate::host::machine::{Input, Machine};
@@ -329,7 +329,9 @@ impl<M: Machine> Host<M> {
             let entries = changing.entries();
             if changing.waiting {
                 changing.waiting = false;
-                if source == CANCEL {
+                // A TV remote's OK, which isn't bound: nothing bound, as
+                // Escape, the remote having none.
+                if source == CANCEL || source == REMOTE_OK {
                     continue;
                 }
                 let (player, Entry::Bind(action)) = (changing.player, entries[changing.at]) else {
@@ -344,14 +346,14 @@ impl<M: Machine> Host<M> {
                 continue;
             }
             // Choosing and going back as the menus' are bound, as they are
-            // now; and by the keyboard, always.
+            // now; and by the keyboard, and a TV remote's OK, always.
             let mut bound = |action| {
                 self.display
                     .controls()
                     .is_some_and(|controls| controls.of(0, action).contains(&source.as_str()))
             };
             let (accept, back) = (
-                source == "key:Return" || bound(Action::MenuAccept),
+                source == "key:Return" || source == REMOTE_OK || bound(Action::MenuAccept),
                 source == CANCEL || bound(Action::MenuBack),
             );
             let Some(changing) = &mut self.changing else {
@@ -473,9 +475,12 @@ impl<M: Machine> Host<M> {
             before: self.display.gamepad(),
         });
         // Tapped from now; the machine's mouse let go meanwhile, so a tap's
-        // the menu's, not taken for the mouse.
+        // the menu's, not taken for the mouse; and the keyboard the host's,
+        // not the machine's, whose keys aren't the menu's (a TV remote's OK,
+        // bound to choose, did nothing in the X16's menu).
         self.display.tap();
         self.display.mouse(false);
+        self.display.raw_keys(false);
     }
 
     /// Whether the menu's asked for by the gamepad: Select and Start tapped
@@ -563,6 +568,7 @@ impl<M: Machine> Host<M> {
         if back || choose {
             self.menu = None;
             self.display.mouse(self.has_mouse);
+            self.display.raw_keys(self.cpu.memory.raw_keys());
         }
         if choose && !back {
             match item {

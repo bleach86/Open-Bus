@@ -46,6 +46,8 @@ mod tests {
         mouse: Vec<bool>,
         /// A tap let go, for `tap` to give.
         tap: Option<(f32, f32)>,
+        /// Whether the keyboard's the machine's, each time it's told.
+        raw_keys: Vec<bool>,
     }
 
     /// The test's window: its own controls, never saved, as the window's
@@ -127,6 +129,10 @@ mod tests {
 
         fn play(&mut self, samples: &[f32]) {
             self.0.borrow_mut().samples += samples.len();
+        }
+
+        fn raw_keys(&mut self, on: bool) {
+            self.0.borrow_mut().raw_keys.push(on);
         }
 
         fn tap(&mut self) -> Option<(f32, f32)> {
@@ -688,6 +694,35 @@ mod tests {
             seen.borrow().mouse,
             [false, true, false],
             "told as it changes, only"
+        );
+    }
+
+    #[test]
+    fn the_keyboard_is_the_menus_while_its_up_not_the_machines() {
+        use crate::machines::x16::X16;
+        let mut cpu = CPU::with_bus(X16::new(&[0xEA; 0x4000]).unwrap());
+        cpu.variant = Variant::Wdc65C02;
+        cpu.reset();
+        let seen = Rc::new(RefCell::new(Seen::default()));
+        let state = std::env::temp_dir().join(format!(
+            "cpu_emu_{}_host_menu_keys.state",
+            std::process::id()
+        ));
+        let window = Window(seen.clone(), Controls::default());
+        let mut host = Host::new(cpu, Box::new(window), state);
+        assert_eq!(seen.borrow().raw_keys, [true], "the X16's from the first");
+        seen.borrow_mut().function_keys.push(1);
+        host.frame();
+        host.frame();
+        assert!(host.menu_lines().is_some(), "no menu");
+        assert_eq!(seen.borrow().raw_keys, [true, false], "not the menu's");
+        seen.borrow_mut().tap = Some((-1.0, -1.0));
+        host.frame();
+        assert!(host.menu_lines().is_none(), "not back to the game");
+        assert_eq!(
+            seen.borrow().raw_keys,
+            [true, false, true],
+            "not the X16's again"
         );
     }
 }

@@ -22,7 +22,7 @@
 //! Ctrl+Shift+C or Ctrl+Insert, the screen copied to it, for a machine with
 //! a keyboard. Closed, it tells the machine, to turn itself off.
 
-use crate::host::controls::{Action, Controls, said};
+use crate::host::controls::{Action, Controls, REMOTE_OK, said};
 use crate::host::display::{
     CHANNELS, COPY_KEY, Display, Gamepad, Joystick, Key, PASTE_KEY, Pointer, SAMPLE_RATE, Scancode,
 };
@@ -355,7 +355,8 @@ impl Window {
             start: held(Action::Start),
             turbo_a: held(Action::TurboA),
             turbo_b: held(Action::TurboB),
-            accept: held(Action::MenuAccept),
+            // A TV remote's OK, always, whatever's bound.
+            accept: held(Action::MenuAccept) || self.held.contains(REMOTE_OK),
             back: held(Action::MenuBack),
         }
     }
