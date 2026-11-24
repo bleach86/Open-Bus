@@ -28,5 +28,35 @@
       "type": "image/png",
       "purpose": "maskable"
     }
+  ],
+  "screenshots": [
+    {
+      "src": "screenshots/library-wide.webp",
+      "sizes": "1920x1080",
+      "type": "image/webp",
+      "form_factor": "wide",
+      "label": "The library: your games by system, with covers, years and genres"
+    },
+    {
+      "src": "screenshots/game-wide.webp",
+      "sizes": "1920x1080",
+      "type": "image/webp",
+      "form_factor": "wide",
+      "label": "A NES game playing"
+    },
+    {
+      "src": "screenshots/library-narrow.webp",
+      "sizes": "1030x2288",
+      "type": "image/webp",
+      "form_factor": "narrow",
+      "label": "The library on a phone"
+    },
+    {
+      "src": "screenshots/game-narrow.webp",
+      "sizes": "1030x2288",
+      "type": "image/webp",
+      "form_factor": "narrow",
+      "label": "A NES game on a phone, with on-screen controls"
+    }
   ]
 }
