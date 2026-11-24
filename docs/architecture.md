@@ -297,6 +297,14 @@ process, which runs `cli::run` with the same command line the desktop would
 use. The emulator is also shipped as a program (`libcpu_emu_exe.so`) for the
 windowless subcommands.
 
+On a touch screen with no gamepad plugged in, `GameActivity` handles Back
+itself, with Android's own pause dialog. For the NES it also lays `TouchPad`,
+an Android view, over SDL's surface. Its presses go through the JNI call
+`GameActivity.touched` into `host::touch`, a fixed slot that the first player's
+gamepad adds onto in `Window::gamepad`. They're not a control, so rebinding
+keys or a gamepad never affects them. A TV remote's OK is kept out of the
+controls the same way (`controls::REMOTE_OK`): it always chooses in the menus.
+
 `web/app.js` checks `native` to tell the browser from the app, and
 `native.android` to tell Android from the desktop.
 
