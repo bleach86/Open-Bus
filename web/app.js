@@ -519,6 +519,30 @@ async function findMissing() {
 
 page('find').onclick = findMissing;
 
+/// Installing the page as an app, by the browser's own dialog (with its
+/// screenshots, as the manifest has them), where the browser offers it: the
+/// button there only while it's offered. An offer's good for one dialog; if
+/// it's turned down, the browser offers again in its own time.
+function offerInstall() {
+    page('install-wanted').hidden = !self.installOffer;
+}
+
+addEventListener('beforeinstallprompt', (offer) => {
+    self.installOffer = offer;
+    offerInstall();
+});
+addEventListener('appinstalled', () => {
+    self.installOffer = null;
+    offerInstall();
+});
+page('install').onclick = async () => {
+    const offer = self.installOffer;
+    self.installOffer = null;
+    offerInstall();
+    await offer?.prompt();
+};
+offerInstall();
+
 /// Whose art a game has: that of its file, or of any of them, or of its
 /// title, for a picture named after it.
 const artFor = (title, ...names) =>

@@ -18,6 +18,14 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <script src="shell.js"></script>
+    <script>
+      // The browser's offer to install the page as an app (Chrome's and
+      // Edge's), kept for Settings' Install button: it can come before
+      // app.js is loaded.
+      addEventListener('beforeinstallprompt', (offer) => {
+        self.installOffer = offer;
+      });
+    </script>
     <style>
       .loading body {
         visibility: hidden;
@@ -143,6 +151,16 @@
                   webkitdirectory
                   multiple
               /></label>
+            </p>
+          </div>
+          <div id="install-wanted" hidden>
+            <h3>App</h3>
+            <p class="about">
+              Install Open Bus as an app: its own window and icon, and it opens
+              without the internet.
+            </p>
+            <p class="actions">
+              <button id="install">Install</button>
             </p>
           </div>
           <div id="covers-wanted" hidden>
