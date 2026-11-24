@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::host::notice::{draw, light};
+    use crate::host::notice::{draw, light, panel, panel_line};
 
     /// The notice over a grey picture: the picture.
     fn drawn(width: usize, height: usize, text: &str) -> Vec<u32> {
@@ -112,5 +112,45 @@ mod tests {
         };
         assert_eq!(lit(640, 480), (6, 6), "the X16's: 2 by 2 a dot");
         assert_eq!(lit(560, 192), (6, 3), "the Apple's: 2 by 1, its dots tall");
+    }
+
+    #[test]
+    fn a_point_on_the_panel_is_on_the_line_drawn_there_and_off_it_on_none() {
+        let lines: Vec<String> = ["PAUSED", ">RESUME", " QUIT", "", "A: CHOOSE"]
+            .iter()
+            .map(|line| line.to_string())
+            .collect();
+        let (width, height) = (256, 240);
+        let mut picture = vec![0x808080; width * height];
+        panel(&mut picture, width, height, &lines);
+        // Each line's lit dots: on that line, wherever they're found.
+        for (place, line) in lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| !line.is_empty())
+        {
+            let lit = (0..picture.len())
+                .filter(|&at| picture[at] == 0xFFFFFF)
+                .map(|at| ((at % width) as f32, (at / width) as f32))
+                .filter(|&at| panel_line(width, height, &lines, at) == Some(place))
+                .count();
+            assert!(lit > 0, "{line}: none of its dots on its line");
+        }
+        let dimmed_to = (0..width).take_while(|&x| picture[x] != 0x808080).count();
+        assert_eq!(
+            panel_line(width, height, &lines, (dimmed_to as f32, 5.0)),
+            None,
+            "right of it"
+        );
+        assert_eq!(
+            panel_line(width, height, &lines, (2.0, 239.0)),
+            None,
+            "below it"
+        );
+        assert_eq!(
+            panel_line(width, height, &lines, (-3.0, 5.0)),
+            None,
+            "beside the picture"
+        );
     }
 }

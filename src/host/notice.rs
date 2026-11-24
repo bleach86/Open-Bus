@@ -42,24 +42,58 @@ pub fn draw(picture: &mut [u32], width: usize, height: usize, text: &str) {
 /// `lines` at the top left of `picture`, `width` by `height`, what's under
 /// them dimmed; as many of them as fit, and as much of each.
 pub fn panel(picture: &mut [u32], width: usize, height: usize, lines: &[String]) {
-    let fit = fit(width, height);
-    let line_height = LINE * fit.tall;
-    let lines: Vec<Vec<u8>> = lines
-        .iter()
-        .take(height.saturating_sub(2 * fit.tall) / line_height)
-        .map(|line| characters(line, fit.columns.saturating_sub(1)))
-        .collect();
-    let longest = lines.iter().map(Vec::len).max().unwrap_or(0);
-    let across = ((longest * CHARACTER + 2) * fit.scale).min(width);
-    let down = lines.len() * line_height + 2 * fit.tall;
-    for row in picture.chunks_mut(width).take(down) {
-        for dot in &mut row[..across] {
+    let panel = Panel::of(width, height, lines);
+    for row in picture.chunks_mut(width).take(panel.down) {
+        for dot in &mut row[..panel.across] {
             *dot = (*dot >> DIM) & DIMMED;
         }
     }
-    for (place, line) in lines.iter().enumerate() {
-        let at = (fit.scale, fit.tall + place * line_height);
-        write(picture, width, at, fit, line);
+    for (place, line) in panel.lines.iter().enumerate() {
+        let at = (panel.fit.scale, panel.fit.tall + place * panel.line_height);
+        write(picture, width, at, panel.fit, line);
+    }
+}
+
+/// Which of `lines`, as `panel` puts them on a picture `width` by
+/// `height`, is at `at` on it, in its pixels: its place, or None off the
+/// panel. Its margins are its first line's and its last's.
+pub fn panel_line(width: usize, height: usize, lines: &[String], at: (f32, f32)) -> Option<usize> {
+    let panel = Panel::of(width, height, lines);
+    let (x, y) = at;
+    if x < 0.0 || y < 0.0 || x >= panel.across as f32 || y >= panel.down as f32 {
+        return None;
+    }
+    let line = (y as usize).saturating_sub(panel.fit.tall) / panel.line_height;
+    Some(line.min(panel.lines.len().saturating_sub(1)))
+}
+
+/// A panel's lines as they're put: as many as fit, and as much of each;
+/// how tall each is; and how far across and down it goes.
+struct Panel {
+    fit: Fit,
+    lines: Vec<Vec<u8>>,
+    line_height: usize,
+    across: usize,
+    down: usize,
+}
+
+impl Panel {
+    fn of(width: usize, height: usize, lines: &[String]) -> Panel {
+        let fit = fit(width, height);
+        let line_height = LINE * fit.tall;
+        let lines: Vec<Vec<u8>> = lines
+            .iter()
+            .take(height.saturating_sub(2 * fit.tall) / line_height)
+            .map(|line| characters(line, fit.columns.saturating_sub(1)))
+            .collect();
+        let longest = lines.iter().map(Vec::len).max().unwrap_or(0);
+        Panel {
+            across: ((longest * CHARACTER + 2) * fit.scale).min(width),
+            down: lines.len() * line_height + 2 * fit.tall,
+            fit,
+            lines,
+            line_height,
+        }
     }
 }
 

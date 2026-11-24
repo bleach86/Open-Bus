@@ -44,6 +44,8 @@ mod tests {
         key_changes: Vec<(Scancode, bool)>,
         /// Whether the machine has a mouse, each time it's told.
         mouse: Vec<bool>,
+        /// A tap let go, for `tap` to give.
+        tap: Option<(f32, f32)>,
     }
 
     /// The test's window: its own controls, never saved, as the window's
@@ -125,6 +127,10 @@ mod tests {
 
         fn play(&mut self, samples: &[f32]) {
             self.0.borrow_mut().samples += samples.len();
+        }
+
+        fn tap(&mut self) -> Option<(f32, f32)> {
+            self.0.borrow_mut().tap.take()
         }
 
         fn mouse(&mut self, on: bool) {
@@ -534,6 +540,47 @@ mod tests {
         seen.borrow_mut().gamepad = choose;
         assert!(!host.frame(), "not quit");
         std::fs::remove_file(&state).unwrap();
+    }
+
+    /// Where on the picture, 256 by 240, the menu's line `wanted` is: its
+    /// first point down its left edge that's on it.
+    fn on_line(lines: &[String], wanted: usize) -> (f32, f32) {
+        (0..240)
+            .map(|y| (2.0, y as f32))
+            .find(|&at| crate::host::notice::panel_line(256, 240, lines, at) == Some(wanted))
+            .expect("the line's not on the panel")
+    }
+
+    #[test]
+    fn the_menu_is_tapped_quit_with_no_gamepad_or_keys() {
+        let (mut host, seen, _) = host("menu_tapped");
+        seen.borrow_mut().function_keys.push(1);
+        frames_with(&mut host, &seen, NONE, 2);
+        assert!(host.menu_lines().is_some(), "no menu");
+        assert_eq!(
+            seen.borrow().mouse.last(),
+            Some(&false),
+            "its mouse not let go"
+        );
+        // Off the menu, on the picture beside it: back to the game.
+        seen.borrow_mut().tap = Some((250.0, 200.0));
+        frames_with(&mut host, &seen, NONE, 1);
+        assert!(host.menu_lines().is_none(), "not back to the game");
+        assert_eq!(
+            seen.borrow().mouse.last(),
+            Some(&false),
+            "the NES's mouse not as it was"
+        );
+        // Again, and Quit tapped: the last of its items.
+        seen.borrow_mut().function_keys.push(1);
+        frames_with(&mut host, &seen, NONE, 2);
+        let lines = host.menu_lines().unwrap();
+        let quit = lines
+            .iter()
+            .position(|line| line.ends_with("QUIT"))
+            .unwrap();
+        seen.borrow_mut().tap = Some(on_line(&lines, quit));
+        assert!(!host.frame(), "not quit");
     }
 
     #[test]

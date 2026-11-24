@@ -472,6 +472,10 @@ impl<M: Machine> Host<M> {
             at: 0,
             before: self.display.gamepad(),
         });
+        // Tapped from now; the machine's mouse let go meanwhile, so a tap's
+        // the menu's, not taken for the mouse.
+        self.display.tap();
+        self.display.mouse(false);
     }
 
     /// Whether the menu's asked for by the gamepad: Select and Start tapped
@@ -490,10 +494,23 @@ impl<M: Machine> Host<M> {
 
     /// A frame of the menu: the machine stands still, as for the controls.
     /// Up and down it by the gamepad or the keys, A or Return to choose, B,
-    /// Escape or F1 to go back to the game.
+    /// Escape or F1 to go back to the game. Or tapped, or clicked: an item
+    /// chosen, or anywhere off the menu back to the game. A phone with no
+    /// gamepad has only that, its Back bringing the menu and taking it
+    /// away.
     fn menu_frame(&mut self) -> bool {
         self.cycles += (self.cpu.clock_hz / FRAMES_A_SECOND) as u64;
         self.show();
+        let tapped = self.display.tap().and_then(|at| {
+            let lines = self.menu_lines()?;
+            let picture = self.cpu.memory.picture();
+            Some(notice::panel_line(
+                picture.width,
+                picture.height,
+                &lines,
+                at,
+            ))
+        });
         let Some(menu) = &mut self.menu else {
             return true;
         };
@@ -533,11 +550,21 @@ impl<M: Machine> Host<M> {
         if down {
             menu.at = (menu.at + 1) % count;
         }
+        // The menu's lines: its title, then its items.
+        match tapped {
+            Some(Some(line)) if (1..=count).contains(&line) => {
+                menu.at = line - 1;
+                choose = true;
+            }
+            Some(None) => back = true,
+            _ => {}
+        }
         let item = menu.items[menu.at];
-        if back {
+        if back || choose {
             self.menu = None;
-        } else if choose {
-            self.menu = None;
+            self.display.mouse(self.has_mouse);
+        }
+        if choose && !back {
             match item {
                 Item::Resume => {}
                 Item::Save => self.save_state(),
@@ -563,7 +590,7 @@ impl<M: Machine> Host<M> {
     }
 
     /// The menu's lines, with the one chosen marked.
-    fn menu_lines(&mut self) -> Option<Vec<String>> {
+    pub(crate) fn menu_lines(&mut self) -> Option<Vec<String>> {
         let menu = self.menu.as_ref()?;
         let mut lines = vec!["PAUSED".to_string()];
         lines.extend(menu.items.iter().enumerate().map(|(place, item)| {
