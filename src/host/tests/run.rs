@@ -48,6 +48,9 @@ mod tests {
         raw_keys: Vec<bool>,
         /// Whether it's holding the game still.
         still: bool,
+        /// The first gamepad's buttons held on a touch screen, the game's
+        /// alone: no part of the menu pad.
+        touched: Gamepad,
     }
 
     /// The test's window: its own controls, never saved, as the window's
@@ -91,6 +94,16 @@ mod tests {
         }
 
         fn gamepad(&self) -> Gamepad {
+            let seen = self.0.borrow();
+            let (pad, touched) = (seen.gamepad, seen.touched);
+            Gamepad {
+                select: pad.select || touched.select,
+                start: pad.start || touched.start,
+                ..pad
+            }
+        }
+
+        fn menu_pad(&self) -> Gamepad {
             self.0.borrow().gamepad
         }
 
@@ -700,5 +713,20 @@ mod tests {
         seen.borrow_mut().still = false;
         host.frame();
         assert!(host.cpu.clock > ran, "not going again");
+    }
+
+    #[test]
+    fn a_touch_screens_select_and_start_are_the_games_not_the_menus() {
+        let (mut host, seen, _) = host("touch_menu");
+        frames_with(&mut host, &seen, NONE, 2);
+        seen.borrow_mut().touched = SELECT_START;
+        frames_with(&mut host, &seen, NONE, 5);
+        assert_eq!(
+            host.cpu.memory.gamepad, SELECT_START,
+            "the game didn't see them"
+        );
+        seen.borrow_mut().touched = NONE;
+        frames_with(&mut host, &seen, NONE, 1);
+        assert!(host.menu_lines().is_none(), "the menu came up");
     }
 }

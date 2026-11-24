@@ -485,13 +485,14 @@ impl<M: Machine> Host<M> {
     }
 
     /// Whether the menu's asked for by the gamepad: Select and Start tapped
-    /// together. Neither's given to the machine once they're together, until
+    /// together, on `asking`, the display's menu pad (not a touch screen's
+    /// buttons). Neither's given to the machine once they're together, until
     /// both are let go; the first pressed can reach it before the other is.
-    fn menu_asked(&mut self, gamepad: &mut Gamepad) -> bool {
-        let both = gamepad.select && gamepad.start;
+    fn menu_asked(&mut self, asking: Gamepad, gamepad: &mut Gamepad) -> bool {
+        let both = asking.select && asking.start;
         let tapped = !both && self.both_held > 0 && self.both_held < TAP_FRAMES;
         self.both_held = if both { self.both_held + 1 } else { 0 };
-        self.holding_back = both || (self.holding_back && (gamepad.select || gamepad.start));
+        self.holding_back = both || (self.holding_back && (asking.select || asking.start));
         if self.holding_back {
             (gamepad.select, gamepad.start) = (false, false);
         }
@@ -723,7 +724,8 @@ impl<M: Machine> Host<M> {
         }
         self.frames = self.frames.wrapping_add(1);
         let mut gamepad = self.display.gamepad().turbo(self.frames);
-        if self.menu_asked(&mut gamepad) && !self.display.text_only() {
+        let asking = self.display.menu_pad();
+        if self.menu_asked(asking, &mut gamepad) && !self.display.text_only() {
             self.open_menu();
         }
         self.cpu.memory.input(Input {
