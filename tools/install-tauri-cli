@@ -1,0 +1,46 @@
+#!/bin/sh
+# Install Tauri's CLI, `cargo tauri`, at the version given: Tauri's own
+# build of it, from its GitHub release, for the GitHub runner this is on
+# (Linux, Windows, and Macs, Apple Silicon and Intel), into ~/.cargo/bin,
+# not built from source, which takes the longest of any step. If there's no
+# build for the runner, or it can't be had, built from source after all.
+#
+#   tools/install-tauri-cli 2.12.4
+set -e
+VERSION=${1:?which version of tauri-cli}
+
+case "$RUNNER_OS-$RUNNER_ARCH" in
+    Linux-X64) target=x86_64-unknown-linux-gnu.tgz ;;
+    Windows-X64) target=x86_64-pc-windows-msvc.zip ;;
+    macOS-ARM64) target=aarch64-apple-darwin.zip ;;
+    macOS-X64) target=x86_64-apple-darwin.zip ;;
+    *) target= ;;
+esac
+
+bin="$HOME/.cargo/bin"
+url="https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v$VERSION/cargo-tauri-$target"
+fetched=$(mktemp -d)
+if [ -n "$target" ] && curl -fsSL --retry 3 -o "$fetched/$target" "$url"; then
+    mkdir -p "$bin"
+    case "$target" in
+        *.tgz) tar xzf "$fetched/$target" -C "$fetched" ;;
+        *.zip) if command -v unzip >/dev/null; then
+            unzip -q -o "$fetched/$target" -d "$fetched"
+        else
+            pwsh -NoProfile -Command "Expand-Archive -Force '$fetched/$target' '$fetched'"
+        fi ;;
+    esac
+    for program in cargo-tauri cargo-tauri.exe; do
+        if [ -f "$fetched/$program" ]; then
+            cp "$fetched/$program" "$bin/" && chmod +x "$bin/$program"
+        fi
+    done
+fi
+rm -rf "$fetched"
+
+# It's there and says it's this version, or it's built.
+if ! cargo tauri --version 2>/dev/null | grep -q "$VERSION"; then
+    echo "tauri-cli $VERSION: no build of Tauri's for this runner; building it" >&2
+    cargo install tauri-cli --version "$VERSION" --locked
+fi
+cargo tauri --version
