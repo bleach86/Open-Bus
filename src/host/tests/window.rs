@@ -5,7 +5,8 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::host::window::{placed_inside, sized_to_fit};
+    use crate::host::window::{hosts_keys, placed_inside, sized_to_fit};
+    use sdl2::keyboard::{Keycode, Mod};
 
     /// A laptop's 1366 by 768, a dock 66 wide at its left.
     const LAPTOP: (i32, i32, u32, u32) = (66, 0, 1300, 768);
@@ -34,5 +35,27 @@ mod tests {
     fn a_size_too_big_is_made_smaller_its_shape_kept() {
         assert_eq!(sized_to_fit((1120, 768), LAPTOP), (1061, 728), "the IIe's");
         assert_eq!(sized_to_fit((1024, 720), LAPTOP), (1024, 720), "fits");
+    }
+
+    #[test]
+    fn a_keyboard_machines_function_keys_are_its_own_open_buss_behind_ctrl_shift() {
+        let ctrl_shift = Mod::LCTRLMOD | Mod::RSHIFTMOD;
+        assert!(
+            hosts_keys(false, Keycode::F1, Mod::NOMOD),
+            "a console's: Open Bus's"
+        );
+        assert!(!hosts_keys(true, Keycode::F1, Mod::NOMOD), "the X16's");
+        assert!(
+            !hosts_keys(true, Keycode::F12, Mod::LCTRLMOD),
+            "Ctrl alone, the X16's"
+        );
+        assert!(
+            !hosts_keys(true, Keycode::F4, Mod::LSHIFTMOD),
+            "Shift alone too"
+        );
+        assert!(
+            hosts_keys(true, Keycode::F1, ctrl_shift),
+            "behind Ctrl+Shift, Open Bus's"
+        );
     }
 }

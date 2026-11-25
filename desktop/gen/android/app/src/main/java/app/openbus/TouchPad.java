@@ -17,7 +17,9 @@ import android.view.WindowManager;
 
 /**
  * A touch screen's gamepad, over the game: a D-pad, A and B as a NES pad
- * has them, Select and Start. Drawn by Android, at the screen's own
+ * has them, Select and Start; or, for a machine with a SNES pad (the
+ * Commander X16), A, B, X and Y in its diamond, and its shoulders, L and R,
+ * at the top corners, laid out and kept apart from the NES's. Drawn by Android, at the screen's own
  * resolution, sized in dp, as any app's buttons are. As it comes, the
  * D-pad's in the middle of the bar left of the picture, A and B in the
  * middle of the right one, Select and Start under them; each where it's
@@ -36,6 +38,7 @@ public class TouchPad extends View {
     /** As the emulator's touch module has them. */
     static final int A = 1, B = 1 << 1, SELECT = 1 << 2, START = 1 << 3;
     static final int UP = 1 << 4, DOWN = 1 << 5, LEFT = 1 << 6, RIGHT = 1 << 7;
+    static final int X = 1 << 8, Y = 1 << 9, L = 1 << 10, R = 1 << 11;
 
     /** What's told what's held. */
     interface Held {
@@ -43,16 +46,18 @@ public class TouchPad extends View {
     }
 
     /** Where it's kept: each piece's place, a share of the screen across and down; and its size. */
-    private static final String KEPT = "touch_pad", SCALE = "scale";
+    private static final String KEPT = "touch_pad", KEPT_SNES = "touch_pad_snes", SCALE = "scale";
     private static final String TICKS = "haptics", B_HIGHER = "b_higher";
-    private static final String[] PIECES = {"dpad", "buttons", "select", "start"};
-    private static final int DPAD = 0, BUTTONS = 1, SELECT_PILL = 2, START_PILL = 3;
+    private static final String[] PIECES = {"dpad", "buttons", "select", "start", "l", "r"};
+    private static final int DPAD = 0, BUTTONS = 1, SELECT_PILL = 2, START_PILL = 3, L_PILL = 4, R_PILL = 5;
     static final float SMALLEST = 0.6f, BIGGEST = 1.8f;
 
     // Its measures, in dp, as big as it comes.
     private static final float MARGIN = 16, PAD = 70, ARM = 24, BUTTON = 31;
     private static final float BUTTONS_APART = 37, BUTTONS_STAGGER = 20;
     private static final float PILL_WIDTH = 66, PILL_HEIGHT = 26, PILLS_BELOW = 46;
+    /** A SNES pad's: its four buttons' distance from their middle, and their size; its shoulders'. */
+    private static final float DIAMOND = 38, FACE = 26, SHOULDER_WIDTH = 84, SHOULDER_HEIGHT = 32;
     /** The picture's shape, the NES's, as wide as it's tall, near enough: where the bars are. */
     private static final float PICTURE = 1.31f;
     /** How far past a button's edge a finger still has it, and the D-pad's middle, where it's nothing. */
@@ -62,7 +67,7 @@ public class TouchPad extends View {
 
     private final Held told;
     private final SharedPreferences kept;
-    private final boolean moving;
+    private final boolean moving, snes;
     private final float dp;
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint pressed = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -72,8 +77,8 @@ public class TouchPad extends View {
     private final Path cross = new Path();
     private final Path arrow = new Path();
     private final RectF arm = new RectF(), box = new RectF();
-    /** Each piece's middle. */
-    private final PointF[] at = {new PointF(), new PointF(), new PointF(), new PointF()};
+    /** Each piece's middle: a SNES pad's six, a NES pad's first four. */
+    private final PointF[] at;
     /** The fingers that landed on the D-pad, by their pointer ids. */
     private final SparseBooleanArray onDpad = new SparseBooleanArray();
 
@@ -90,13 +95,18 @@ public class TouchPad extends View {
 
     /**
      * As it's played, `told` what's held; or, `moving`, to be moved and
-     * resized, telling nothing.
+     * resized, telling nothing. A SNES pad, if it's `snes`.
      */
-    TouchPad(Context context, Held told, boolean moving) {
+    TouchPad(Context context, Held told, boolean moving, boolean snes) {
         super(context);
         this.told = told;
         this.moving = moving;
-        kept = context.getSharedPreferences(KEPT, Context.MODE_PRIVATE);
+        this.snes = snes;
+        at = new PointF[snes ? PIECES.length : 4];
+        for (int piece = 0; piece < at.length; piece++) {
+            at[piece] = new PointF();
+        }
+        kept = context.getSharedPreferences(snes ? KEPT_SNES : KEPT, Context.MODE_PRIVATE);
         dp = context.getResources().getDisplayMetrics().density;
         read();
         fill.setColor(0x38ffffff);
@@ -143,6 +153,11 @@ public class TouchPad extends View {
     void ticks(boolean on) {
         ticks = on;
         kept.edit().putBoolean(TICKS, on).apply();
+    }
+
+    /** Whether it's a SNES pad. */
+    boolean snes() {
+        return snes;
     }
 
     /** Whether B's higher than A. */
@@ -203,11 +218,15 @@ public class TouchPad extends View {
         float u = u(), margin = MARGIN * dp;
         // The middle of each bar beside the picture, or as near as fits.
         float bar = Math.max(0, (width - height * PICTURE) / 2);
+        float buttons = snes ? (DIAMOND + FACE) * u : (BUTTONS_APART + BUTTON) * u;
         float left = Math.max(bar / 2, margin + PAD * u);
-        float right = width - Math.max(bar / 2, margin + (BUTTONS_APART + BUTTON) * u);
+        float right = width - Math.max(bar / 2, margin + buttons);
         float middle = height / 2f;
         float pills = middle + PAD * u + PILLS_BELOW * u;
-        float[][] comes = {{left, middle}, {right, middle}, {left, pills}, {right, pills}};
+        float shoulders = margin + SHOULDER_HEIGHT * u / 2;
+        float[][] comes = {
+            {left, middle}, {right, middle}, {left, pills}, {right, pills}, {left, shoulders}, {right, shoulders}
+        };
         for (int piece = 0; piece < at.length; piece++) {
             String name = PIECES[piece];
             at[piece].set(kept.getFloat(name + "_x", -1) >= 0 ? kept.getFloat(name + "_x", 0) * width : comes[piece][0],
@@ -243,8 +262,13 @@ public class TouchPad extends View {
                 halfWidth = halfHeight = PAD * u;
                 break;
             case BUTTONS:
-                halfWidth = (BUTTONS_APART + BUTTON) * u;
-                halfHeight = (BUTTONS_STAGGER + BUTTON) * u;
+                halfWidth = (snes ? DIAMOND + FACE : BUTTONS_APART + BUTTON) * u;
+                halfHeight = (snes ? DIAMOND + FACE : BUTTONS_STAGGER + BUTTON) * u;
+                break;
+            case L_PILL:
+            case R_PILL:
+                halfWidth = SHOULDER_WIDTH * u / 2;
+                halfHeight = SHOULDER_HEIGHT * u / 2;
                 break;
             default:
                 halfWidth = PILL_WIDTH * u / 2;
@@ -329,8 +353,18 @@ public class TouchPad extends View {
             canvas.restore();
         }
 
-        button(canvas, aX(), aY(), "A", (held & A) != 0);
-        button(canvas, bX(), bY(), "B", (held & B) != 0);
+        if (snes) {
+            float apart = DIAMOND * u, middleX = at[BUTTONS].x, middleY = at[BUTTONS].y;
+            button(canvas, middleX + apart, middleY, "A", (held & A) != 0, FACE);
+            button(canvas, middleX, middleY + apart, "B", (held & B) != 0, FACE);
+            button(canvas, middleX, middleY - apart, "X", (held & X) != 0, FACE);
+            button(canvas, middleX - apart, middleY, "Y", (held & Y) != 0, FACE);
+            pill(canvas, L_PILL, "L", (held & L) != 0);
+            pill(canvas, R_PILL, "R", (held & R) != 0);
+        } else {
+            button(canvas, aX(), aY(), "A", (held & A) != 0, BUTTON);
+            button(canvas, bX(), bY(), "B", (held & B) != 0, BUTTON);
+        }
         pill(canvas, SELECT_PILL, "SELECT", (held & SELECT) != 0);
         pill(canvas, START_PILL, "START", (held & START) != 0);
 
@@ -344,8 +378,8 @@ public class TouchPad extends View {
         }
     }
 
-    private void button(Canvas canvas, float x, float y, String name, boolean down) {
-        float radius = BUTTON * u();
+    private void button(Canvas canvas, float x, float y, String name, boolean down, float size) {
+        float radius = size * u();
         canvas.drawCircle(x, y, radius, down ? pressed : fill);
         canvas.drawCircle(x, y, radius, edge);
         label.setTextSize(22 * u());
@@ -357,7 +391,7 @@ public class TouchPad extends View {
         float round = box.height() / 2;
         canvas.drawRoundRect(box, round, round, down ? pressed : fill);
         canvas.drawRoundRect(box, round, round, edge);
-        label.setTextSize(11 * u());
+        label.setTextSize((name.length() == 1 ? 15 : 11) * u());
         canvas.drawText(name, box.centerX(), box.centerY() - (label.ascent() + label.descent()) / 2, label);
     }
 
@@ -469,6 +503,49 @@ public class TouchPad extends View {
 
     /** The buttons a finger at `x`, `y` holds, not on the D-pad. */
     private int buttons(float x, float y) {
+        int pills = pills(x, y);
+        if (pills != 0) {
+            return pills;
+        }
+        return snes ? diamond(x, y) : aAndB(x, y);
+    }
+
+    /**
+     * A SNES pad's buttons a finger at `x`, `y` holds: the one it's on, or
+     * nearest, within reach; or, between two side by side, both, as a thumb
+     * across them holds both on a real one.
+     */
+    private int diamond(float x, float y) {
+        float u = u(), apart = DIAMOND * u, reach = FACE * u * SLOP;
+        float dx = x - at[BUTTONS].x, dy = y - at[BUTTONS].y;
+        float[][] faces = {{apart, 0}, {0, apart}, {0, -apart}, {-apart, 0}};
+        int[] bits = {A, B, X, Y};
+        int nearest = -1;
+        double best = reach;
+        for (int face = 0; face < faces.length; face++) {
+            double away = Math.hypot(dx - faces[face][0], dy - faces[face][1]);
+            if (away <= best) {
+                best = away;
+                nearest = face;
+            }
+        }
+        if (nearest < 0) {
+            return 0;
+        }
+        // Halfway to a neighbour, that one too.
+        int held = bits[nearest];
+        for (int face = 0; face < faces.length; face++) {
+            float midX = (faces[face][0] + faces[nearest][0]) / 2, midY = (faces[face][1] + faces[nearest][1]) / 2;
+            if (face != nearest && (midX != 0 || midY != 0)
+                    && Math.hypot(dx - midX, dy - midY) < FACE * u * 0.5f) {
+                held |= bits[face];
+            }
+        }
+        return held;
+    }
+
+    /** A NES pad's A and B a finger at `x`, `y` holds. */
+    private int aAndB(float x, float y) {
         float u = u(), reach = BUTTON * u * SLOP;
         // Between A and B, both.
         if (Math.hypot(x - at[BUTTONS].x, y - at[BUTTONS].y) < BUTTON * u * 0.6f) {
@@ -480,12 +557,18 @@ public class TouchPad extends View {
         if (Math.hypot(x - bX(), y - bY()) <= reach) {
             return B;
         }
+        return 0;
+    }
+
+    /** The pill a finger at `x`, `y` is on, Select, Start or a shoulder, or 0. */
+    private int pills(float x, float y) {
         float slop = 10 * dp;
-        for (int piece : new int[] {SELECT_PILL, START_PILL}) {
+        int[] bits = {0, 0, SELECT, START, L, R};
+        for (int piece = SELECT_PILL; piece < at.length; piece++) {
             bounds(piece, box);
             box.inset(-slop, -slop);
             if (box.contains(x, y)) {
-                return piece == SELECT_PILL ? SELECT : START;
+                return bits[piece];
             }
         }
         return 0;

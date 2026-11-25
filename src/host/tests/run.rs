@@ -457,6 +457,10 @@ mod tests {
         right: false,
         a: false,
         b: false,
+        x: false,
+        y: false,
+        l: false,
+        r: false,
         turbo_a: false,
         turbo_b: false,
         accept: false,
@@ -471,6 +475,10 @@ mod tests {
         right: false,
         a: false,
         b: false,
+        x: false,
+        y: false,
+        l: false,
+        r: false,
         turbo_a: false,
         turbo_b: false,
         accept: false,
@@ -617,7 +625,7 @@ mod tests {
     }
 
     #[test]
-    fn a_machine_that_takes_the_keys_has_them_but_the_hosts_not_what_they_type() {
+    fn a_machine_that_takes_the_keys_has_all_of_them_not_what_they_type() {
         use crate::machines::x16::X16;
         let mut cpu = CPU::with_bus(X16::new(&[0xEA; 0x4000]).unwrap());
         cpu.variant = Variant::Wdc65C02;
@@ -631,7 +639,7 @@ mod tests {
         seen.borrow_mut().keys.push(Key::Char(b'a'));
         seen.borrow_mut().key_changes = vec![
             (a, true),
-            (Scancode::function(2), true), // the host's: saving a state
+            (Scancode::function(2), true), // the machine's: the display kept it so
             (Scancode::function(5), true),
             (a, false),
         ];
@@ -639,8 +647,8 @@ mod tests {
         let keys: Vec<u8> = host.cpu.memory.i2c.smc.keys.iter().copied().collect();
         assert_eq!(
             keys,
-            [31, 116, 31 | 0x80],
-            "A, F5, A let go; not F2, nor 'a' typed"
+            [31, 113, 116, 31 | 0x80],
+            "A, F2, F5, A let go; not 'a' typed"
         );
     }
 

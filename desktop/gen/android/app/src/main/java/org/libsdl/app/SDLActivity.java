@@ -1363,7 +1363,11 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         }
 
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
-            if (isTextInputEvent(event)) {
+            // Open Bus: only a key that types something. With Alt held, a
+            // letter types nothing (its character's 0), and a 0 sent as text
+            // reaches SDL as Java's two bytes for it, C0 80, which aren't
+            // UTF-8: the emulator's SDL panics at them.
+            if (isTextInputEvent(event) && event.getUnicodeChar() != 0) {
                 if (ic != null) {
                     ic.commitText(String.valueOf((char) event.getUnicodeChar()), 1);
                 } else {

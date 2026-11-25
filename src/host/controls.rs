@@ -25,6 +25,8 @@ pub enum Action {
     Start,
     TurboA,
     TurboB,
+    L,
+    R,
     Library,
     FastForward,
     Rewind,
@@ -32,7 +34,7 @@ pub enum Action {
     MenuBack,
 }
 
-pub const ACTIONS: [Action; 15] = [
+pub const ACTIONS: [Action; 17] = [
     Action::Up,
     Action::Down,
     Action::Left,
@@ -43,6 +45,8 @@ pub const ACTIONS: [Action; 15] = [
     Action::Start,
     Action::TurboA,
     Action::TurboB,
+    Action::L,
+    Action::R,
     Action::Library,
     Action::FastForward,
     Action::Rewind,
@@ -57,9 +61,9 @@ pub fn is_menus(action: Action) -> bool {
     matches!(action, Action::MenuAccept | Action::MenuBack)
 }
 
-/// Each player's: the console's buttons, and turbo. The rest are the first
-/// player's only.
-pub const BUTTONS: usize = 10;
+/// Each player's: the console's buttons, turbo, and a SNES pad's shoulders.
+/// The rest are the first player's only.
+pub const BUTTONS: usize = 12;
 
 /// The file's word for an action.
 pub fn word(action: Action) -> &'static str {
@@ -74,6 +78,8 @@ pub fn word(action: Action) -> &'static str {
         Action::Start => "start",
         Action::TurboA => "turbo-a",
         Action::TurboB => "turbo-b",
+        Action::L => "l",
+        Action::R => "r",
         Action::Library => "library",
         Action::FastForward => "fast",
         Action::Rewind => "rewind",
@@ -118,7 +124,7 @@ pub fn is_stick(source: &str) -> bool {
     source.starts_with("pad:left") && source.ends_with(['+', '-'])
 }
 
-const GAMEPAD: [(Action, &str); 10] = [
+const GAMEPAD: [(Action, &str); 12] = [
     (Action::Up, "pad:dpup"),
     (Action::Down, "pad:dpdown"),
     (Action::Left, "pad:dpleft"),
@@ -129,6 +135,8 @@ const GAMEPAD: [(Action, &str); 10] = [
     (Action::Start, "pad:start"),
     (Action::TurboA, "pad:b"),
     (Action::TurboB, "pad:y"),
+    (Action::L, "pad:leftshoulder"),
+    (Action::R, "pad:rightshoulder"),
 ];
 const STICK: [(Action, &str); 4] = [
     (Action::Up, "pad:lefty-"),

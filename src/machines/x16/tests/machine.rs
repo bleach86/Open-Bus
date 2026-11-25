@@ -116,6 +116,9 @@ mod tests {
         let held = Gamepad {
             b: true,
             start: true,
+            y: true,
+            x: true,
+            r: true,
             ..Gamepad::default()
         };
         x16.input(Input {
@@ -132,8 +135,12 @@ mod tests {
             x16.write(VIA1_PA, 0x00);
         }
         assert_eq!(bits[0], 0x70, "B held: controller 1's 0, the rest 1");
-        assert_eq!(bits[1], 0xF0, "Y");
+        assert_eq!(bits[1], 0x70, "Y held");
         assert_eq!(bits[3], 0x70, "Start held");
+        assert_eq!(bits[8], 0xF0, "A");
+        assert_eq!(bits[9], 0x70, "X held");
+        assert_eq!(bits[10], 0xF0, "L");
+        assert_eq!(bits[11], 0x70, "R held");
         assert_eq!(bits[15], 0xF0, "its last 4, 1s");
         assert_eq!(bits[16], 0x30, "then 0s; 3 and 4 not there");
     }

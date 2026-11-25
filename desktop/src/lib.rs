@@ -1560,10 +1560,59 @@ fn choose_settings(app: AppHandle, machine: Value, settings: Value) -> Result<()
     library(&app).choose(&machine, &settings)
 }
 
+/// The game that's running, as `play` was given it, till it's over. On
+/// Android the library can be come back to while it runs (Home, then Open
+/// Bus), and there's only ever one game screen.
+static RUNNING: Mutex<Option<Value>> = Mutex::new(None);
+
+/// Whether `a` and `b` are the same game: the same machine, with the same
+/// game or disks in it.
+fn same_game(a: &Value, b: &Value) -> bool {
+    ["kind", "game", "disks"].iter().all(|key| a[key] == b[key])
+}
+
+/// Whether a game's running: none (null), `machine` itself (true), or
+/// another (false).
+#[tauri::command]
+fn running(machine: Value) -> Option<bool> {
+    let running = RUNNING.lock().unwrap();
+    running.as_ref().map(|running| same_game(running, &machine))
+}
+
+/// The running game brought back as it is, on Android: its game screen in
+/// front again. On a desktop, its window's already in front.
+#[tauri::command(async)]
+fn return_to_game(window: WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    return android::bring_back(&window, false);
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = window;
+        Ok(())
+    }
+}
+
+/// The running game quit, on Android, as its own Quit does: put away to
+/// resume, its saves kept. `game-ended` says when it's over.
+#[tauri::command(async)]
+fn quit_game(window: WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    return android::bring_back(&window, true);
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = window;
+        Err("a game's quit from its own window here".to_string())
+    }
+}
+
 /// A game played, the window away until it's over. Not on the main thread:
-/// on Android, starting the game screen's done there, and waited for.
+/// on Android, starting the game screen's done there, and waited for. Not
+/// while another's running: that's to be quit first.
 #[tauri::command(async)]
 fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), String> {
+    if RUNNING.lock().unwrap().is_some() {
+        return Err("a game's still running: quit it first".to_string());
+    }
     let library = folder(&app, "library")?;
     let line = command_line(&app, &machine)?;
     let first_file = match machine["game"].as_str() {
@@ -1606,6 +1655,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
             start_pads(&app);
             e.to_string()
         })?;
+        *RUNNING.lock().unwrap() = Some(machine.clone());
         thread::spawn(move || {
             thread::sleep(OVERLAP);
             if matches!(game.try_wait(), Ok(None)) {
@@ -1631,6 +1681,7 @@ fn play(app: AppHandle, window: WebviewWindow, machine: Value) -> Result<(), Str
             .join("game.log");
         let _ = fs::remove_file(&log);
         android::start(&window, line, &library, &log)?;
+        *RUNNING.lock().unwrap() = Some(machine.clone());
         thread::spawn(move || {
             let ran = android::wait(&window, &log);
             let said = fs::read_to_string(&log).unwrap_or_default();
@@ -1657,6 +1708,7 @@ fn game_over(
     (started, since): (SystemTime, Instant),
     problem: Option<String>,
 ) {
+    *RUNNING.lock().unwrap() = None;
     if problem.is_none() {
         let at = started
             .duration_since(UNIX_EPOCH)
@@ -2122,6 +2174,9 @@ pub fn run() {
             take_dropped,
             folder_files,
             play,
+            running,
+            return_to_game,
+            quit_game,
             library_settings,
             remove_folder,
             restore_hidden,

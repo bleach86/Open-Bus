@@ -1,6 +1,9 @@
 package app.openbus;
 
+import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.input.InputManager;
 import android.os.Build;
@@ -14,10 +17,12 @@ import android.view.KeyEvent;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.RelativeLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import java.util.ArrayList;
@@ -49,11 +54,20 @@ public class GameActivity extends SDLActivity {
      */
     private static final String RESUME = "Resume", SAVE = "Save state", LOAD = "Load state";
     private static final String RESET = "Reset", MOVE = "Move controls", QUIT = "Quit";
+    private static final String HIDE = "Hide controls", SHOW = "Show controls";
     /** How long Reset's held, F12, for the emulator to see it held. */
     private static final long RESET_HELD_MS = 250;
 
     /** A touch screen's gamepad, for the NES, or null: the app's not on one. */
     private TouchPad touchPad;
+    /**
+     * A touch screen's keyboard, for a machine that has one (the Commander
+     * X16), or null: in portrait, under the picture, the gamepad in
+     * landscape. The screen turns with the phone for it.
+     */
+    private Keyboard keyboard;
+    /** Whether the touch screen's gamepad's been hidden, from the pause, for this game. */
+    private boolean controlsHidden;
     /**
      * What's over the game, the pause or the controls being moved, or null:
      * views in the game's own window, not dialogs, which are windows of
@@ -99,13 +113,113 @@ public class GameActivity extends SDLActivity {
             finish();
             return;
         }
-        if (args.length > 0 && args[0].equals("nes") && !mBrokenLibraries && mLayout != null
-                && getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)) {
-            touchPad = new TouchPad(this, GameActivity::touched, false);
+        String machine = args.length > 0 ? args[0] : "";
+        boolean touch = !mBrokenLibraries && mLayout != null
+                && getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN);
+        boolean x16 = machine.equals("x16");
+        if (touch && (machine.equals("nes") || x16)) {
+            touchPad = new TouchPad(this, GameActivity::touched, false, x16);
             mLayout.addView(touchPad, new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            showTouchPad();
             getSystemService(InputManager.class).registerInputDeviceListener(pads, null);
+        }
+        if (touch && x16) {
+            keyboard = new Keyboard(this);
+            keyboard.setId(View.generateViewId());
+            RelativeLayout.LayoutParams bottom = new RelativeLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            bottom.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
+            mLayout.addView(keyboard, bottom);
+            // Android's keyboard over the window, not moving it: the keys
+            // put on top of it, as it says how tall it is.
+            getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
+            mLayout.setOnApplyWindowInsetsListener((view, insets) -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    boolean typing = insets.isVisible(WindowInsets.Type.ime());
+                    keyboard.typingShown(typing);
+                    RelativeLayout.LayoutParams place = (RelativeLayout.LayoutParams) keyboard.getLayoutParams();
+                    place.bottomMargin = typing ? insets.getInsets(WindowInsets.Type.ime()).bottom : 0;
+                    keyboard.setLayoutParams(place);
+                }
+                return insets;
+            });
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
+        }
+        arrange();
+    }
+
+    /** Whether the screen's taller than it's wide. */
+    private boolean portrait() {
+        return getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT;
+    }
+
+    /**
+     * The screen as it's turned: with a keyboard, in portrait, the picture
+     * as wide as the screen, sitting on the keyboard, Android's up to type
+     * on, and moving with it as it comes and goes: what's spare is over the
+     * picture, at the top, where a camera's hole is, never between it and
+     * the keys. In landscape, the picture the whole screen's, and the
+     * gamepad over it. Without one, the gamepad.
+     */
+    private void arrange() {
+        if (keyboard != null) {
+            boolean portrait = portrait();
+            keyboard.setVisibility(portrait ? View.VISIBLE : View.GONE);
+            RelativeLayout.LayoutParams picture = (RelativeLayout.LayoutParams) mSurface.getLayoutParams();
+            // The X16's picture, 640 by 480.
+            picture.height = portrait
+                    ? getResources().getDisplayMetrics().widthPixels * 3 / 4
+                    : ViewGroup.LayoutParams.MATCH_PARENT;
+            picture.width = ViewGroup.LayoutParams.MATCH_PARENT;
+            if (portrait) {
+                picture.addRule(RelativeLayout.ABOVE, keyboard.getId());
+            } else {
+                picture.removeRule(RelativeLayout.ABOVE);
+            }
+            mSurface.setLayoutParams(picture);
+            if (portrait) {
+                keyboard.showTyping();
+            } else {
+                keyboard.hideTyping();
+            }
+        }
+        if (touchPad != null) {
+            showTouchPad();
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration changed) {
+        super.onConfigurationChanged(changed);
+        if (mLayout != null) {
+            arrange();
+        }
+    }
+
+    /**
+     * SDL's own turning of the screen, to its window's shape: not with a
+     * keyboard, which turns with the phone.
+     */
+    @Override
+    public void setOrientationBis(int width, int height, boolean resizable, String hint) {
+        if (keyboard == null) {
+            super.setOrientationBis(width, height, resizable, hint);
+        }
+    }
+
+    /**
+     * Started again while it's running, as the one game screen there is:
+     * by the library, which can be come back to while a game runs (Home,
+     * then Open Bus). Brought back as it is; or, told to quit, as another
+     * game's chosen, closed as its own Quit closes it, put away to resume.
+     * Its own intent, the game it runs, kept.
+     */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (intent.getBooleanExtra("quit", false)) {
+            finish();
+            overridePendingTransition(0, 0);
         }
     }
 
@@ -127,8 +241,18 @@ public class GameActivity extends SDLActivity {
         }
     };
 
+    /**
+     * Whether the touch screen's gamepad would be shown: there's one, and
+     * no gamepad's plugged in; not in portrait with a keyboard, which is
+     * there instead.
+     */
+    private boolean controlsWanted() {
+        return touchPad != null && !padPlugged() && !(keyboard != null && portrait());
+    }
+
     private void showTouchPad() {
-        boolean shown = !padPlugged();
+        // Nor once it's been hidden, from the pause.
+        boolean shown = controlsWanted() && !controlsHidden;
         if (!shown) {
             touchPad.letGo();
         }
@@ -307,6 +431,9 @@ public class GameActivity extends SDLActivity {
         if (touchPad != null && touchPad.getVisibility() == View.VISIBLE) {
             offered.add(MOVE);
         }
+        if (controlsWanted()) {
+            offered.add(controlsHidden ? SHOW : HIDE);
+        }
         offered.add(QUIT);
 
         FrameLayout screen = new FrameLayout(this);
@@ -319,15 +446,16 @@ public class GameActivity extends SDLActivity {
         back.setColor(0xff202124);
         back.setCornerRadius(dp(24));
         card.setBackground(back);
-        card.setPadding(0, dp(12), 0, dp(12));
-        TextView title = words("Paused", 22);
-        title.setPadding(dp(24), dp(4), dp(24), dp(8));
+        // Short enough for all of it to fit a phone's landscape.
+        card.setPadding(0, dp(6), 0, dp(6));
+        TextView title = words("Paused", 20);
+        title.setPadding(dp(24), dp(4), dp(24), dp(4));
         card.addView(title);
         TypedValue ripple = new TypedValue();
         getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
         for (String item : offered) {
             TextView row = words(item, 18);
-            row.setMinHeight(dp(48));
+            row.setMinHeight(dp(42));
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(dp(24), 0, dp(24), 0);
             row.setBackgroundResource(ripple.resourceId);
@@ -369,6 +497,9 @@ public class GameActivity extends SDLActivity {
             SDLActivity.onNativeKeyDown(KeyEvent.KEYCODE_F12);
             new Handler(Looper.getMainLooper()).postDelayed(
                     () -> SDLActivity.onNativeKeyUp(KeyEvent.KEYCODE_F12), RESET_HELD_MS);
+        } else if (HIDE.equals(choice) || SHOW.equals(choice)) {
+            controlsHidden = HIDE.equals(choice);
+            showTouchPad();
         } else if (MOVE.equals(choice)) {
             moveControls();
         } else if (QUIT.equals(choice)) {
@@ -387,7 +518,7 @@ public class GameActivity extends SDLActivity {
      * been made.
      */
     private void moveControls() {
-        TouchPad editing = new TouchPad(this, buttons -> {}, true);
+        TouchPad editing = new TouchPad(this, buttons -> {}, true, touchPad.snes());
         FrameLayout screen = new FrameLayout(this);
         screen.setBackgroundColor(0x66000000);
         screen.addView(editing, new FrameLayout.LayoutParams(
@@ -419,7 +550,10 @@ public class GameActivity extends SDLActivity {
         }));
         sizes.addView(tool("Done", v -> closeOver(true)));
         choices.addView(ticks);
-        choices.addView(higher);
+        // A SNES pad's buttons are where its own are.
+        if (!editing.snes()) {
+            choices.addView(higher);
+        }
         tools.addView(sizes);
         tools.addView(choices);
         FrameLayout.LayoutParams top = new FrameLayout.LayoutParams(

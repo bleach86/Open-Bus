@@ -120,6 +120,8 @@ pub struct Window {
     /// Whether the machine takes the keyboard's keys; their presses and
     /// lettings go, for it; those held, to be let go.
     raw_keys: bool,
+    /// Whether the machine's controllers are SNES pads.
+    snes_pads: bool,
     key_changes: VecDeque<(Scancode, bool)>,
     raw_held: HashSet<Scancode>,
 }
@@ -312,6 +314,7 @@ impl Window {
             captured: false,
             title: title.to_string(),
             raw_keys: false,
+            snes_pads: false,
             key_changes: VecDeque::new(),
             raw_held: HashSet::new(),
         };
@@ -326,9 +329,17 @@ impl Window {
     /// Whether a binding's held, for `player`: a key, anyone's; a gamepad's,
     /// their own.
     fn is_held(&self, player: usize, source: &str) -> bool {
-        // The keyboard's all the machine's, if it takes its keys.
+        // The keyboard's all the machine's, if it takes its keys: but for
+        // what's bound to a function key (the library's F5), behind
+        // Ctrl+Shift, as Open Bus's other keys are then.
         if self.raw_keys && source.starts_with("key:") {
-            return false;
+            let function = source
+                .strip_prefix("key:F")
+                .is_some_and(|n| n.parse::<u8>().is_ok());
+            let either = |keys: [&str; 2]| keys.iter().any(|key| self.held.contains(*key));
+            let chord = either(["key:Left Ctrl", "key:Right Ctrl"])
+                && either(["key:Left Shift", "key:Right Shift"]);
+            return function && chord && self.held.contains(source);
         }
         match source.strip_prefix("pad:") {
             Some(button) => self.pads.holds(player, button),
@@ -342,17 +353,32 @@ impl Window {
             self.controls
                 .holds(player, action, |source| self.is_held(player, source))
         };
+        let (a, b) = (held(Action::A), held(Action::B));
+        let (turbo_a, turbo_b) = (held(Action::TurboA), held(Action::TurboB));
+        // A NES pad's A and B, and turbo; or a SNES pad's four, by where
+        // they are, as the pad's are bound: the bottom button (A's) its B,
+        // the right (turbo A's) its A, the left (B's) its Y and the top
+        // (turbo B's) its X; no turbo.
+        let (a, b, x, y, turbo_a, turbo_b) = if self.snes_pads {
+            (turbo_a, a, turbo_b, b, false, false)
+        } else {
+            (a, b, false, false, turbo_a, turbo_b)
+        };
         Gamepad {
             up: held(Action::Up),
             down: held(Action::Down),
             left: held(Action::Left),
             right: held(Action::Right),
-            a: held(Action::A),
-            b: held(Action::B),
+            a,
+            b,
             select: held(Action::Select),
             start: held(Action::Start),
-            turbo_a: held(Action::TurboA),
-            turbo_b: held(Action::TurboB),
+            x,
+            y,
+            l: held(Action::L),
+            r: held(Action::R),
+            turbo_a,
+            turbo_b,
             // A TV remote's OK, always, whatever's bound.
             accept: held(Action::MenuAccept) || self.held.contains(REMOTE_OK),
             back: held(Action::MenuBack),
@@ -499,8 +525,18 @@ impl Window {
                         self.capture(None);
                         continue;
                     }
-                    let own = fullscreen_key(keycode, keymod)
-                        || keycode == Keycode::F12
+                    // On a machine that takes the whole keyboard, F1 to F12
+                    // are its own, Open Bus's behind Ctrl+Shift (Ctrl's,
+                    // and Alt's, a desktop's); Android's Back is the menu,
+                    // always.
+                    let hosts = hosts_keys(self.raw_keys, keycode, keymod);
+                    let fullscreen =
+                        fullscreen_key(keycode, keymod) && (hosts || keycode != Keycode::F11);
+                    let reset = keycode == Keycode::F12 && hosts;
+                    let hosts_function = function_key(keycode).filter(|_| hosts);
+                    let own = fullscreen
+                        || reset
+                        || hosts_function.is_some()
                         || clipboard_key(keycode, keymod).is_some();
                     if let (true, false, Some(scancode)) = (self.raw_keys, own, scancode) {
                         let key = Scancode(scancode as i32 as u16);
@@ -528,16 +564,16 @@ impl Window {
                         Keycode::LAlt => self.alt_held[0] = true,
                         Keycode::RAlt => self.alt_held[1] = true,
                         Keycode::RShift => self.right_shift_held = true,
-                        Keycode::F12 => self.reset_held = true,
+                        Keycode::F12 if reset => self.reset_held = true,
                         _ => {}
                     }
                     // Fullscreen's key and the function keys, a press each,
                     // not repeating while held.
-                    if fullscreen_key(keycode, keymod) {
+                    if fullscreen {
                         toggle ^= !repeat;
                         continue;
                     }
-                    if let Some(n) = function_key(keycode) {
+                    if let Some(n) = hosts_function {
                         if !repeat {
                             self.function_keys.push_back(n);
                         }
@@ -753,6 +789,18 @@ fn fullscreen_key(keycode: Keycode, keymod: Mod) -> bool {
             && keymod.intersects(Mod::LGUIMOD | Mod::RGUIMOD)
 }
 
+/// Whether a function key's Open Bus's (the menu's F1, the states', F11's
+/// fullscreen, F12's Reset): always, unless the machine takes the whole
+/// keyboard (`raw_keys`), whose F1 to F12 are then, Open Bus's behind
+/// Ctrl+Shift (not Ctrl alone, a desktop's for its workspaces). Android's
+/// Back, a TV remote's and a phone's, is the menu, always.
+pub fn hosts_keys(raw_keys: bool, keycode: Keycode, keymod: Mod) -> bool {
+    let chord = keymod.intersects(Mod::LCTRLMOD | Mod::RCTRLMOD)
+        && keymod.intersects(Mod::LSHIFTMOD | Mod::RSHIFTMOD);
+    let back = cfg!(target_os = "android") && keycode == Keycode::AcBack;
+    !raw_keys || chord || back
+}
+
 /// F1 to F10's numbers.
 fn function_key(keycode: Keycode) -> Option<u8> {
     let keys = [
@@ -814,6 +862,10 @@ impl Display for Window {
     fn raw_keys(&mut self, on: bool) {
         self.raw_keys = on;
         self.let_go_keys();
+    }
+
+    fn snes_pads(&mut self, on: bool) {
+        self.snes_pads = on;
     }
 
     fn key_change(&mut self) -> Option<(Scancode, bool)> {
@@ -987,6 +1039,8 @@ impl Display for Window {
     fn hint(&self) -> Option<&'static str> {
         Some(if launched() {
             "SELECT + START: MENU, HELD: BACK"
+        } else if self.raw_keys {
+            "CTRL+SHIFT+F1 OR SELECT + START: MENU"
         } else {
             "F1 OR SELECT + START: MENU"
         })
