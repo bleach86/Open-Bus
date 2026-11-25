@@ -471,6 +471,12 @@ impl Emulator {
                 b: held(5),
                 select: held(6),
                 start: held(7),
+                // The page's touch and pads give a NES pad's: none of a
+                // SNES pad's own.
+                x: false,
+                y: false,
+                l: false,
+                r: false,
                 turbo_a: held(8),
                 turbo_b: held(9),
                 accept: held(10),

@@ -170,7 +170,8 @@ impl Snes {
     /// up, down, left, right, A, X, L, R, each 0 if held; then 4 1s.
     fn buttons(pad: Gamepad) -> u16 {
         let held = [
-            pad.b, false, pad.select, pad.start, pad.up, pad.down, pad.left, pad.right, pad.a,
+            pad.b, pad.y, pad.select, pad.start, pad.up, pad.down, pad.left, pad.right, pad.a,
+            pad.x, pad.l, pad.r,
         ];
         let held = held
             .iter()

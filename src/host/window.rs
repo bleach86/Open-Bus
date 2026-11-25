@@ -351,6 +351,12 @@ impl Window {
             b: held(Action::B),
             select: held(Action::Select),
             start: held(Action::Start),
+            // Not bound to a gamepad's or the keys yet: a touch screen's
+            // SNES pad holds them.
+            x: false,
+            y: false,
+            l: false,
+            r: false,
             turbo_a: held(Action::TurboA),
             turbo_b: held(Action::TurboB),
             // A TV remote's OK, always, whatever's bound.

@@ -242,8 +242,10 @@ impl Scancode {
 }
 
 /// A gamepad as a console has it: its D-pad, its A and B, its Select and
-/// Start, each held or not; and its turbo A and B, held, which the host
-/// makes A and B pressed and let go by turns, as a turbo controller's are.
+/// Start, each held or not; a SNES pad's X and Y and its shoulders, L and R,
+/// for the machines that have one (the Commander X16), as a touch screen's
+/// SNES pad holds them; and its turbo A and B, held, which the host makes A
+/// and B pressed and let go by turns, as a turbo controller's are.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Gamepad {
     pub up: bool,
@@ -254,6 +256,10 @@ pub struct Gamepad {
     pub b: bool,
     pub select: bool,
     pub start: bool,
+    pub x: bool,
+    pub y: bool,
+    pub l: bool,
+    pub r: bool,
     pub turbo_a: bool,
     pub turbo_b: bool,
     /// The menus' choosing and going back, as they're bound: the first

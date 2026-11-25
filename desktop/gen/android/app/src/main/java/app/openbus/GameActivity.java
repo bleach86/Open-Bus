@@ -1,7 +1,9 @@
 package app.openbus;
 
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.input.InputManager;
 import android.os.Build;
@@ -15,10 +17,12 @@ import android.view.KeyEvent;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.RelativeLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import java.util.ArrayList;
@@ -55,6 +59,12 @@ public class GameActivity extends SDLActivity {
 
     /** A touch screen's gamepad, for the NES, or null: the app's not on one. */
     private TouchPad touchPad;
+    /**
+     * A touch screen's keyboard, for a machine that has one (the Commander
+     * X16), or null: in portrait, under the picture, the gamepad in
+     * landscape. The screen turns with the phone for it.
+     */
+    private Keyboard keyboard;
     /**
      * What's over the game, the pause or the controls being moved, or null:
      * views in the game's own window, not dialogs, which are windows of
@@ -100,13 +110,97 @@ public class GameActivity extends SDLActivity {
             finish();
             return;
         }
-        if (args.length > 0 && args[0].equals("nes") && !mBrokenLibraries && mLayout != null
-                && getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)) {
-            touchPad = new TouchPad(this, GameActivity::touched, false);
+        String machine = args.length > 0 ? args[0] : "";
+        boolean touch = !mBrokenLibraries && mLayout != null
+                && getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN);
+        boolean x16 = machine.equals("x16");
+        if (touch && (machine.equals("nes") || x16)) {
+            touchPad = new TouchPad(this, GameActivity::touched, false, x16);
             mLayout.addView(touchPad, new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            showTouchPad();
             getSystemService(InputManager.class).registerInputDeviceListener(pads, null);
+        }
+        if (touch && x16) {
+            keyboard = new Keyboard(this);
+            keyboard.setId(View.generateViewId());
+            RelativeLayout.LayoutParams bottom = new RelativeLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            bottom.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
+            mLayout.addView(keyboard, bottom);
+            // Android's keyboard over the window, not moving it: the keys
+            // put on top of it, as it says how tall it is.
+            getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
+            mLayout.setOnApplyWindowInsetsListener((view, insets) -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    boolean typing = insets.isVisible(WindowInsets.Type.ime());
+                    keyboard.typingShown(typing);
+                    RelativeLayout.LayoutParams place = (RelativeLayout.LayoutParams) keyboard.getLayoutParams();
+                    place.bottomMargin = typing ? insets.getInsets(WindowInsets.Type.ime()).bottom : 0;
+                    keyboard.setLayoutParams(place);
+                }
+                return insets;
+            });
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
+        }
+        arrange();
+    }
+
+    /** Whether the screen's taller than it's wide. */
+    private boolean portrait() {
+        return getResources().getConfiguration().orientation == Configuration.ORIENTATION_PORTRAIT;
+    }
+
+    /**
+     * The screen as it's turned: with a keyboard, in portrait, the picture
+     * as wide as the screen, sitting on the keyboard, Android's up to type
+     * on, and moving with it as it comes and goes: what's spare is over the
+     * picture, at the top, where a camera's hole is, never between it and
+     * the keys. In landscape, the picture the whole screen's, and the
+     * gamepad over it. Without one, the gamepad.
+     */
+    private void arrange() {
+        if (keyboard != null) {
+            boolean portrait = portrait();
+            keyboard.setVisibility(portrait ? View.VISIBLE : View.GONE);
+            RelativeLayout.LayoutParams picture = (RelativeLayout.LayoutParams) mSurface.getLayoutParams();
+            // The X16's picture, 640 by 480.
+            picture.height = portrait
+                    ? getResources().getDisplayMetrics().widthPixels * 3 / 4
+                    : ViewGroup.LayoutParams.MATCH_PARENT;
+            picture.width = ViewGroup.LayoutParams.MATCH_PARENT;
+            if (portrait) {
+                picture.addRule(RelativeLayout.ABOVE, keyboard.getId());
+            } else {
+                picture.removeRule(RelativeLayout.ABOVE);
+            }
+            mSurface.setLayoutParams(picture);
+            if (portrait) {
+                keyboard.showTyping();
+            } else {
+                keyboard.hideTyping();
+            }
+        }
+        if (touchPad != null) {
+            showTouchPad();
+        }
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration changed) {
+        super.onConfigurationChanged(changed);
+        if (mLayout != null) {
+            arrange();
+        }
+    }
+
+    /**
+     * SDL's own turning of the screen, to its window's shape: not with a
+     * keyboard, which turns with the phone.
+     */
+    @Override
+    public void setOrientationBis(int width, int height, boolean resizable, String hint) {
+        if (keyboard == null) {
+            super.setOrientationBis(width, height, resizable, hint);
         }
     }
 
@@ -145,7 +239,8 @@ public class GameActivity extends SDLActivity {
     };
 
     private void showTouchPad() {
-        boolean shown = !padPlugged();
+        // Not in portrait with a keyboard: the keyboard's there instead.
+        boolean shown = !padPlugged() && !(keyboard != null && portrait());
         if (!shown) {
             touchPad.letGo();
         }
@@ -404,7 +499,7 @@ public class GameActivity extends SDLActivity {
      * been made.
      */
     private void moveControls() {
-        TouchPad editing = new TouchPad(this, buttons -> {}, true);
+        TouchPad editing = new TouchPad(this, buttons -> {}, true, touchPad.snes());
         FrameLayout screen = new FrameLayout(this);
         screen.setBackgroundColor(0x66000000);
         screen.addView(editing, new FrameLayout.LayoutParams(
@@ -436,7 +531,10 @@ public class GameActivity extends SDLActivity {
         }));
         sizes.addView(tool("Done", v -> closeOver(true)));
         choices.addView(ticks);
-        choices.addView(higher);
+        // A SNES pad's buttons are where its own are.
+        if (!editing.snes()) {
+            choices.addView(higher);
+        }
         tools.addView(sizes);
         tools.addView(choices);
         FrameLayout.LayoutParams top = new FrameLayout.LayoutParams(
