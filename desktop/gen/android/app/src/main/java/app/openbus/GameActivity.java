@@ -54,6 +54,7 @@ public class GameActivity extends SDLActivity {
      */
     private static final String RESUME = "Resume", SAVE = "Save state", LOAD = "Load state";
     private static final String RESET = "Reset", MOVE = "Move controls", QUIT = "Quit";
+    private static final String HIDE = "Hide controls", SHOW = "Show controls";
     /** How long Reset's held, F12, for the emulator to see it held. */
     private static final long RESET_HELD_MS = 250;
 
@@ -65,6 +66,8 @@ public class GameActivity extends SDLActivity {
      * landscape. The screen turns with the phone for it.
      */
     private Keyboard keyboard;
+    /** Whether the touch screen's gamepad's been hidden, from the pause, for this game. */
+    private boolean controlsHidden;
     /**
      * What's over the game, the pause or the controls being moved, or null:
      * views in the game's own window, not dialogs, which are windows of
@@ -238,9 +241,18 @@ public class GameActivity extends SDLActivity {
         }
     };
 
+    /**
+     * Whether the touch screen's gamepad would be shown: there's one, and
+     * no gamepad's plugged in; not in portrait with a keyboard, which is
+     * there instead.
+     */
+    private boolean controlsWanted() {
+        return touchPad != null && !padPlugged() && !(keyboard != null && portrait());
+    }
+
     private void showTouchPad() {
-        // Not in portrait with a keyboard: the keyboard's there instead.
-        boolean shown = !padPlugged() && !(keyboard != null && portrait());
+        // Nor once it's been hidden, from the pause.
+        boolean shown = controlsWanted() && !controlsHidden;
         if (!shown) {
             touchPad.letGo();
         }
@@ -419,6 +431,9 @@ public class GameActivity extends SDLActivity {
         if (touchPad != null && touchPad.getVisibility() == View.VISIBLE) {
             offered.add(MOVE);
         }
+        if (controlsWanted()) {
+            offered.add(controlsHidden ? SHOW : HIDE);
+        }
         offered.add(QUIT);
 
         FrameLayout screen = new FrameLayout(this);
@@ -431,15 +446,16 @@ public class GameActivity extends SDLActivity {
         back.setColor(0xff202124);
         back.setCornerRadius(dp(24));
         card.setBackground(back);
-        card.setPadding(0, dp(12), 0, dp(12));
-        TextView title = words("Paused", 22);
-        title.setPadding(dp(24), dp(4), dp(24), dp(8));
+        // Short enough for all of it to fit a phone's landscape.
+        card.setPadding(0, dp(6), 0, dp(6));
+        TextView title = words("Paused", 20);
+        title.setPadding(dp(24), dp(4), dp(24), dp(4));
         card.addView(title);
         TypedValue ripple = new TypedValue();
         getTheme().resolveAttribute(android.R.attr.selectableItemBackground, ripple, true);
         for (String item : offered) {
             TextView row = words(item, 18);
-            row.setMinHeight(dp(48));
+            row.setMinHeight(dp(42));
             row.setGravity(Gravity.CENTER_VERTICAL);
             row.setPadding(dp(24), 0, dp(24), 0);
             row.setBackgroundResource(ripple.resourceId);
@@ -481,6 +497,9 @@ public class GameActivity extends SDLActivity {
             SDLActivity.onNativeKeyDown(KeyEvent.KEYCODE_F12);
             new Handler(Looper.getMainLooper()).postDelayed(
                     () -> SDLActivity.onNativeKeyUp(KeyEvent.KEYCODE_F12), RESET_HELD_MS);
+        } else if (HIDE.equals(choice) || SHOW.equals(choice)) {
+            controlsHidden = HIDE.equals(choice);
+            showTouchPad();
         } else if (MOVE.equals(choice)) {
             moveControls();
         } else if (QUIT.equals(choice)) {
