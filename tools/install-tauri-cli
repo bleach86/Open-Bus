@@ -5,9 +5,35 @@
 # not built from source, which takes the longest of any step. If there's no
 # build for the runner, or it can't be had, built from source after all.
 #
+# Each download's checked against its SHA-256, kept here, as Tauri publishes
+# no checksums of its own: one that's changed since, as a release's file
+# swapped for another would be, stops the release, not built from source in
+# its place. These were taken as 2.12.4 had been out a month, and match
+# GitHub's own digests of the files, which were never replaced. A new
+# version wants its four: from its release's page, or `sha256sum` of each.
+#
 #   tools/install-tauri-cli 2.12.4
 set -e
 VERSION=${1:?which version of tauri-cli}
+
+# The SHA-256 of Tauri's build for a target, at a version.
+sha256_of() {
+    case "$1 $2" in
+        "2.12.4 x86_64-unknown-linux-gnu.tgz") echo 820ae3c7580ca637cad15f65638960ee2a96e5a491e224691c86d6f25e6c9e8a ;;
+        "2.12.4 x86_64-pc-windows-msvc.zip") echo 3e8687fb184bd7f10ebd8642f7715f79f4a605c0694c142a21507e8a24dc0f8b ;;
+        "2.12.4 aarch64-apple-darwin.zip") echo f71a34ada728ca2d1a51c28d6d21639e1e080898ec69ec8d49c5da3b7e8bc1be ;;
+        "2.12.4 x86_64-apple-darwin.zip") echo 164d184c0e50800dcae7bb31f0815066ebd27efc3e3bb73117974bcd2e982192 ;;
+    esac
+}
+
+# A file's SHA-256: by sha256sum, or a Mac's shasum.
+sha256() {
+    if command -v sha256sum >/dev/null; then
+        sha256sum "$1" | cut -d' ' -f1
+    else
+        shasum -a 256 "$1" | cut -d' ' -f1
+    fi
+}
 
 case "$RUNNER_OS-$RUNNER_ARCH" in
     Linux-X64) target=x86_64-unknown-linux-gnu.tgz ;;
@@ -17,10 +43,22 @@ case "$RUNNER_OS-$RUNNER_ARCH" in
     *) target= ;;
 esac
 
+expected=$(sha256_of "$VERSION" "$target")
+if [ -n "$target" ] && [ -z "$expected" ]; then
+    echo "tauri-cli $VERSION: no SHA-256 kept for $target, so not downloaded" >&2
+    target=
+fi
+
 bin="$HOME/.cargo/bin"
 url="https://github.com/tauri-apps/tauri/releases/download/tauri-cli-v$VERSION/cargo-tauri-$target"
 fetched=$(mktemp -d)
 if [ -n "$target" ] && curl -fsSL --retry 3 -o "$fetched/$target" "$url"; then
+    got=$(sha256 "$fetched/$target")
+    if [ "$got" != "$expected" ]; then
+        echo "::error::tauri-cli $VERSION's $target isn't the file it was: SHA-256 $got, not $expected" >&2
+        rm -rf "$fetched"
+        exit 1
+    fi
     mkdir -p "$bin"
     case "$target" in
         *.tgz) tar xzf "$fetched/$target" -C "$fetched" ;;
