@@ -3,8 +3,9 @@
 What each machine needs, how to play it, and what's missing. The
 [README](../README.md) lists the keys every machine shares.
 
-In the app, everything here is also in the game's menu: press F1, or tap
-Select and Start together on a gamepad.
+In the app, everything here is also in the game's menu: press F1 (Ctrl+Shift+F1
+on the Commander X16, Skink and BASIC), or tap Select and Start together on a
+gamepad.
 
 ## Files you add
 
@@ -185,7 +186,11 @@ desktop app can download it. On the command line it's read from `roms/x16/`.
   Pasted text is typed in.
 - **Mouse.** Click the picture to capture the mouse, and press Ctrl+M to let it
   go.
-- **Controllers.** Gamepads are its SNES controllers 1 and 2.
+- **Controllers.** Gamepads are its SNES controllers 1 and 2, their buttons
+  where a SNES pad's are: the bottom one B, the right A, the left Y and the top
+  X, the shoulders L and R.
+- **Function keys.** F1 to F12 are the X16's. Open Bus's own are behind
+  Ctrl+Shift: Ctrl+Shift+F1 for the menu, Ctrl+Shift+F12 to reset.
 - **Clock.** It starts from the host's time and keeps real time after that,
   even when the emulator runs fast. Its NVRAM is kept with your saves.
 - **Network card.** TexElec's Serial & ESP32 Network Card is in its expansion

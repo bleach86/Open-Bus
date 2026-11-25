@@ -835,6 +835,10 @@ impl Machine for X16 {
         true
     }
 
+    fn snes_pads(&self) -> bool {
+        true
+    }
+
     /// The key in its place pressed or let go, after what's typed already.
     fn key_change(&mut self, key: Scancode, down: bool) {
         if let Some(code) = keyboard::change(key, down) {

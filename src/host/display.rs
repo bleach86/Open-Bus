@@ -75,6 +75,10 @@ pub trait Display {
     /// them the gamepads' then.
     fn raw_keys(&mut self, _on: bool) {}
 
+    /// Whether the machine's controllers are SNES pads, as `Machine`'s
+    /// `snes_pads` says: its gamepads theirs by where their buttons are.
+    fn snes_pads(&mut self, _on: bool) {}
+
     /// Whether the game's held still from outside, as Android's own menus
     /// over it hold it: the machine standing still till it's let go.
     fn held_still(&self) -> bool {

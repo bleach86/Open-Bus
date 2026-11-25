@@ -67,6 +67,14 @@ pub trait Machine: Bus + Serialize + DeserializeOwned {
         false
     }
 
+    /// Whether its controllers are SNES pads (the Commander X16's): the
+    /// host's gamepads theirs by where their buttons are, as on a SNES, the
+    /// bottom B, the right A, the left Y and the top X, the shoulders L and
+    /// R, and no turbo.
+    fn snes_pads(&self) -> bool {
+        false
+    }
+
     /// A key pressed (`down`, again as it repeats) or let go.
     fn key_change(&mut self, _key: Scancode, _down: bool) {}
 

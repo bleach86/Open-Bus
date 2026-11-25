@@ -24,7 +24,8 @@ import org.libsdl.app.SDLActivity;
 /**
  * A computer's keyboard on a touch screen, as Termux has one: Android's own
  * keyboard, and over it two rows of the keys it hasn't (Esc, Tab, Ctrl,
- * Alt, the arrows and the rest). What's typed on either goes to the game
+ * Alt, the arrows and the rest); and Fn, which puts F1 to F12 in the top
+ * row's place till one's pressed, or Fn's tapped again. What's typed on either goes to the game
  * as a keyboard's keys go, pressed and let go, Shift and all, and as the
  * text they type: a machine that takes its keys as they're pressed (the
  * Commander X16) and one that takes what they type (the Apple II) both
@@ -36,16 +37,24 @@ import org.libsdl.app.SDLActivity;
  */
 public class Keyboard extends LinearLayout {
     /** A key of the rows: its label and Android's key code, or one of these. */
-    private static final int CTRL = -1, ALT = -2, TYPING = -3;
+    private static final int CTRL = -1, ALT = -2, TYPING = -3, FN = -4;
+    /** The two rows, ↑ over ↓ and Page Up over Page Down. */
     private static final Object[][][] ROWS = {
         {{"ESC", KeyEvent.KEYCODE_ESCAPE}, {"TAB", KeyEvent.KEYCODE_TAB},
-            {"HOME", KeyEvent.KEYCODE_MOVE_HOME}, {"↑", KeyEvent.KEYCODE_DPAD_UP},
-            {"END", KeyEvent.KEYCODE_MOVE_END}, {"PGUP", KeyEvent.KEYCODE_PAGE_UP},
-            {"DEL", KeyEvent.KEYCODE_FORWARD_DEL}},
-        {{"CTRL", CTRL}, {"ALT", ALT}, {"←", KeyEvent.KEYCODE_DPAD_LEFT},
+            {"HOME", KeyEvent.KEYCODE_MOVE_HOME}, {"END", KeyEvent.KEYCODE_MOVE_END},
+            {"↑", KeyEvent.KEYCODE_DPAD_UP}, {"PGUP", KeyEvent.KEYCODE_PAGE_UP},
+            {"DEL", KeyEvent.KEYCODE_FORWARD_DEL}, {"INS", KeyEvent.KEYCODE_INSERT}},
+        {{"CTRL", CTRL}, {"ALT", ALT}, {"Fn", FN}, {"←", KeyEvent.KEYCODE_DPAD_LEFT},
             {"↓", KeyEvent.KEYCODE_DPAD_DOWN}, {"→", KeyEvent.KEYCODE_DPAD_RIGHT},
             {"PGDN", KeyEvent.KEYCODE_PAGE_DOWN}, {"⌨", TYPING}},
     };
+    /** The F-keys' row, in the top row's place while Fn's on. */
+    private static final int[] F_KEYS = {
+        KeyEvent.KEYCODE_F1, KeyEvent.KEYCODE_F2, KeyEvent.KEYCODE_F3, KeyEvent.KEYCODE_F4,
+        KeyEvent.KEYCODE_F5, KeyEvent.KEYCODE_F6, KeyEvent.KEYCODE_F7, KeyEvent.KEYCODE_F8,
+        KeyEvent.KEYCODE_F9, KeyEvent.KEYCODE_F10, KeyEvent.KEYCODE_F11, KeyEvent.KEYCODE_F12,
+    };
+    private static final float ROW_DP = 46;
     /** How long a key's held before it repeats, and then how often. */
     private static final long REPEAT_AFTER_MS = 400, REPEAT_EVERY_MS = 50;
     /** A sticky key's two taps, as one double tap. */
@@ -61,26 +70,49 @@ public class Keyboard extends LinearLayout {
     private final Typing typing;
     private final float dp;
     private Sticky ctrl = Sticky.OFF, alt = Sticky.OFF;
-    private TextView ctrlKey, altKey;
+    private TextView ctrlKey, altKey, fnKey;
     private long ctrlTapped, altTapped;
+    /** The top row, and the F-keys' row that takes its place while Fn's on. */
+    private LinearLayout topRow, fRow;
 
     Keyboard(Context context) {
         super(context);
         setOrientation(VERTICAL);
         setBackgroundColor(0xff0d0d10);
         dp = context.getResources().getDisplayMetrics().density;
-        for (Object[][] row : ROWS) {
-            LinearLayout keys = new LinearLayout(context);
-            keys.setOrientation(HORIZONTAL);
-            for (Object[] key : row) {
-                keys.addView(key((String) key[0], (Integer) key[1]),
-                        new LayoutParams(0, (int) (46 * dp), 1));
+        int height = (int) (ROW_DP * dp);
+        fRow = row();
+        for (int n = 0; n < F_KEYS.length; n++) {
+            fRow.addView(key("F" + (n + 1), F_KEYS[n]), new LayoutParams(0, height, 1));
+        }
+        fRow.setVisibility(GONE);
+        addView(fRow, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+        for (Object[][] keys : ROWS) {
+            LinearLayout row = row();
+            for (Object[] key : keys) {
+                row.addView(key((String) key[0], (Integer) key[1]), new LayoutParams(0, height, 1));
             }
-            addView(keys, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
+            if (topRow == null) {
+                topRow = row;
+            }
+            addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
         }
         // Android's keyboard's, unseen: where what it types comes in.
         typing = new Typing(context);
         addView(typing, new LayoutParams(1, 1));
+    }
+
+    private LinearLayout row() {
+        LinearLayout row = new LinearLayout(getContext());
+        row.setOrientation(HORIZONTAL);
+        return row;
+    }
+
+    /** The F-keys in the top row's place, or the top row back; Fn lit while they are. */
+    private void showFKeys(boolean shown) {
+        fRow.setVisibility(shown ? VISIBLE : GONE);
+        topRow.setVisibility(shown ? GONE : VISIBLE);
+        fnKey.setBackground(face(shown ? LIT : KEY));
     }
 
     /** Android's keyboard up, to type on. */
@@ -107,7 +139,8 @@ public class Keyboard extends LinearLayout {
         TextView key = new TextView(getContext());
         key.setText(label);
         key.setTextColor(TEXT);
-        key.setTextSize(TypedValue.COMPLEX_UNIT_SP, label.length() > 1 && !label.equals("⌨") ? 14 : 20);
+        boolean fKey = label.matches("F\\d+");
+        key.setTextSize(TypedValue.COMPLEX_UNIT_SP, fKey ? 12 : label.length() > 1 && !label.equals("⌨") ? 14 : 20);
         key.setGravity(Gravity.CENTER);
         key.setBackground(face(KEY));
         key.setHapticFeedbackEnabled(true);
@@ -125,6 +158,9 @@ public class Keyboard extends LinearLayout {
                 altTapped = SystemClock.uptimeMillis();
                 light();
             });
+        } else if (code == FN) {
+            fnKey = key;
+            key.setOnClickListener(v -> showFKeys(fRow.getVisibility() != VISIBLE));
         } else if (code == TYPING) {
             key.setOnClickListener(v -> {
                 if (typingShown) {
@@ -230,6 +266,10 @@ public class Keyboard extends LinearLayout {
                     up(code, held);
                     pressModifiers(held, false);
                     used();
+                    // An F-key pressed: the top row back.
+                    if (view.getParent() == fRow) {
+                        showFKeys(false);
+                    }
                     return true;
                 default:
                     return true;

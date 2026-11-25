@@ -4067,14 +4067,12 @@ addEventListener('keydown', (event) => {
     }
     held.add(code);
     const number = /^F(\d+)$/.exec(code)?.[1];
-    // The machine's keys, all but the page's own, F11 and F12, and the
-    // clipboard's; the function keys the host's too, for those it has.
-    if (rawKeys && code !== 'F11' && code !== 'F12' && usageOf(code) !== undefined) {
+    // The machine's keys, all but the clipboard's: F1 to F12 too, Open Bus's
+    // own behind Ctrl+Shift then, as in the app.
+    const hosts = !rawKeys || (event.ctrlKey && event.shiftKey);
+    if (rawKeys && !(number && hosts) && usageOf(code) !== undefined) {
         rawHeld.add(code);
         emulator.key_change(usageOf(code), true);
-        if (number && !event.repeat) {
-            emulator.function_key(Number(number));
-        }
         return;
     }
     if (number) {

@@ -72,7 +72,10 @@ onto one tile. Games run in the native emulator, in a window of their own.
   made for a gamepad and the remote. On a phone or tablet with no gamepad, Back
   pauses the game with a menu you can tap, and NES games get on-screen
   controls. Choose Move controls in that menu to drag them where you want them,
-  resize them, turn off their vibration, or put B higher than A.
+  resize them, turn off their vibration, or put B higher than A. The Commander
+  X16 gets a keyboard in portrait (Android's own, with rows of Esc, Ctrl, Alt,
+  the arrows and more above it, and an Fn key for F1 to F12) and a SNES pad in
+  landscape.
 - **Web**: the emulator compiled to WebAssembly, with the library as a page,
   at [obus.tuxprint.com](https://obus.tuxprint.com/). It runs everything
   except Skink and BASIC.
@@ -100,6 +103,10 @@ Some systems need files of your own, which you add in Settings → System:
 | F6               | Change the controls                       |
 | F11              | Fullscreen (on a Mac, Ctrl+Cmd+F)         |
 | F12              | Reset                                     |
+
+On the Commander X16, Skink and BASIC, whose keyboards are all theirs, F1 to
+F12 are the machine's, and Open Bus's keys move behind Ctrl+Shift: Ctrl+Shift+F1
+for the menu, Ctrl+Shift+F2 to save a state, and so on.
 
 Machines use some function keys for themselves. For example, F9 and F10 change
 the Apple's disks and F9 flips a Disk System disk. On the Ataris, F7 and F8

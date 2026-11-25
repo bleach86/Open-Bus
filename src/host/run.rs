@@ -15,7 +15,7 @@
 use crate::cpu::CPU;
 use crate::host::clock;
 use crate::host::controls::{ACTIONS, Action, BUTTONS, Controls, REMOTE_OK, is_stick, name};
-use crate::host::display::{COPY_KEY, Display, Gamepad, Key, PASTE_KEY, Scancode};
+use crate::host::display::{COPY_KEY, Display, Gamepad, Key, PASTE_KEY};
 use crate::host::files;
 use crate::host::machine::{Input, Machine};
 use crate::host::notice;
@@ -118,9 +118,6 @@ const RESET_FRAMES: u32 = 6;
 /// The function keys while they're changing, and what cancels it; about how
 /// many frames a second they're shown at.
 const CONTROLS_KEY: u8 = 6;
-/// The function keys the host has for itself, as above: none of them a
-/// machine's that takes the keyboard's keys.
-const HOSTS_KEYS: [u8; 5] = [MENU_KEY, 2, 3, 4, CONTROLS_KEY];
 const NEXT_PLAYER_KEY: u8 = 7;
 const DEFAULTS_KEY: u8 = 8;
 const CANCEL: &str = "key:Escape";
@@ -229,6 +226,7 @@ impl<M: Machine> Host<M> {
         let has_mouse = cpu.memory.has_mouse();
         display.mouse(has_mouse);
         display.raw_keys(cpu.memory.raw_keys());
+        display.snes_pads(cpu.memory.snes_pads());
         let moments = (REWIND.load(Ordering::Relaxed) && cpu.memory.rewinds()).then(VecDeque::new);
         Host {
             has_mouse,
@@ -709,7 +707,8 @@ impl<M: Machine> Host<M> {
         }
 
         // A machine that takes the keyboard's keys has them, not what they
-        // type: but the host's own.
+        // type: all of them, F1 to F12 too (the display keeps the host's
+        // own, behind Ctrl+Shift then, out of them).
         let raw = self.cpu.memory.raw_keys();
         while let Some(key) = self.display.key() {
             if !raw {
@@ -717,10 +716,7 @@ impl<M: Machine> Host<M> {
             }
         }
         while let Some((key, down)) = self.display.key_change() {
-            let hosts = HOSTS_KEYS.map(|n| Scancode::function(n as u16));
-            if !hosts.contains(&key) {
-                self.cpu.memory.key_change(key, down);
-            }
+            self.cpu.memory.key_change(key, down);
         }
         self.frames = self.frames.wrapping_add(1);
         let mut gamepad = self.display.gamepad().turbo(self.frames);
