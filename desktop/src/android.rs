@@ -197,15 +197,35 @@ pub fn storage_places() -> Vec<(String, PathBuf)> {
         .collect()
 }
 
-/// `new Intent(activity, GameActivity.class)`, its extras the command
-/// line, the folder and the log; started.
-fn start_activity(
-    env: &mut JNIEnv,
-    activity: &JObject,
-    line: &[String],
-    folder: &str,
-    log: &str,
-) -> jni::errors::Result<()> {
+/// The running game's screen brought back to the front, as it is; or, if
+/// it's to `quit`, brought back to close, as its own Quit closes it (put
+/// away to resume, its saves kept). It's the one game screen there is, so
+/// it's told so as it's started again, not started afresh.
+pub fn bring_back(window: &WebviewWindow, quit: bool) -> Result<(), String> {
+    on_activity(window, move |env, activity| {
+        let intent = game_intent(env, activity)?;
+        if quit {
+            let key = env.new_string("quit")?;
+            env.call_method(
+                &intent,
+                "putExtra",
+                "(Ljava/lang/String;Z)Landroid/content/Intent;",
+                &[JValue::Object(&key), JValue::Bool(1)],
+            )?;
+        }
+        env.call_method(
+            activity,
+            "startActivity",
+            "(Landroid/content/Intent;)V",
+            &[JValue::Object(&intent)],
+        )?;
+        Ok(())
+    })
+    .map_err(|e| format!("the game wasn't reached: {e}"))
+}
+
+/// `new Intent(activity, GameActivity.class)`.
+fn game_intent<'a>(env: &mut JNIEnv<'a>, activity: &JObject) -> jni::errors::Result<JObject<'a>> {
     // By the app's own class loader: this thread's is the system's.
     let loader = env
         .call_method(activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
@@ -219,11 +239,23 @@ fn start_activity(
             &[JValue::Object(&name)],
         )?
         .l()?;
-    let intent = env.new_object(
+    env.new_object(
         "android/content/Intent",
         "(Landroid/content/Context;Ljava/lang/Class;)V",
         &[JValue::Object(activity), JValue::Object(&class)],
-    )?;
+    )
+}
+
+/// `new Intent(activity, GameActivity.class)`, its extras the command
+/// line, the folder and the log; started.
+fn start_activity(
+    env: &mut JNIEnv,
+    activity: &JObject,
+    line: &[String],
+    folder: &str,
+    log: &str,
+) -> jni::errors::Result<()> {
+    let intent = game_intent(env, activity)?;
     let args = env.new_object_array(line.len() as i32, "java/lang/String", JObject::null())?;
     for (n, arg) in line.iter().enumerate() {
         let arg = env.new_string(arg)?;

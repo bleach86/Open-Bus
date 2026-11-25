@@ -1,5 +1,6 @@
 package app.openbus;
 
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.input.InputManager;
@@ -106,6 +107,22 @@ public class GameActivity extends SDLActivity {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             showTouchPad();
             getSystemService(InputManager.class).registerInputDeviceListener(pads, null);
+        }
+    }
+
+    /**
+     * Started again while it's running, as the one game screen there is:
+     * by the library, which can be come back to while a game runs (Home,
+     * then Open Bus). Brought back as it is; or, told to quit, as another
+     * game's chosen, closed as its own Quit closes it, put away to resume.
+     * Its own intent, the game it runs, kept.
+     */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (intent.getBooleanExtra("quit", false)) {
+            finish();
+            overridePendingTransition(0, 0);
         }
     }
 

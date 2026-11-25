@@ -990,8 +990,8 @@ async function getBusterm() {
         return;
     }
     const question =
-        "busterm, a BBS terminal for the X16's modem, isn't in the library yet. Download its latest release from GitHub? It's about 40 KB.";
-    if (!(await native.ask(question))) {
+        "busterm is a BBS terminal for the X16's modem. Its latest release is free on GitHub, about 40 KB.";
+    if (!(await sure(question, { title: "busterm isn't here", yes: 'Download it', no: 'Not now' }))) {
         return;
     }
     say('Downloading busterm…');
@@ -1022,7 +1022,12 @@ async function updateBusterm(machine) {
         return machine;
     }
     newerBusterm = null;
-    if (!(await native.ask(`busterm ${update.latest} is out (you have ${update.have}). Update it first?`))) {
+    const asked = sure(`You have ${update.have}. Update it before it starts?`, {
+        title: `busterm ${update.latest} is out`,
+        yes: 'Update',
+        no: 'Not now',
+    });
+    if (!(await asked)) {
         return machine;
     }
     say('Downloading busterm…');
@@ -1310,7 +1315,7 @@ async function openGameSettings(name) {
     remove.textContent = `${verb}…`;
     remove.onclick = async () => {
         dialog.close();
-        if (await sure(question)) {
+        if (await sure(question, { yes: verb })) {
             await forget(name);
             refresh();
         }
@@ -2559,7 +2564,7 @@ function diskTile(game, wanted) {
         remove.title = `${verb} ${game.title}`;
         remove.setAttribute('aria-label', remove.title);
         remove.onclick = async () => {
-            if (await sure(question)) {
+            if (await sure(question, { yes: verb })) {
                 for (const disk of game.disks) {
                     await forget(disk);
                 }
@@ -2608,17 +2613,22 @@ function diskBox(name) {
     return label;
 }
 
-/// Whether `question`'s answered yes: in the app by the system's own dialog,
-/// as its webview's `confirm` goes on without waiting for an answer.
-const sure = (question) =>
-    native?.android ? askInPage(question) : native ? native.ask(question) : Promise.resolve(confirm(question));
+/// Whether `question`'s answered yes, asked in the page's own dialog, as the
+/// X16's ROM and the updates are: everywhere alike, not by the system's
+/// dialog, which looks like nothing else here, and can't be worked with a
+/// gamepad on Android (nor `confirm`, which a webview doesn't wait for).
+/// Its `title` over it, if it has one, and its buttons saying what they do.
+const sure = (question, { title = '', yes = 'OK', no = 'Cancel' } = {}) => askInPage(question, title, yes, no);
 
-/// `question` asked in the page, not by Android's own dialog: as the rest of
-/// the page is, with a gamepad, its buttons where its maker has them. Whether
-/// it was OK'd.
-function askInPage(question) {
+/// `question` asked in the page, as the rest of the page is, with a gamepad,
+/// its buttons where its maker has them. Whether it was OK'd.
+function askInPage(question, title, yesLabel, noLabel) {
     const dialog = page('ask-dialog');
+    page('ask-title').textContent = title;
+    page('ask-title').hidden = !title;
     page('ask-question').textContent = question;
+    page('ask-yes').textContent = yesLabel;
+    page('ask-no').textContent = noLabel;
     let yes = false;
     page('ask-no').onclick = () => dialog.close();
     page('ask-yes').onclick = () => {
@@ -2667,7 +2677,7 @@ function removeButton(name) {
     remove.title = `${verb} ${shortName(name)}`;
     remove.setAttribute('aria-label', remove.title);
     remove.onclick = async () => {
-        if (await sure(question)) {
+        if (await sure(question, { yes: verb })) {
             await forget(name);
             refresh();
         }
@@ -2988,9 +2998,72 @@ page('apple').onclick = () => {
 
 /// In the desktop app, a game's on the native emulator, not here: a game
 /// over, what it's saved is in the library, and what went wrong is told.
-function playNatively(machine) {
+/// The game last started here, till it's over, to tell of; and, while it's
+/// being quit for another, what's told when it is.
+let startedGame = null;
+let quitting = null;
+
+/// A machine's name, as its tile has it.
+function machineTitle(machine) {
+    const first = machine.game ?? machine.disks?.[0];
+    if (first) {
+        return plainTitle(first);
+    }
+    return { x16: 'Commander X16', controls: 'Controls' }[machine.kind] ?? 'The game';
+}
+
+// Come back to while a game's still running, as Android lets it be: told
+// how to go back to it. (As a game ends, the library's back a moment before
+// it's known to be over: the game's end says so, and the notice goes.)
+document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible' || !native?.android || !startedGame) {
+        return;
+    }
+    if ((await native.running(startedGame)) === true) {
+        say(`${machineTitle(startedGame)} is still running: choose it to go back to it.`);
+    }
+});
+
+/// On Android, a game may still be running as a game's chosen: the library
+/// can be come back to while one runs (Home, then Open Bus), and there's
+/// only one game screen. The same game's brought back as it is; another's
+/// asked first, then the running one's quit, as its own Quit does, put
+/// away to resume. Whether `machine` can be started now.
+async function nothingRunning(machine) {
+    if (!native?.android) {
+        return true;
+    }
+    const same = await native.running(machine);
+    if (same === null) {
+        return true;
+    }
+    if (same) {
+        native.returnToGame().catch((problem) => say(String(problem), true));
+        return false;
+    }
+    const was = startedGame ? machineTitle(startedGame) : 'A game';
+    const question = `${was} is still running. Quit it and play ${machineTitle(machine)}?`;
+    if (!(await sure(question, { title: 'A game is still running', yes: 'Quit it and play', no: 'Not now' }))) {
+        return false;
+    }
+    const over = new Promise((done) => (quitting = done));
+    try {
+        await native.quitGame();
+    } catch (problem) {
+        quitting = null;
+        say(String(problem), true);
+        return false;
+    }
+    await over;
+    return true;
+}
+
+async function playNatively(machine) {
     if (machine.game && kind(machine.game) === 'fds' && !files.includes(FDS_BIOS)) {
         say(`Disk System games need the BIOS, ${FDS_BIOS}: add it in Settings.`, true);
+        return;
+    }
+    if (!(await nothingRunning(machine))) {
         return;
     }
     const fullscreen = machine.kind !== 'controls' && (page('start-fullscreen').checked || page('tv-layout').checked);
@@ -3000,9 +3073,11 @@ function playNatively(machine) {
     const rewind = page('rewind').checked;
     const driveLight = page('drive-light').checked;
     const vsync = page('vsync').checked;
-    native
-        .play({ ...machine, fullscreen, fast, ram, resume, rewind, driveLight, vsync })
-        .catch((problem) => say(String(problem), true));
+    startedGame = machine;
+    native.play({ ...machine, fullscreen, fast, ram, resume, rewind, driveLight, vsync }).catch((problem) => {
+        startedGame = null;
+        say(String(problem), true);
+    });
 }
 native?.whenPads((pressed, maker) => {
     padsSaid = pressed;
@@ -3018,6 +3093,9 @@ function tvLayout(on) {
 }
 
 native?.whenGameEnds((problem) => {
+    startedGame = null;
+    quitting?.();
+    quitting = null;
     // Its controls perhaps changed in the game.
     learnMenus();
     if (page('tv-layout').checked) {
@@ -3313,10 +3391,8 @@ async function fillSaves(overview) {
                     return row(name, 'None');
                 }
                 return row(name, `${counted(count, 'file')}, ${sizeOf(bytes)}`, 'Clear', async () => {
-                    const sure = await native.ask(
-                        `Delete all ${counted(count, name.toLowerCase().replace(/s$/, ''))}? This can't be undone.`,
-                    );
-                    if (sure) {
+                    const all = counted(count, name.toLowerCase().replace(/s$/, ''));
+                    if (await sure(`Delete all ${all}? This can't be undone.`, { yes: 'Delete' })) {
                         fillSaves(await native.clearSaves([kind]));
                     }
                 });
@@ -3327,7 +3403,9 @@ async function fillSaves(overview) {
 /// The folder saves are kept in changed, what's there moved, asked first.
 async function moveSaves(path) {
     const where = path ?? "the app's own folder";
-    if (!(await native.ask(`Keep saves in ${where} from now on? Those there are now are moved there.`))) {
+    if (
+        !(await sure(`Keep saves in ${where} from now on? Those there are now are moved there.`, { yes: 'Move them' }))
+    ) {
         return;
     }
     try {
@@ -3405,7 +3483,7 @@ async function fillGameSaves(machine) {
             const [, name] = SAVE_KINDS[save.kind] ?? [save.kind, save.kind];
             const when = whenPlayed(save.written).toLowerCase();
             return row(name, `${sizeOf(save.bytes)}, saved ${when}`, 'Delete', async () => {
-                if (await native.ask(`Delete this game's ${name.toLowerCase()}? This can't be undone.`)) {
+                if (await sure(`Delete this game's ${name.toLowerCase()}? This can't be undone.`, { yes: 'Delete' })) {
                     await native.clearGameSaves(machine, [save.kind]);
                     fillGameSaves(machine);
                 }
@@ -3431,7 +3509,9 @@ async function fillFolders() {
     page('folders').replaceChildren(
         ...folders.map((folder) =>
             row(folder, counted(native.gamesIn(folder), 'game'), 'Remove', async () => {
-                if (await sure(`Remove ${folder} from the library? Its files stay where they are.`)) {
+                if (
+                    await sure(`Remove ${folder} from the library? Its files stay where they are.`, { yes: 'Remove' })
+                ) {
                     await native.removeFolder(folder);
                     await refresh();
                     fillSettings();
@@ -3500,7 +3580,7 @@ if (native) {
     // A slip of the mouse, beside Settings, shouldn't close it: asked first.
     // Not Ctrl+Q, as nobody presses that by chance.
     page('quit-app').onclick = async () => {
-        if (await sure('Quit Open Bus?')) {
+        if (await sure('Quit Open Bus?', { yes: 'Quit' })) {
             native.quit();
         }
     };
