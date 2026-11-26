@@ -1,16 +1,16 @@
 use crate::host::fingers::{Fingers, Way};
-use std::time::{Duration, Instant};
 
 const PICTURE: (f32, f32) = (640.0, 480.0);
 
-fn ms(n: u64) -> Duration {
-    Duration::from_millis(n)
+/// `n` milliseconds, in seconds, as the fingers are given the time.
+fn ms(n: u64) -> f64 {
+    n as f64 / 1000.0
 }
 
 #[test]
 fn a_finger_dragged_moves_the_pointer_by_as_far_as_it_goes() {
     let mut fingers = Fingers::new();
-    let now = Instant::now();
+    let now = 100.0;
     fingers.down(Way::Trackpad, 1, (0.0, 0.0), PICTURE, now);
     assert_eq!(fingers.pointer(now).at, Some((320.0, 240.0)), "the middle");
     fingers.moved(Way::Trackpad, 1, (0.0, 0.0), (40.0, -8.0));
@@ -27,7 +27,7 @@ fn a_finger_dragged_moves_the_pointer_by_as_far_as_it_goes() {
 #[test]
 fn a_tap_clicks_and_two_fingers_tapped_click_the_second_button() {
     let mut fingers = Fingers::new();
-    let now = Instant::now();
+    let now = 100.0;
     fingers.down(Way::Trackpad, 1, (0.0, 0.0), PICTURE, now);
     assert_eq!(fingers.pointer(now).buttons, [false, false], "not yet");
     fingers.up(Way::Trackpad, 1, now + ms(100));
@@ -47,7 +47,7 @@ fn a_tap_clicks_and_two_fingers_tapped_click_the_second_button() {
 #[test]
 fn a_tap_then_a_finger_held_drags_with_the_button_held() {
     let mut fingers = Fingers::new();
-    let now = Instant::now();
+    let now = 100.0;
     fingers.down(Way::Trackpad, 1, (0.0, 0.0), PICTURE, now);
     fingers.up(Way::Trackpad, 1, now + ms(100));
     fingers.down(Way::Trackpad, 2, (0.0, 0.0), PICTURE, now + ms(300));
@@ -65,7 +65,7 @@ fn a_tap_then_a_finger_held_drags_with_the_button_held() {
 #[test]
 fn a_slow_or_moving_finger_is_no_tap() {
     let mut fingers = Fingers::new();
-    let now = Instant::now();
+    let now = 100.0;
     fingers.down(Way::Trackpad, 1, (0.0, 0.0), PICTURE, now);
     fingers.up(Way::Trackpad, 1, now + ms(600));
     assert_eq!(fingers.pointer(now + ms(610)).buttons, [false, false]);
@@ -78,7 +78,7 @@ fn a_slow_or_moving_finger_is_no_tap() {
 #[test]
 fn a_light_gun_is_aimed_where_the_finger_is_and_fired_as_its_held() {
     let mut fingers = Fingers::new();
-    let now = Instant::now();
+    let now = 100.0;
     fingers.down(Way::Aimed, 1, (100.0, 50.0), (256.0, 240.0), now);
     let shot = fingers.pointer(now);
     assert_eq!(shot.at, Some((100.0, 50.0)));

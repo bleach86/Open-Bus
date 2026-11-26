@@ -3763,6 +3763,7 @@ async function start(make, machine, using, game) {
     page('x16-help').hidden = machine !== 'x16';
     rawKeys = emulator.raw_keys();
     hasMouse = emulator.has_mouse();
+    page('frame').classList.toggle('mouse', hasMouse);
     page('disk').hidden = page('disk-help').hidden = !emulator.disk_system();
     page('switch-help').hidden = machine !== 'atari2600';
     page('switch-help-7800').hidden = machine !== 'atari7800';
@@ -3808,6 +3809,7 @@ async function stop() {
     emulator = null;
     held.clear();
     rawKeys = hasMouse = false;
+    fingersAt.clear();
     if (locked()) {
         document.exitPointerLock();
     }
@@ -4169,6 +4171,7 @@ function mouseWanted() {
     const wanted = emulator.has_mouse();
     if (wanted !== hasMouse) {
         hasMouse = wanted;
+        page('frame').classList.toggle('mouse', wanted);
         if (!wanted && locked()) {
             document.exitPointerLock();
         }
@@ -4214,6 +4217,43 @@ document.addEventListener('pointerlockchange', () => {
     mouse.buttons = 0;
     tellMouse();
 });
+
+/// Fingers on the picture, for a machine with a mouse, a trackpad's: the
+/// emulator makes moves and clicks of them (dragged, a move; tapped, a
+/// click; two tapped, the right button's; tapped then held, a drag). Where
+/// each finger was last, by its pointer's id, to tell how far it's gone.
+const fingersAt = new Map();
+
+/// A finger (or a pen) `change`d on the picture: down (1), moved (0) or
+/// lifted (-1). Not the mouse's, and no mouse events made of it after, so a
+/// tap doesn't lock a pointer a touch screen hasn't got.
+function finger(event, change) {
+    if (!hasMouse || event.pointerType === 'mouse' || (change <= 0 && !fingersAt.has(event.pointerId))) {
+        return;
+    }
+    event.preventDefault();
+    const canvas = page('screen');
+    const box = canvas.getBoundingClientRect();
+    const x = ((event.clientX - box.left) / box.width) * canvas.width;
+    const y = ((event.clientY - box.top) / box.height) * canvas.height;
+    const [wasX, wasY] = fingersAt.get(event.pointerId) ?? [x, y];
+    if (change < 0) {
+        fingersAt.delete(event.pointerId);
+    } else {
+        fingersAt.set(event.pointerId, [x, y]);
+    }
+    emulator?.finger(event.pointerId, change, x, y, x - wasX, y - wasY, canvas.width, canvas.height);
+}
+page('screen').addEventListener('pointerdown', (event) => {
+    finger(event, 1);
+    if (fingersAt.has(event.pointerId)) {
+        page('screen').setPointerCapture(event.pointerId);
+    }
+});
+page('screen').addEventListener('pointermove', (event) => finger(event, 0));
+for (const type of ['pointerup', 'pointercancel']) {
+    page('screen').addEventListener(type, (event) => finger(event, -1));
+}
 
 /// Whether the machine's aimed at, a light gun's: the pointer on the picture
 /// its, where it is and its buttons, the left (or a finger) and the right.

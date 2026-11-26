@@ -6,17 +6,16 @@
 //! finger is is where it's aimed, and it's fired as it's held.
 
 use crate::host::display::Pointer;
-use std::time::{Duration, Instant};
 
-/// A tap: lifted this soon after the first finger landed...
-const TAP: Duration = Duration::from_millis(250);
+/// A tap: lifted this soon after the first finger landed, in seconds...
+const TAP: f64 = 0.25;
 /// ...not having moved further than this, in the picture's pixels.
 const STILL: f32 = 6.0;
 /// A finger landing this soon after a tap: a drag, the button held.
-const AGAIN: Duration = Duration::from_millis(300);
+const AGAIN: f64 = 0.3;
 /// How long a tap's click, or a shot, is held: for frames enough that the
 /// machine sees it.
-const CLICK: Duration = Duration::from_millis(80);
+const CLICK: f64 = 0.08;
 /// How far the pointer goes for how far a finger does.
 const SPEED: f32 = 1.25;
 
@@ -40,14 +39,14 @@ struct Finger {
 pub struct Fingers {
     down: Vec<Finger>,
     /// When the first of them landed, and the most down together since.
-    landed: Option<Instant>,
+    landed: Option<f64>,
     most: usize,
     /// When the last tap was lifted, and whether a drag's holding the
     /// first button.
-    tapped: Option<Instant>,
+    tapped: Option<f64>,
     dragging: bool,
     /// Until when each button's held, by a tap or a shot.
-    until: [Option<Instant>; 2],
+    until: [Option<f64>; 2],
     pointer: Pointer,
 }
 
@@ -56,8 +55,9 @@ impl Fingers {
         Fingers::default()
     }
 
-    /// The pointer, as the fingers have it `now`.
-    pub fn pointer(&self, now: Instant) -> Pointer {
+    /// The pointer, as the fingers have it `now`: in seconds, as
+    /// `clock::seconds` has them, as every time given them is.
+    pub fn pointer(&self, now: f64) -> Pointer {
         let held = |n: usize| self.until[n].is_some_and(|until| now < until);
         Pointer {
             at: self.pointer.at,
@@ -73,14 +73,12 @@ impl Fingers {
 
     /// Finger `id` landed `now`, at `at` on the picture, in its pixels, of
     /// `picture`'s size.
-    pub fn down(&mut self, way: Way, id: i64, at: (f32, f32), picture: (f32, f32), now: Instant) {
+    pub fn down(&mut self, way: Way, id: i64, at: (f32, f32), picture: (f32, f32), now: f64) {
         if self.down.is_empty() {
             self.landed = Some(now);
             self.most = 0;
             if way == Way::Trackpad {
-                self.dragging = self
-                    .tapped
-                    .is_some_and(|tapped| now.duration_since(tapped) < AGAIN);
+                self.dragging = self.tapped.is_some_and(|tapped| now - tapped < AGAIN);
             }
         }
         self.down.retain(|finger| finger.id != id);
@@ -121,7 +119,7 @@ impl Fingers {
     }
 
     /// Finger `id` lifted `now`.
-    pub fn up(&mut self, way: Way, id: i64, now: Instant) {
+    pub fn up(&mut self, way: Way, id: i64, now: f64) {
         let Some(at) = self.down.iter().position(|finger| finger.id == id) else {
             return;
         };
@@ -133,9 +131,7 @@ impl Fingers {
             }
             return;
         }
-        let quick = self
-            .landed
-            .is_some_and(|landed| now.duration_since(landed) < TAP);
+        let quick = self.landed.is_some_and(|landed| now - landed < TAP);
         match way {
             Way::Trackpad if self.dragging => {
                 self.dragging = false;

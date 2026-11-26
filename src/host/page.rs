@@ -3,7 +3,9 @@
 //! controls kept for the host. No more of a browser than that: the page
 //! has the canvas and the sound, and calls in through `web.rs`.
 
+use crate::host::clock;
 use crate::host::display::{Display, Gamepad, Joystick, Key, Pointer, Scancode};
+use crate::host::fingers::Fingers;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -27,6 +29,10 @@ pub struct Shared {
     pub gamepad_2: Gamepad,
     pub joystick: Joystick,
     pub pointer: Pointer,
+    /// Fingers on the picture, a trackpad for a machine's mouse; and
+    /// whether they're the pointer, not the mouse, as they were last used.
+    pub fingers: Fingers,
+    pub touching: bool,
     pub key_down: bool,
     pub reset: bool,
     pub fast: bool,
@@ -73,7 +79,11 @@ impl Display for Page {
     }
 
     fn pointer(&self) -> Pointer {
-        self.0.borrow().pointer
+        let page = self.0.borrow();
+        if page.touching {
+            return page.fingers.pointer(clock::seconds());
+        }
+        page.pointer
     }
 
     fn key_down(&self) -> bool {

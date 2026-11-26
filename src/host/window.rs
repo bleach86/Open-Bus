@@ -24,6 +24,7 @@
 //! Ctrl+Shift+C or Ctrl+Insert, the screen copied to it, for a machine with
 //! a keyboard. Closed, it tells the machine, to turn itself off.
 
+use crate::host::clock;
 use crate::host::controls::{Action, Controls, REMOTE_OK, said};
 use crate::host::display::{
     CHANNELS, COPY_KEY, Display, Gamepad, Joystick, Key, PASTE_KEY, Pointer, SAMPLE_RATE, Scancode,
@@ -697,7 +698,7 @@ impl Window {
                         let picture = (self.picture.0 as f32, self.picture.1 as f32);
                         let at = (x * picture.0, y * picture.1);
                         self.fingers
-                            .down(way, finger_id, at, picture, Instant::now());
+                            .down(way, finger_id, at, picture, clock::seconds());
                     }
                 }
                 Event::FingerMotion {
@@ -721,7 +722,7 @@ impl Window {
                     ..
                 } if touch_id != MOUSE_TOUCH => {
                     if let Some(way) = self.finger_way() {
-                        self.fingers.up(way, finger_id, Instant::now());
+                        self.fingers.up(way, finger_id, clock::seconds());
                     }
                 }
                 Event::MouseButtonDown {
@@ -958,7 +959,7 @@ impl Display for Window {
 
     fn pointer(&self) -> Pointer {
         if self.touching {
-            return self.fingers.pointer(Instant::now());
+            return self.fingers.pointer(clock::seconds());
         }
         // A machine with a mouse has it only as it's captured.
         if self.has_mouse && !self.captured {

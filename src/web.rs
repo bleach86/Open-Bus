@@ -6,6 +6,7 @@ use crate::cpu::Variant;
 use crate::host::clock;
 use crate::host::display::{COPY_KEY, Gamepad, Joystick, Key, PASTE_KEY, Pointer, Scancode};
 use crate::host::files;
+use crate::host::fingers::Way;
 use crate::host::machine::{Machine, PowerOnRam};
 use crate::host::page::{Page, Shared};
 use crate::host::run::{self, Host};
@@ -410,10 +411,44 @@ impl Emulator {
     /// The pointer as it is: at `x`, `y` on the picture, in its pixels, if
     /// it's `on` it; its buttons a bit each, the first and the second.
     pub fn pointer(&self, x: f32, y: f32, on: bool, buttons: u8) {
-        self.page.borrow_mut().pointer = Pointer {
+        let page = &mut self.page.borrow_mut();
+        page.touching = false;
+        page.pointer = Pointer {
             at: on.then_some((x, y)),
             buttons: [buttons & 1 != 0, buttons & 2 != 0],
         };
+    }
+
+    /// Finger `id` on the picture, for a machine's mouse, as a trackpad:
+    /// `down` (1), moved (0) or lifted (-1), at `x`, `y` on it, in its
+    /// pixels, having gone `dx`, `dy`; the picture `width` by `height`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn finger(
+        &self,
+        id: i32,
+        change: i8,
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+        width: f32,
+        height: f32,
+    ) {
+        let page = &mut self.page.borrow_mut();
+        let way = Way::Trackpad;
+        let now = crate::host::clock::seconds();
+        if change > 0 && !page.touching {
+            // Gone on from where the mouse had it.
+            let at = page.pointer.at;
+            page.fingers.start_at(at);
+            page.touching = true;
+        }
+        let id = id as i64;
+        match change {
+            1.. => page.fingers.down(way, id, (x, y), (width, height), now),
+            0 => page.fingers.moved(way, id, (x, y), (dx, dy)),
+            _ => page.fingers.up(way, id, now),
+        }
     }
 
     pub fn function_key(&self, key: u8) {

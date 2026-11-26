@@ -96,4 +96,35 @@ mod tests {
         assert_eq!(host.cpu.pc, pc, "the CPU ran, Reset held");
         assert_eq!(host.cpu.memory.title(), "NES   Test");
     }
+
+    /// Fingers on the picture are the pointer while they're used, a
+    /// trackpad's, gone on from where the mouse had it; the mouse's again
+    /// as soon as it's used.
+    #[test]
+    fn fingers_are_the_pointer_till_the_mouse_is_used() {
+        use crate::host::clock;
+        use crate::host::display::{Display, Pointer};
+        use crate::host::fingers::Way;
+        let shared = Rc::new(RefCell::new(Shared::default()));
+        let page = Page(shared.clone());
+        let mouse = Pointer {
+            at: Some((10.0, 20.0)),
+            buttons: [false, false],
+        };
+        shared.borrow_mut().pointer = mouse;
+        {
+            let page = &mut shared.borrow_mut();
+            let at = page.pointer.at;
+            page.fingers.start_at(at);
+            page.touching = true;
+            let now = clock::seconds();
+            page.fingers
+                .down(Way::Trackpad, 1, (300.0, 300.0), (640.0, 480.0), now);
+            page.fingers
+                .moved(Way::Trackpad, 1, (308.0, 300.0), (8.0, 0.0));
+        }
+        assert_eq!(page.pointer().at, Some((20.0, 20.0)), "from the mouse's");
+        shared.borrow_mut().touching = false;
+        assert_eq!(page.pointer(), mouse);
+    }
 }
