@@ -173,6 +173,9 @@ desktop app can download it. On the command line it's read from `roms/x16/`.
   the game saves goes on its card. When the game's files change, say for a new
   version, the card is made again: the game's new files, plus everything else
   that was on it. Deleting the card in the game's saves starts it afresh.
+  A zip of a whole card's folders, with no program at its top (Veranda's
+  SD-card zip, say), boots the program in the nearest folder, from inside
+  that folder.
 - **SD card.** `--sd IMAGE` uses a card image of your own, written back as the
   machine writes to it. `tools/make-x16-sd` makes one or adds files to it.
 - **The X16's files.** One folder on your computer is the `FILES` folder on

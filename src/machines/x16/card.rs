@@ -670,17 +670,23 @@ pub fn game(name: &str, mut files: Vec<CardFile>) -> Result<Game, String> {
             *path = path[folder.len() + 1..].to_string();
         }
     }
+    // Its program: at the top, or, with none there, in the folder nearest
+    // it, as a card's whole contents have it (Veranda's VERANDA/, beside
+    // DOCUMENTS/), run from in its folder.
     let wanted = plain(name);
     let program = files
         .iter()
-        .filter(|(path, bytes)| !path.contains('/') && is_program(path, bytes))
+        .filter(|(path, bytes)| is_program(path, bytes))
         .map(|(path, _)| path)
         .min_by_key(|path| {
-            let stem = plain(
-                path.rsplit_once('.')
-                    .map_or(path.as_str(), |(stem, _)| stem),
-            );
-            (!wanted.contains(&stem), path.len(), path.to_string())
+            let file = path.rsplit('/').next().unwrap_or(path);
+            let stem = plain(file.rsplit_once('.').map_or(file, |(stem, _)| stem));
+            (
+                path.matches('/').count(),
+                !wanted.contains(&stem),
+                path.len(),
+                path.to_string(),
+            )
         })
         .ok_or(format!(
             "{name}: no program in it, a file that loads at $0801"
@@ -690,7 +696,11 @@ pub fn game(name: &str, mut files: Vec<CardFile>) -> Result<Game, String> {
         .iter()
         .any(|(path, _)| path.eq_ignore_ascii_case("AUTOBOOT.X16"));
     if !has_autoboot {
-        files.push(("AUTOBOOT.X16".to_string(), autoboot(&program)));
+        let boot = match program.rsplit_once('/') {
+            Some((folder, file)) => autoboot_in(folder, file),
+            None => autoboot(&program),
+        };
+        files.push(("AUTOBOOT.X16".to_string(), boot));
     }
     Ok(Game { files, program })
 }
@@ -716,8 +726,28 @@ pub fn is_program(path: &str, bytes: &[u8]) -> bool {
 /// AUTOBOOT.X16 to run `program`: `10 LOAD"PROGRAM"`, its name upper
 /// case, as BASIC's PETSCII has letters.
 pub fn autoboot(program: &str) -> Vec<u8> {
+    basic_line(&[], program)
+}
+
+/// AUTOBOOT.X16 to run `program` in `folder`, from in it, as a program
+/// that reads its own files by their names wants:
+/// `10 DOS"CD:FOLDER":LOAD"PROGRAM"`.
+pub fn autoboot_in(folder: &str, program: &str) -> Vec<u8> {
+    // DOS, one of the X16's own words, after BASIC's escape.
+    const DOS: [u8; 2] = [0xCE, 0x81];
+    let mut cd = DOS.to_vec();
+    cd.extend(b"\"CD:");
+    cd.extend(folder.to_ascii_uppercase().bytes());
+    cd.extend(b"\":");
+    basic_line(&cd, program)
+}
+
+/// Line 10 of BASIC, `before` and then `LOAD"PROGRAM"`, as a program.
+fn basic_line(before: &[u8], program: &str) -> Vec<u8> {
     const LOAD: u8 = 0x93;
-    let mut line = vec![10, 0, LOAD, b'"'];
+    let mut line = vec![10, 0];
+    line.extend(before);
+    line.extend([LOAD, b'"']);
     line.extend(program.to_ascii_uppercase().bytes());
     line.extend([b'"', 0]);
     let next = 0x0801 + 2 + line.len() as u16;
