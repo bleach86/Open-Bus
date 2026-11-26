@@ -133,15 +133,19 @@ public class GameActivity extends SDLActivity {
         boolean touch = !mBrokenLibraries && mLayout != null
                 && getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN);
         boolean x16 = machine.equals("x16");
-        if (touch && (machine.equals("nes") || x16)) {
-            touchPad = new TouchPad(this, GameActivity::touched, false, x16);
+        // An Apple II, a II+ or a IIe: keys, and a joystick.
+        boolean apple = machine.startsWith("apple2");
+        if (touch && (machine.equals("nes") || x16 || apple)) {
+            int kind = x16 ? TouchPad.SNES : apple ? TouchPad.STICK : TouchPad.NES;
+            touchPad = new TouchPad(this, GameActivity::touched, false, kind);
             touchPad.passTo(GameActivity::touchPicture);
+            touchPad.steerTo(GameActivity::steered);
             mLayout.addView(touchPad, new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             getSystemService(InputManager.class).registerInputDeviceListener(pads, null);
         }
-        if (touch && x16) {
-            keyboard = new Keyboard(this);
+        if (touch && (x16 || apple)) {
+            keyboard = new Keyboard(this, apple);
             keyboard.setId(View.generateViewId());
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 keyboard.capturedTo((view, event) -> mSurface.onCapturedPointerEvent(event));
@@ -224,7 +228,7 @@ public class GameActivity extends SDLActivity {
             boolean portrait = portrait();
             keyboard.setVisibility(portrait ? View.VISIBLE : View.GONE);
             RelativeLayout.LayoutParams picture = (RelativeLayout.LayoutParams) mSurface.getLayoutParams();
-            // The X16's picture, 640 by 480.
+            // The X16's picture, 640 by 480; an Apple's, 4:3 too.
             picture.height = portrait
                     ? getResources().getDisplayMetrics().widthPixels * 3 / 4
                     : ViewGroup.LayoutParams.MATCH_PARENT;
@@ -320,6 +324,9 @@ public class GameActivity extends SDLActivity {
 
     /** The touch screen's buttons held, as the emulator's touch module has them. */
     private static native void touched(int buttons);
+
+    /** The touch screen's stick pushed, across and down, -1 to 1, as it's held; or let go. */
+    private static native void steered(float x, float y, boolean held);
 
     /**
      * The game held still as anything takes its focus, Android's
@@ -656,7 +663,7 @@ public class GameActivity extends SDLActivity {
      * been made.
      */
     private void moveControls() {
-        TouchPad editing = new TouchPad(this, buttons -> {}, true, touchPad.snes());
+        TouchPad editing = new TouchPad(this, buttons -> {}, true, touchPad.kind());
         FrameLayout screen = new FrameLayout(this);
         screen.setBackgroundColor(0x66000000);
         screen.addView(editing, new FrameLayout.LayoutParams(
@@ -689,7 +696,7 @@ public class GameActivity extends SDLActivity {
         sizes.addView(tool("Done", v -> closeOver(true)));
         choices.addView(ticks);
         // A SNES pad's buttons are where its own are.
-        if (!editing.snes()) {
+        if (editing.kind() != TouchPad.SNES) {
             choices.addView(higher);
         }
         tools.addView(sizes);

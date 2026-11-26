@@ -105,16 +105,29 @@ export async function names() {
     return [...where.keys()];
 }
 
-/// The folders looked through again: how many games came, and went.
+/// The folders looked through again: how many games came, and went; and
+/// the folders' files that are new, each its path and size.
 export async function scan() {
     const games = () => [...where.keys()].filter((name) => GAMES.includes(extension(name)));
     const before = games();
+    const known = new Set(knownFolderFiles().map(({ path }) => path));
     take(await invoke('all_files'));
     const now = games();
     return {
         came: now.filter((name) => !before.includes(name)).length,
         went: before.filter((name) => !now.includes(name)).length,
+        fresh: knownFolderFiles().filter(({ path }) => !known.has(path)),
     };
+}
+
+/// The added folders' files, as they were last found: each its path and size.
+export const knownFolderFiles = () => found?.folders ?? [];
+
+/// Whether the file `name` is in the library's own folder, where the
+/// emulator looks for a machine's ROMs, not only in a folder added.
+export function inLibrary(name) {
+    const path = where.get(name);
+    return path !== undefined && found !== null && slashes(path).startsWith(slashes(found.root) + '/');
 }
 
 export const bytes = async (name) => asBytes(await invoke('file_bytes', { path: where.get(name) }));

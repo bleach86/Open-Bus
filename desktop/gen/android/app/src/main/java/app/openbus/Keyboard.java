@@ -33,11 +33,16 @@ import org.libsdl.app.SDLActivity;
  * corrects, suggests or capitalises: every key's sent as it's pressed.
  * Ctrl and Alt are sticky: tapped, the next key's pressed with them;
  * tapped twice, they're held till they're tapped again, lit while they
- * are. A key held down repeats, as a keyboard's does.
+ * are. A key held down repeats, as a keyboard's does. An Apple II's rows
+ * are its own: Open Apple and Closed Apple held as they're touched (the
+ * joystick's buttons, as the Alt keys are on a computer's keyboard), and
+ * Reset, pressed only once it's been held a moment, so a stray tap never
+ * resets the machine.
  */
 public class Keyboard extends LinearLayout {
     /** A key of the rows: its label and Android's key code, or one of these. */
     private static final int CTRL = -1, ALT = -2, TYPING = -3, FN = -4;
+    private static final int OPEN_APPLE = -5, CLOSED_APPLE = -6, RESET = -7;
     /** The two rows, ↑ over ↓ and Page Up over Page Down. */
     private static final Object[][][] ROWS = {
         {{"ESC", KeyEvent.KEYCODE_ESCAPE}, {"TAB", KeyEvent.KEYCODE_TAB},
@@ -48,6 +53,15 @@ public class Keyboard extends LinearLayout {
             {"↓", KeyEvent.KEYCODE_DPAD_DOWN}, {"→", KeyEvent.KEYCODE_DPAD_RIGHT},
             {"PGDN", KeyEvent.KEYCODE_PAGE_DOWN}, {"⌨", TYPING}},
     };
+    /** An Apple II's two rows, ↑ over ↓: Delete its Backspace, as a IIe has it. */
+    private static final Object[][][] APPLE_ROWS = {
+        {{"ESC", KeyEvent.KEYCODE_ESCAPE}, {"TAB", KeyEvent.KEYCODE_TAB}, {"CTRL", CTRL},
+            {"↑", KeyEvent.KEYCODE_DPAD_UP}, {"DEL", KeyEvent.KEYCODE_DEL}, {"RESET", RESET}},
+        {{"OA", OPEN_APPLE}, {"CA", CLOSED_APPLE}, {"←", KeyEvent.KEYCODE_DPAD_LEFT},
+            {"↓", KeyEvent.KEYCODE_DPAD_DOWN}, {"→", KeyEvent.KEYCODE_DPAD_RIGHT}, {"⌨", TYPING}},
+    };
+    /** How long Reset's held before it's pressed. */
+    private static final long RESET_AFTER_MS = 500;
     /** The F-keys' row, in the top row's place while Fn's on. */
     private static final int[] F_KEYS = {
         KeyEvent.KEYCODE_F1, KeyEvent.KEYCODE_F2, KeyEvent.KEYCODE_F3, KeyEvent.KEYCODE_F4,
@@ -75,7 +89,8 @@ public class Keyboard extends LinearLayout {
     /** The top row, and the F-keys' row that takes its place while Fn's on. */
     private LinearLayout topRow, fRow;
 
-    Keyboard(Context context) {
+    /** An X16's keys; or, if it's for an `apple`, an Apple II's. */
+    Keyboard(Context context, boolean apple) {
         super(context);
         setOrientation(VERTICAL);
         setBackgroundColor(0xff0d0d10);
@@ -87,7 +102,7 @@ public class Keyboard extends LinearLayout {
         }
         fRow.setVisibility(GONE);
         addView(fRow, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
-        for (Object[][] keys : ROWS) {
+        for (Object[][] keys : apple ? APPLE_ROWS : ROWS) {
             LinearLayout row = row();
             for (Object[] key : keys) {
                 row.addView(key((String) key[0], (Integer) key[1]), new LayoutParams(0, height, 1));
@@ -166,6 +181,12 @@ public class Keyboard extends LinearLayout {
         } else if (code == FN) {
             fnKey = key;
             key.setOnClickListener(v -> showFKeys(fRow.getVisibility() != VISIBLE));
+        } else if (code == OPEN_APPLE || code == CLOSED_APPLE) {
+            key.setOnTouchListener(holding(code == OPEN_APPLE ? KeyEvent.KEYCODE_ALT_LEFT : KeyEvent.KEYCODE_ALT_RIGHT));
+            return key;
+        } else if (code == RESET) {
+            key.setOnTouchListener(new Guarded(KeyEvent.KEYCODE_F12));
+            return key;
         } else if (code == TYPING) {
             key.setOnClickListener(v -> {
                 if (typingShown) {
@@ -203,8 +224,75 @@ public class Keyboard extends LinearLayout {
     private void light() {
         ctrlKey.setBackground(face(ctrl == Sticky.OFF ? KEY : LIT));
         ctrlKey.setAlpha(ctrl == Sticky.ONCE ? 0.75f : 1);
-        altKey.setBackground(face(alt == Sticky.OFF ? KEY : LIT));
-        altKey.setAlpha(alt == Sticky.ONCE ? 0.75f : 1);
+        // An Apple's rows have no Alt.
+        if (altKey != null) {
+            altKey.setBackground(face(alt == Sticky.OFF ? KEY : LIT));
+            altKey.setAlpha(alt == Sticky.ONCE ? 0.75f : 1);
+        }
+    }
+
+    /** A key held down as long as it's touched, `code`'s, and let go as it is: not repeated, nor with the sticky keys. */
+    private View.OnTouchListener holding(int code) {
+        return (view, event) -> {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                    view.setBackground(face(KEY_DOWN));
+                    send(true, code, 0, 0);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    view.setBackground(face(KEY));
+                    send(false, code, 0, 0);
+                    return true;
+                default:
+                    return true;
+            }
+        };
+    }
+
+    /**
+     * A key pressed only once it's been held a moment, lit as it is, and
+     * let go as it's let go: Reset, that a stray tap mustn't press.
+     */
+    private class Guarded implements View.OnTouchListener {
+        private final int code;
+        private final Runnable press;
+        private boolean pressed;
+        private View view;
+
+        Guarded(int code) {
+            this.code = code;
+            press = () -> {
+                pressed = true;
+                view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+                view.setBackground(face(LIT));
+                send(true, code, 0, 0);
+            };
+        }
+
+        @Override
+        public boolean onTouch(View touched, MotionEvent event) {
+            switch (event.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    view = touched;
+                    view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY);
+                    view.setBackground(face(KEY_DOWN));
+                    handler.postDelayed(press, RESET_AFTER_MS);
+                    return true;
+                case MotionEvent.ACTION_UP:
+                case MotionEvent.ACTION_CANCEL:
+                    handler.removeCallbacks(press);
+                    touched.setBackground(face(KEY));
+                    if (pressed) {
+                        pressed = false;
+                        send(false, code, 0, 0);
+                    }
+                    return true;
+                default:
+                    return true;
+            }
+        }
     }
 
     private GradientDrawable face(int colour) {

@@ -48,13 +48,22 @@ public class TouchPad extends View {
         void held(int buttons);
     }
 
+    /** What's told where the stick's pushed, across and down, -1 to 1, as it's held, and let go. */
+    interface Steered {
+        void steered(float x, float y, boolean held);
+    }
+
+    /** Its kinds: a NES pad; a SNES pad; a joystick's stick and two buttons, an Apple II's. */
+    static final int NES = 0, SNES = 1, STICK = 2;
+
     /** What's passed a finger that landed on none of it: a touch, as a MotionEvent's action, where on the screen. */
     interface Passed {
         void passed(int device, int finger, int action, float x, float y);
     }
 
     /** Where it's kept: each piece's place, a share of the screen across and down; and its size. */
-    private static final String KEPT = "touch_pad", KEPT_SNES = "touch_pad_snes", SCALE = "scale";
+    private static final String KEPT = "touch_pad", KEPT_SNES = "touch_pad_snes", KEPT_STICK = "touch_pad_stick";
+    private static final String SCALE = "scale";
     private static final String TICKS = "haptics", B_HIGHER = "b_higher";
     private static final String[] PIECES = {"dpad", "buttons", "select", "start", "l", "r"};
     private static final int DPAD = 0, BUTTONS = 1, SELECT_PILL = 2, START_PILL = 3, L_PILL = 4, R_PILL = 5;
@@ -75,7 +84,12 @@ public class TouchPad extends View {
 
     private final Held told;
     private final SharedPreferences kept;
-    private final boolean moving, snes;
+    private final boolean moving, snes, stick;
+    private final int kind;
+    /** The stick, pushed as its finger is, across and down, -1 to 1; and whether it's held. */
+    private float pushedX, pushedY;
+    private boolean steering;
+    private Steered steered = (x, y, held) -> {};
     private final float dp;
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint pressed = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -107,18 +121,21 @@ public class TouchPad extends View {
 
     /**
      * As it's played, `told` what's held; or, `moving`, to be moved and
-     * resized, telling nothing. A SNES pad, if it's `snes`.
+     * resized, telling nothing. Of its `kind`: NES, SNES or STICK.
      */
-    TouchPad(Context context, Held told, boolean moving, boolean snes) {
+    TouchPad(Context context, Held told, boolean moving, int kind) {
         super(context);
         this.told = told;
         this.moving = moving;
-        this.snes = snes;
-        at = new PointF[snes ? PIECES.length : 4];
+        this.kind = kind;
+        this.snes = kind == SNES;
+        this.stick = kind == STICK;
+        // A stick's two pieces, the stick and its buttons; a NES pad's four.
+        at = new PointF[snes ? PIECES.length : stick ? 2 : 4];
         for (int piece = 0; piece < at.length; piece++) {
             at[piece] = new PointF();
         }
-        kept = context.getSharedPreferences(snes ? KEPT_SNES : KEPT, Context.MODE_PRIVATE);
+        kept = context.getSharedPreferences(snes ? KEPT_SNES : stick ? KEPT_STICK : KEPT, Context.MODE_PRIVATE);
         dp = context.getResources().getDisplayMetrics().density;
         read();
         fill.setColor(0x38ffffff);
@@ -145,6 +162,7 @@ public class TouchPad extends View {
             passed.passed(device, passing.keyAt(n), MotionEvent.ACTION_UP, last.x, last.y);
         }
         passing.clear();
+        steer(0, 0, false);
         tell(0);
     }
 
@@ -177,9 +195,14 @@ public class TouchPad extends View {
         kept.edit().putBoolean(TICKS, on).apply();
     }
 
-    /** Whether it's a SNES pad. */
-    boolean snes() {
-        return snes;
+    /** Its kind: NES, SNES or STICK. */
+    int kind() {
+        return kind;
+    }
+
+    /** What's told where the stick's pushed. */
+    void steerTo(Steered steered) {
+        this.steered = steered;
     }
 
     /** Whether B's higher than A. */
@@ -340,6 +363,10 @@ public class TouchPad extends View {
     }
 
     private void drawPieces(Canvas canvas) {
+        if (stick) {
+            drawStick(canvas);
+            return;
+        }
         float u = u(), pad = PAD * u, half = ARM * u, round = 6 * u;
         float x = at[DPAD].x, y = at[DPAD].y;
         canvas.drawPath(cross, fill);
@@ -389,8 +416,29 @@ public class TouchPad extends View {
         }
         pill(canvas, SELECT_PILL, "SELECT", (held & SELECT) != 0);
         pill(canvas, START_PILL, "START", (held & START) != 0);
+        outlined(canvas);
+    }
 
-        // Being moved: each piece outlined, to be seen as one to drag.
+    /**
+     * A joystick's: its stick, a knob in a ring, the knob where it's pushed;
+     * and its two buttons where a NES pad's A and B are, 0 and 1, as an
+     * Apple II's are numbered.
+     */
+    private void drawStick(Canvas canvas) {
+        float u = u(), ring = PAD * u, knob = PAD * u * 0.42f;
+        float x = at[DPAD].x, y = at[DPAD].y;
+        canvas.drawCircle(x, y, ring, fill);
+        canvas.drawCircle(x, y, ring, edge);
+        float knobX = x + pushedX * (ring - knob), knobY = y + pushedY * (ring - knob);
+        canvas.drawCircle(knobX, knobY, knob, steering ? pressed : fill);
+        canvas.drawCircle(knobX, knobY, knob, edge);
+        button(canvas, aX(), aY(), "0", (held & A) != 0, BUTTON);
+        button(canvas, bX(), bY(), "1", (held & B) != 0, BUTTON);
+        outlined(canvas);
+    }
+
+    /** Being moved: each piece outlined, to be seen as one to drag. */
+    private void outlined(Canvas canvas) {
         if (moving) {
             for (int piece = 0; piece < at.length; piece++) {
                 bounds(piece, box);
@@ -451,12 +499,21 @@ public class TouchPad extends View {
             }
         }
         int buttons = 0;
+        boolean onStick = false;
         for (int n = 0; n < event.getPointerCount(); n++) {
             if (n == lifted) {
                 continue;
             }
             float x = event.getX(n) + onScreen[0], y = event.getY(n) + onScreen[1];
-            buttons |= onDpad.get(event.getPointerId(n)) ? directions(x, y) : buttons(x, y);
+            if (stick && onDpad.get(event.getPointerId(n))) {
+                onStick = true;
+                push(x, y);
+            } else {
+                buttons |= onDpad.get(event.getPointerId(n)) ? directions(x, y) : buttons(x, y);
+            }
+        }
+        if (stick && !onStick && steering) {
+            steer(0, 0, false);
         }
         if (lifted >= 0) {
             int finger = event.getPointerId(lifted);
@@ -511,6 +568,38 @@ public class TouchPad extends View {
                 break;
         }
         return true;
+    }
+
+    /**
+     * The stick pushed by a finger at `x`, `y`: by how far it is from the
+     * middle, all the way at most of the stick's reach, and nothing near it.
+     */
+    private void push(float x, float y) {
+        float reach = PAD * u() * 0.8f;
+        float across = (x - at[DPAD].x) / reach, down = (y - at[DPAD].y) / reach;
+        float away = (float) Math.hypot(across, down);
+        if (away < DEAD * 0.75f) {
+            across = down = 0;
+        } else if (away > 1) {
+            across /= away;
+            down /= away;
+        }
+        steer(across, down, true);
+    }
+
+    /** The stick told where it's pushed, if that's changed, and drawn there. */
+    private void steer(float x, float y, boolean held) {
+        if (x == pushedX && y == pushedY && held == steering) {
+            return;
+        }
+        if (held && !steering) {
+            tick();
+        }
+        pushedX = x;
+        pushedY = y;
+        steering = held;
+        steered.steered(x, y, held);
+        invalidate();
     }
 
     /** Whether a finger landing at `x`, `y` lands on the D-pad. */

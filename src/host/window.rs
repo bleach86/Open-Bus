@@ -1095,12 +1095,22 @@ impl Display for Window {
             (false, true) => 1.0,
             _ => stick,
         };
+        // A touch screen's stick, while it's held, and its two buttons.
+        let (x, y) =
+            touch::stick().unwrap_or((axis(left, right, stick.0), axis(up, down, stick.1)));
+        let touched = touch::held();
         Joystick {
-            x: axis(left, right, stick.0),
-            y: axis(up, down, stick.1),
+            x,
+            y,
             buttons: [
-                pad(Button::A) || keys(&[Keycode::Kp0]) || self.alt_held[0],
-                pad(Button::B) || keys(&[Keycode::KpPeriod]) || self.alt_held[1],
+                pad(Button::A)
+                    || keys(&[Keycode::Kp0])
+                    || self.alt_held[0]
+                    || touched & touch::A != 0,
+                pad(Button::B)
+                    || keys(&[Keycode::KpPeriod])
+                    || self.alt_held[1]
+                    || touched & touch::B != 0,
                 false,
             ],
         }

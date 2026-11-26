@@ -288,7 +288,8 @@ data folder. A game runs as a separate `cpu_emu` process, started with
 `--window X,Y,W,H` where the library's window was. The library hides until
 the game ends. The page also asks the emulator about games with
 `cpu_emu facts`, about gamepads with `cpu_emu pads` and `cpu_emu bound`, and
-sorts Apple ROMs with `cpu_emu roms`.
+sorts system ROMs with `cpu_emu roms`, from a folder as it's added and from
+its new files each time the folders are looked through again.
 
 **On Android**, it's the same Tauri app, built for Android
 (`desktop/gen/android`, `desktop/src/android.rs`). The emulator is built as a
@@ -302,10 +303,14 @@ pause menu of its own, whatever's plugged in; a gamepad's own Back is the
 game's menu. That menu and the touch controls' editor
 are views in the game's window, not dialogs. They hold the game still through
 `host::touch::hold_still`, not SDL's pause, which takes the window out of
-fullscreen and brings Android's bars up. For the NES it also lays `TouchPad`,
-an Android view, over SDL's surface. Its presses go through the JNI call
-`GameActivity.touched` into `host::touch`, a fixed slot that the first player's
-gamepad adds onto in `Window::gamepad`. They're not a control, so rebinding
+fullscreen and brings Android's bars up. For the NES, the X16 and the Apple
+II it also lays `TouchPad`, an Android view, over SDL's surface: a NES pad, a
+SNES pad, or a joystick's stick and two buttons. Its presses go through the
+JNI call `GameActivity.touched` into `host::touch`, a fixed slot that the
+first player's gamepad adds onto in `Window::gamepad`; the stick goes through
+`GameActivity.steered`, and is `Window::joystick`'s while it's held, the two
+buttons its buttons. The X16 and the Apple also get `Keyboard`, the rows of
+keys over Android's keyboard in portrait. They're not a control, so rebinding
 keys or a gamepad never affects them. A TV remote's OK is kept out of the
 controls the same way (`controls::REMOTE_OK`): it always chooses in the menus.
 

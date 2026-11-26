@@ -11,7 +11,10 @@ gamepad.
 
 Open Bus comes with no games, BIOS files or system ROMs. In the app, add
 system files under Settings → System. It recognises them by their contents,
-not their names, so MAME's zips and differently named dumps work. From the
+not their names, so MAME's zips and differently named dumps work. System
+files in a folder you add are picked up when you add it, or, if they arrive
+later, the next time the folders are looked through, which the app does
+each time it starts. From the
 command line, put them where each section below says.
 
 | For                    | File                                                              |
@@ -112,10 +115,16 @@ The machine is chosen from the library's Apple shelf, or with `apple2`
   - Slot 6: the Disk II.
 - **Joystick.** A gamepad's stick or D-pad, with A and B as its buttons. On a
   keyboard, use the numeric keypad: 8, 2, 4 and 6 to move, 0 and . for the
-  buttons.
+  buttons, which the Alt keys (Open Apple and Closed Apple) press too. On a
+  phone or tablet in landscape, an on-screen stick, pushed as far as your
+  finger goes, with buttons 0 and 1.
 - **Monitor.** F8 cycles colour, white, green and amber.
 - **Reset.** F12 is the Reset key. Ctrl+Shift+V pastes text in as typing, and
   Ctrl+Shift+C copies the text screen.
+- **Touch screens.** In portrait, Android's keyboard with two rows above it:
+  Esc, Tab, Ctrl (tap for the next key, tap twice to hold), the arrows,
+  Delete, Open Apple and Closed Apple (held while you touch them), and Reset,
+  which only presses once you've held it for half a second.
 - **CPU.** `--cpu` swaps in a different 6502 family chip, for software that
   wants one.
 
