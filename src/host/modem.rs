@@ -187,6 +187,8 @@ enum Line {}
 /// whether its place has gone, and whether that's been said.
 struct Channel {
     id: u32,
+    /// Not on a web page, which never connects.
+    #[cfg(not(target_arch = "wasm32"))]
     link: Link,
     came: VecDeque<u8>,
     to_place: Vec<u8>,
@@ -200,9 +202,6 @@ enum Link {
     Dialling(Receiver<std::io::Result<Stream>>),
     Up(Stream),
 }
-
-#[cfg(target_arch = "wasm32")]
-enum Link {}
 
 /// What a channel's held back in the modem of what's come from its place,
 /// at most: the rest's left in the network, as the machine takes packets.
@@ -526,6 +525,8 @@ pub struct Modem {
     long_results: bool,
     registers: [u8; 64],
     dtr: bool,
+    /// Not read on a web page, which never connects.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     connections: u32,
     /// Zimodem's phone book (`ATP`), kept where the host says.
     pub phone_book: PhoneBook,
