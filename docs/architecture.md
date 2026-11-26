@@ -308,6 +308,14 @@ gamepad adds onto in `Window::gamepad`. They're not a control, so rebinding
 keys or a gamepad never affects them. A TV remote's OK is kept out of the
 controls the same way (`controls::REMOTE_OK`): it always chooses in the menus.
 
+`TouchPad` takes every touch, so a finger that lands on none of its controls
+is passed on to SDL as a touch of the picture (`GameActivity.touchPicture`),
+and a mouse's clicks and moves over the picture go straight to SDL's surface,
+captured moves too, though the X16 keyboard's typing view has the focus. In
+the window, the clicks SDL makes of fingers are ignored and the fingers taken
+as they are: `host::fingers` makes them the pointer, a trackpad for a machine
+with a mouse, or a light gun's aim.
+
 `web/app.js` checks `native` to tell the browser from the app, and
 `native.android` to tell Android from the desktop.
 

@@ -115,6 +115,11 @@ public class Keyboard extends LinearLayout {
         fnKey.setBackground(face(shown ? LIT : KEY));
     }
 
+    /** Where a captured mouse's moves go, as its typing has the focus they're told to. */
+    void capturedTo(View.OnCapturedPointerListener listener) {
+        typing.setOnCapturedPointerListener(listener);
+    }
+
     /** Android's keyboard up, to type on. */
     void showTyping() {
         typing.requestFocus();

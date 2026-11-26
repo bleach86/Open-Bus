@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.input.InputManager;
 import android.os.Build;
@@ -14,6 +15,7 @@ import android.view.ContextThemeWrapper;
 import android.view.Gravity;
 import android.view.InputDevice;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
@@ -108,6 +110,16 @@ public class GameActivity extends SDLActivity {
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
             getWindow().setAttributes(attributes);
         }
+        // The bars' backgrounds the window's own to draw, and see-through:
+        // otherwise, as the touch screen's gamepad redraws the window over
+        // the picture, Android fills where the navigation bar would be with
+        // black, over the bottom of the picture, bar or no bar.
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setNavigationBarContrastEnforced(false);
+        }
         String[] args = getIntent().getStringArrayExtra("args");
         if (args == null) {
             finish();
@@ -119,6 +131,7 @@ public class GameActivity extends SDLActivity {
         boolean x16 = machine.equals("x16");
         if (touch && (machine.equals("nes") || x16)) {
             touchPad = new TouchPad(this, GameActivity::touched, false, x16);
+            touchPad.passTo(GameActivity::touchPicture);
             mLayout.addView(touchPad, new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             getSystemService(InputManager.class).registerInputDeviceListener(pads, null);
@@ -126,6 +139,9 @@ public class GameActivity extends SDLActivity {
         if (touch && x16) {
             keyboard = new Keyboard(this);
             keyboard.setId(View.generateViewId());
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                keyboard.capturedTo((view, event) -> mSurface.onCapturedPointerEvent(event));
+            }
             RelativeLayout.LayoutParams bottom = new RelativeLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             bottom.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
@@ -376,6 +392,76 @@ public class GameActivity extends SDLActivity {
             return true;
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    /**
+     * A finger the gamepad passed on, landing on none of it: a touch of
+     * the picture's, `x`, `y` on the screen, as SDL's told of one.
+     */
+    private static void touchPicture(int device, int finger, int action, float x, float y) {
+        if (mSurface == null || mSurface.getWidth() <= 0 || mSurface.getHeight() <= 0) {
+            return;
+        }
+        int[] at = new int[2];
+        mSurface.getLocationOnScreen(at);
+        // As SDL's own: -1 is its mouse's.
+        int touch = device < 0 ? device - 1 : device;
+        SDLActivity.onNativeTouch(touch, finger, action,
+                (x - at[0]) / mSurface.getWidth(), (y - at[1]) / mSurface.getHeight(), 1f);
+    }
+
+    /** Whether a mouse's button went down on the picture: its clicks the game's till it's let go. */
+    private boolean mouseOnPicture;
+
+    /**
+     * A mouse's clicks on the picture, the game's: not the gamepad's over
+     * it, which takes every touch. With something over the game, its.
+     */
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        if (over == null && mSurface != null && event.isFromSource(InputDevice.SOURCE_MOUSE)) {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                mouseOnPicture = onPicture(event);
+            }
+            if (mouseOnPicture) {
+                toPicture(event, true);
+                return true;
+            }
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
+    /** A mouse moved over the picture, the game's too. */
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent event) {
+        if (over == null && mSurface != null && event.isFromSource(InputDevice.SOURCE_MOUSE)
+                && onPicture(event)) {
+            toPicture(event, false);
+            return true;
+        }
+        return super.dispatchGenericMotionEvent(event);
+    }
+
+    /** Whether `event`, in the window, is on the picture. */
+    private boolean onPicture(MotionEvent event) {
+        int[] at = new int[2];
+        mSurface.getLocationInWindow(at);
+        float x = event.getX() - at[0], y = event.getY() - at[1];
+        return x >= 0 && y >= 0 && x < mSurface.getWidth() && y < mSurface.getHeight();
+    }
+
+    /** `event` the picture's, a click, or a move, where it is on it. */
+    private void toPicture(MotionEvent event, boolean click) {
+        int[] at = new int[2];
+        mSurface.getLocationInWindow(at);
+        MotionEvent on = MotionEvent.obtain(event);
+        on.offsetLocation(-at[0], -at[1]);
+        if (click) {
+            mSurface.onTouch(mSurface, on);
+        } else {
+            mSurface.dispatchGenericMotionEvent(on);
+        }
+        on.recycle();
     }
 
     /** Whether Back's a touch screen's: there's one, and no gamepad. */

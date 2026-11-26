@@ -46,6 +46,7 @@ pub mod host {
     pub mod display;
     #[cfg_attr(target_arch = "wasm32", path = "files_web.rs")]
     pub mod files;
+    pub mod fingers;
     pub mod font;
     pub mod machine;
     pub mod md5;
@@ -71,6 +72,7 @@ pub mod host {
         mod clock;
         mod controls;
         mod files;
+        mod fingers;
         mod machine;
         mod md5;
         mod modem;
