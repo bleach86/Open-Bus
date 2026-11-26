@@ -2690,7 +2690,12 @@ function removeButton(name) {
 function appleRoms() {
     const model = page('model').value;
     const own = model === 'apple2' ? [plusRom() ?? 'A II+ ROM (.rom)'] : IIE_ROMS[model];
-    return [...own, ...DISK_II_ROMS].map((name) => ({ name, here: files.includes(name) }));
+    // The II+'s ROM is given to it, wherever it is; the rest it looks for
+    // in the library.
+    return [...own, ...DISK_II_ROMS].map((name) => ({
+        name,
+        here: LIBRARY_ROMS.includes(name) ? inLibrary(name) : files.includes(name),
+    }));
 }
 
 const plusRom = () => files.find((name) => kind(name) === 'rom' && name !== FDS_BIOS);
@@ -3158,22 +3163,60 @@ async function addNatively(folders, dropped) {
 /// The folders looked through again, the library changed if they have,
 /// and said so, or if `askedTo`, said that they haven't.
 async function lookForChanges(askedTo = false) {
-    const { came, went } = await native.scan().catch((problem) => {
+    const { came, went, fresh } = await native.scan().catch((problem) => {
         say(`Couldn't look through the folders: ${problem}`, true);
         return {};
     });
     if (came === undefined) {
         return;
     }
+    const roms = await sortFolderRoms(fresh).catch((problem) => {
+        say(`Couldn't sort the system ROMs: ${problem}`, true);
+        return 0;
+    });
     const counted = (number, what) => `${number} ${what}${number === 1 ? '' : 's'}`;
-    if (came || went) {
+    if (came || went || roms) {
         await refresh();
-        const told = [came && `${counted(came, 'new game')}`, went && `${counted(went, 'game')} gone`].filter(Boolean);
+        const told = [
+            came && `${counted(came, 'new game')}`,
+            went && `${counted(went, 'game')} gone`,
+            roms && `${counted(roms, 'system ROM')}`,
+        ].filter(Boolean);
         say(told.join(', ') + '.');
     } else if (askedTo) {
         say('No new games.');
     }
     fillSettings();
+}
+
+/// The machines' ROMs the library's folder has to have, by the names
+/// they're sorted into it as: the IIe's and the Disk II's.
+const LIBRARY_ROMS = [...Object.values(IIE_ROMS).flat(), ...DISK_II_ROMS];
+
+/// Whether the ROM `name` is in the library's own folder, where the
+/// emulator looks for it: in the app, not only in a folder that's been
+/// added, as one copied into it after it was added is.
+const inLibrary = (name) => (native ? native.inLibrary(name) : files.includes(name));
+
+/// The system ROMs among the folders' files sorted into the library, those
+/// held hidden, not games: the `fresh` ones, new since they were last
+/// looked through; and any named as one the library's still without, as a
+/// ROM copied into a folder as it was added would be. How many there were.
+async function sortFolderRoms(fresh) {
+    const missing = new Set(LIBRARY_ROMS.filter((name) => !inLibrary(name)));
+    const named = native.knownFolderFiles().filter(({ path }) => missing.has(baseName(path)));
+    const candidates = new Map(
+        [...fresh, ...named].map(({ path, size }) => [path, { path, size, name: baseName(path) }]),
+    );
+    const paths = [...candidates.values()].filter(mayHoldRoms).map(({ path }) => path);
+    if (!paths.length) {
+        return 0;
+    }
+    const { held, roms } = await native.sortRoms(paths);
+    for (const path of held) {
+        await native.hide(path); // a ROM, not a game
+    }
+    return roms.length;
 }
 
 /// A folder chosen in the system's own dialog, and added.
@@ -3326,7 +3369,7 @@ const row = (text, detail, button, action) => {
 /// the folders and what's hidden.
 async function fillSettings() {
     const has = (name) => files.includes(name);
-    const appleFound = [...DISK_II_ROMS, ...IIE_ROMS.apple2ee].filter(has).length;
+    const appleFound = [...DISK_II_ROMS, ...IIE_ROMS.apple2ee].filter(inLibrary).length;
     const x16 = has(X16_ROM)
         ? `Found: ${await x16Release()}`
         : "Missing: X16 games need a release's rom.bin, or its zip";
