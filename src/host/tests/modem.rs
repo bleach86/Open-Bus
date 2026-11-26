@@ -6,7 +6,10 @@
 //! the rest left in the network. Zimodem's: x16net's setting up taken,
 //! a place dialled in quotes over plain TCP or telnet, `+++` and DTR
 //! hanging up, its S registers, flow control and the ends of its lines;
-//! its phone book, places kept, listed and dialled by number.
+//! its phone book, places kept, listed and dialled by number; its
+//! connections in the command mode, as Veranda's vrnet drives them: made
+//! with `ATC`, sent to with `ATT`, a packet for each XON, a place gone said
+//! once all it sent is taken, hung up by number.
 
 #[cfg(test)]
 mod tests {
@@ -574,5 +577,132 @@ mod tests {
             "kept past AT&F: {came:?}"
         );
         drop(place);
+    }
+
+    /// The modem set up as vrnet sets it, each line answered OK: the first
+    /// echoed, as its E0 comes after it's typed.
+    fn as_vrnet_has_it(modem: &mut Modem) {
+        for line in ["ATE0V1X1Q0&M&D", "ATS40=254S45=0S0=0", "ATF3", "ATH0"] {
+            modem.send(line.as_bytes());
+            modem.send(b"\r");
+            let answer = said(modem);
+            assert!(answer.ends_with("OK\r\n"), "{line}: {answer:?}");
+        }
+    }
+
+    /// What XONs bring, one at a time, till it holds `text`.
+    fn pulled(modem: &mut Modem, text: &str) -> Vec<u8> {
+        let mut all = Vec::new();
+        until(modem, |modem| {
+            modem.send(&[0x11]);
+            all.extend(modem.to_machine.drain(..));
+            String::from_utf8_lossy(&all).contains(text)
+        });
+        all
+    }
+
+    #[test]
+    fn zimodem_s_command_mode_connections_send_with_att_and_come_in_packets() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut got = [0; 5];
+            socket.read_exact(&mut got).unwrap();
+            socket.write_all(b"world").unwrap();
+            got
+        });
+        let mut modem = Modem::zimodem();
+        as_vrnet_has_it(&mut modem);
+        modem.send(b"\x11");
+        assert_eq!(
+            said(&mut modem),
+            "[ 0 0 0 ]\r\n",
+            "nothing yet, nor any open"
+        );
+        modem.send(format!("ATC\"127.0.0.1:{port}\"\r").as_bytes());
+        assert_eq!(wait_for(&mut modem, "\r\n"), "CONNECT 1\r\n");
+        // Its bytes as they are, an XON among them.
+        modem.send(b"ATT5\r");
+        modem.send(b"he\x11lo");
+        assert_eq!(said(&mut modem), "OK\r\n");
+        let all = pulled(&mut modem, "world");
+        let text = String::from_utf8_lossy(&all).into_owned();
+        assert!(
+            text.ends_with("[ 1 5 133 ]\r\nworld"),
+            "the connection, the bytes, their CRC-8; then the bytes: {text:?}"
+        );
+        assert_eq!(server.join().unwrap(), *b"he\x11lo");
+        // The place gone, once all it sent was taken: said once, then
+        // nothing, and hung up by its number.
+        let all = pulled(&mut modem, "NO CARRIER");
+        assert!(String::from_utf8_lossy(&all).ends_with("NO CARRIER 1\r\n"));
+        modem.send(b"\x11");
+        assert_eq!(said(&mut modem), "[ 0 0 0 ]\r\n");
+        modem.send(b"ATH1\r");
+        assert_eq!(said(&mut modem), "OK\r\n");
+        modem.send(b"ATC1\r");
+        assert_eq!(said(&mut modem), "ERROR\r\n", "hung up, it's not there");
+    }
+
+    #[test]
+    fn zimodem_s_connections_are_several_at_once_each_its_own() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let mut sockets = Vec::new();
+            for said in [&b"one"[..], &b"two"[..]] {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.write_all(said).unwrap();
+                sockets.push(socket);
+            }
+            let mut got = [0; 2];
+            sockets[0].read_exact(&mut got).unwrap();
+            got
+        });
+        let mut modem = Modem::zimodem();
+        as_vrnet_has_it(&mut modem);
+        modem.send(format!("ATC\"127.0.0.1:{port}\"\r").as_bytes());
+        assert_eq!(wait_for(&mut modem, "\r\n"), "CONNECT 1\r\n");
+        modem.send(format!("ATC\"127.0.0.1:{port}\"\r").as_bytes());
+        assert_eq!(wait_for(&mut modem, "\r\n"), "CONNECT 2\r\n");
+        // Each its own packets, whichever comes first.
+        let mut all = String::new();
+        until(&mut modem, |modem| {
+            modem.send(&[0x11]);
+            all += &said(modem);
+            all.contains("one") && all.contains("two")
+        });
+        assert!(all.contains("[ 1 3 ") && all.contains("[ 2 3 "), "{all:?}");
+        // The new one current, till 1's chosen.
+        modem.send(b"ATC1\r");
+        assert_eq!(said(&mut modem), "OK\r\n");
+        modem.send(b"ATT2\rhi");
+        assert_eq!(said(&mut modem), "OK\r\n");
+        until(&mut modem, |_| server.is_finished());
+        assert_eq!(server.join().unwrap(), *b"hi");
+        modem.send(b"ATH\r");
+        assert_eq!(said(&mut modem), "OK\r\n");
+        modem.send(b"ATC2\r");
+        assert_eq!(said(&mut modem), "ERROR\r\n", "all hung up");
+    }
+
+    #[test]
+    fn zimodem_s_connection_to_nobody_is_no_answer_and_att_with_none_an_error() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let mut modem = Modem::zimodem();
+        as_vrnet_has_it(&mut modem);
+        modem.send(format!("ATC\"127.0.0.1:{port}\"\r").as_bytes());
+        assert_eq!(wait_for(&mut modem, "\r\n"), "NO ANSWER\r\n");
+        modem.send(b"ATT3\rabc");
+        assert_eq!(
+            said(&mut modem),
+            "ERROR\r\n",
+            "its bytes taken, not as commands"
+        );
+        modem.send(b"AT\r");
+        assert_eq!(said(&mut modem), "OK\r\n");
     }
 }
