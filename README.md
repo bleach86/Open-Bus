@@ -69,13 +69,14 @@ onto one tile. Games run in the native emulator, in a window of their own.
 - **Desktop** (Linux and Windows; macOS untested): a [Tauri](https://tauri.app) app in
   `desktop/`.
 - **Android**: the same app, built for Android TVs and phones. On a TV it's
-  made for a gamepad and the remote. On a phone or tablet with no gamepad, Back
-  pauses the game with a menu you can tap, and NES games get on-screen
-  controls. Choose Move controls in that menu to drag them where you want them,
+  made for a gamepad and the remote. On a phone or tablet, the system's Back
+  pauses the game with a menu you can tap, and with no gamepad, NES games get
+  on-screen controls. Choose Move controls in that menu to drag them where you want them,
   resize them, turn off their vibration, or put B higher than A. The Commander
   X16 gets a keyboard in portrait (Android's own, with rows of Esc, Ctrl, Alt,
   the arrows and more above it, and an Fn key for F1 to F12) and a SNES pad in
-  landscape.
+  landscape. On a touch screen the picture is the X16's trackpad, and a Zapper
+  game's light gun: tap where you want to shoot. A mouse works on phones too.
 - **Web**: the emulator compiled to WebAssembly, with the library as a page,
   at [obus.tuxprint.com](https://obus.tuxprint.com/). It runs everything
   except Skink and BASIC.

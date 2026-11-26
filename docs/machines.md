@@ -69,7 +69,8 @@ games are `.fds`.
 - **NTSC or PAL.** Taken from the name, such as "(Europe)" or "(E)". Override
   with `--region`.
 - **The Zapper.** Plugged in for games known to use it. Aim with the mouse
-  and click to fire. Override with Port 2 in the game's settings, or
+  and click to fire, or on a touch screen, tap the picture where you want to
+  shoot. Override with Port 2 in the game's settings, or
   `--port2`.
 - **The Disk System.** It needs `disksys.rom`. F9 (or Change Disk Side in the
   menu) flips the disk. What a game writes to its disk is saved like battery
@@ -172,6 +173,9 @@ desktop app can download it. On the command line it's read from `roms/x16/`.
   the game saves goes on its card. When the game's files change, say for a new
   version, the card is made again: the game's new files, plus everything else
   that was on it. Deleting the card in the game's saves starts it afresh.
+  A zip of a whole card's folders, with no program at its top (Veranda's
+  SD-card zip, say), boots the program in the nearest folder, from inside
+  that folder.
 - **SD card.** `--sd IMAGE` uses a card image of your own, written back as the
   machine writes to it. `tools/make-x16-sd` makes one or adds files to it.
 - **The X16's files.** One folder on your computer is the `FILES` folder on
@@ -185,7 +189,9 @@ desktop app can download it. On the command line it's read from `roms/x16/`.
 - **Keyboard.** Keys go to the X16 by position, so its own layout applies.
   Pasted text is typed in.
 - **Mouse.** Click the picture to capture the mouse, and press Ctrl+M to let it
-  go.
+  go. On a touch screen the picture is a trackpad: drag a finger to move the
+  pointer, tap to click, tap with two fingers to right-click, and tap then hold
+  and drag to drag.
 - **Controllers.** Gamepads are its SNES controllers 1 and 2, their buttons
   where a SNES pad's are: the bottom one B, the right A, the left Y and the top
   X, the shoulders L and R.

@@ -9,6 +9,7 @@ import android.graphics.Path;
 import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.RectF;
+import android.util.SparseArray;
 import android.util.SparseBooleanArray;
 import android.view.HapticFeedbackConstants;
 import android.view.MotionEvent;
@@ -32,7 +33,9 @@ import android.view.WindowManager;
  * higher, as it's been set. Being moved, it holds nothing: each piece goes
  * where it's dragged. Each piece is placed on the screen itself, not in the
  * game's window: as Android's bars come up over it, and the window's
- * narrowed or moved for them, they stay where they are.
+ * narrowed or moved for them, they stay where they are. A finger that
+ * lands on none of it, on the picture, is passed on, as a touch of the
+ * picture's: a light gun's, aimed, or a mouse's trackpad.
  */
 public class TouchPad extends View {
     /** As the emulator's touch module has them. */
@@ -43,6 +46,11 @@ public class TouchPad extends View {
     /** What's told what's held. */
     interface Held {
         void held(int buttons);
+    }
+
+    /** What's passed a finger that landed on none of it: a touch, as a MotionEvent's action, where on the screen. */
+    interface Passed {
+        void passed(int device, int finger, int action, float x, float y);
     }
 
     /** Where it's kept: each piece's place, a share of the screen across and down; and its size. */
@@ -81,6 +89,10 @@ public class TouchPad extends View {
     private final PointF[] at;
     /** The fingers that landed on the D-pad, by their pointer ids. */
     private final SparseBooleanArray onDpad = new SparseBooleanArray();
+    /** The fingers that landed on none of it, passed on, by their pointer ids, and where each was last. */
+    private final SparseArray<PointF> passing = new SparseArray<>();
+    private Passed passed = (device, finger, action, x, y) -> {};
+    private int device;
 
     /** The screen's size, and where the view is on it. */
     private int screenWidth, screenHeight;
@@ -128,7 +140,17 @@ public class TouchPad extends View {
     /** All let go, as it's hidden or the game's paused. */
     void letGo() {
         onDpad.clear();
+        for (int n = 0; n < passing.size(); n++) {
+            PointF last = passing.valueAt(n);
+            passed.passed(device, passing.keyAt(n), MotionEvent.ACTION_UP, last.x, last.y);
+        }
+        passing.clear();
         tell(0);
+    }
+
+    /** What's passed the fingers that land on none of it. */
+    void passTo(Passed passed) {
+        this.passed = passed;
     }
 
     /** Where it's kept and how big, read again: as it's been moved. */
@@ -402,6 +424,7 @@ public class TouchPad extends View {
             return move(event);
         }
         int action = event.getActionMasked();
+        device = event.getDeviceId();
         if (action == MotionEvent.ACTION_CANCEL) {
             letGo();
             return true;
@@ -411,8 +434,21 @@ public class TouchPad extends View {
                 ? event.getActionIndex() : -1;
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             int landed = event.getActionIndex();
-            onDpad.put(event.getPointerId(landed),
-                    onDpad(event.getX(landed) + onScreen[0], event.getY(landed) + onScreen[1]));
+            float x = event.getX(landed) + onScreen[0], y = event.getY(landed) + onScreen[1];
+            int finger = event.getPointerId(landed);
+            onDpad.put(finger, onDpad(x, y));
+            if (!onDpad.get(finger) && buttons(x, y) == 0) {
+                passing.put(finger, new PointF(x, y));
+                passed.passed(device, finger, MotionEvent.ACTION_DOWN, x, y);
+            }
+        } else if (action == MotionEvent.ACTION_MOVE) {
+            for (int n = 0; n < event.getPointerCount(); n++) {
+                PointF last = passing.get(event.getPointerId(n));
+                if (last != null) {
+                    last.set(event.getX(n) + onScreen[0], event.getY(n) + onScreen[1]);
+                    passed.passed(device, event.getPointerId(n), MotionEvent.ACTION_MOVE, last.x, last.y);
+                }
+            }
         }
         int buttons = 0;
         for (int n = 0; n < event.getPointerCount(); n++) {
@@ -423,7 +459,13 @@ public class TouchPad extends View {
             buttons |= onDpad.get(event.getPointerId(n)) ? directions(x, y) : buttons(x, y);
         }
         if (lifted >= 0) {
-            onDpad.delete(event.getPointerId(lifted));
+            int finger = event.getPointerId(lifted);
+            onDpad.delete(finger);
+            if (passing.get(finger) != null) {
+                passed.passed(device, finger, MotionEvent.ACTION_UP,
+                        event.getX(lifted) + onScreen[0], event.getY(lifted) + onScreen[1]);
+                passing.delete(finger);
+            }
         }
         tell(buttons);
         return true;

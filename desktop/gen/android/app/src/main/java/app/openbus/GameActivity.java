@@ -4,6 +4,8 @@ import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.input.InputManager;
 import android.os.Build;
@@ -14,6 +16,7 @@ import android.view.ContextThemeWrapper;
 import android.view.Gravity;
 import android.view.InputDevice;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.util.TypedValue;
 import android.view.View;
 import android.view.ViewGroup;
@@ -108,6 +111,19 @@ public class GameActivity extends SDLActivity {
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
             getWindow().setAttributes(attributes);
         }
+        // The bars' backgrounds the window's own to draw, and see-through:
+        // otherwise, as the touch screen's gamepad redraws the window over
+        // the picture, Android fills where the navigation bar would be with
+        // black, over the bottom of the picture, bar or no bar.
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getWindow().setNavigationBarContrastEnforced(false);
+        }
+        // Black around the picture, as the TV's is: not the old theme's grey
+        // gradient, which shows where the keys don't reach.
+        getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
         String[] args = getIntent().getStringArrayExtra("args");
         if (args == null) {
             finish();
@@ -119,6 +135,7 @@ public class GameActivity extends SDLActivity {
         boolean x16 = machine.equals("x16");
         if (touch && (machine.equals("nes") || x16)) {
             touchPad = new TouchPad(this, GameActivity::touched, false, x16);
+            touchPad.passTo(GameActivity::touchPicture);
             mLayout.addView(touchPad, new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             getSystemService(InputManager.class).registerInputDeviceListener(pads, null);
@@ -126,6 +143,9 @@ public class GameActivity extends SDLActivity {
         if (touch && x16) {
             keyboard = new Keyboard(this);
             keyboard.setId(View.generateViewId());
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                keyboard.capturedTo((view, event) -> mSurface.onCapturedPointerEvent(event));
+            }
             RelativeLayout.LayoutParams bottom = new RelativeLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             bottom.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
@@ -137,15 +157,53 @@ public class GameActivity extends SDLActivity {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     boolean typing = insets.isVisible(WindowInsets.Type.ime());
                     keyboard.typingShown(typing);
-                    RelativeLayout.LayoutParams place = (RelativeLayout.LayoutParams) keyboard.getLayoutParams();
-                    place.bottomMargin = typing ? insets.getInsets(WindowInsets.Type.ime()).bottom : 0;
-                    keyboard.setLayoutParams(place);
+                    typedOn = typing ? insets.getInsets(WindowInsets.Type.ime()).bottom : 0;
+                    barsBelow = insets.getInsetsIgnoringVisibility(WindowInsets.Type.navigationBars()
+                            | WindowInsets.Type.mandatorySystemGestures()).bottom;
+                    keyboard.post(this::placeKeys);
                 }
                 return insets;
+            });
+            // As the keys are laid out, taller or shorter: placed again.
+            keyboard.addOnLayoutChangeListener((view, l, t, r, b, oldL, oldT, oldR, oldB) -> {
+                if (b - t != oldB - oldT) {
+                    keyboard.post(this::placeKeys);
+                }
             });
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
         }
         arrange();
+    }
+
+    /**
+     * How tall Android's keyboard is, while it's up, or 0; and its
+     * navigation bar, or the strip at the bottom its gestures take, shown
+     * or not. Android 11 and later say.
+     */
+    private int typedOn, barsBelow;
+
+    /**
+     * The keys placed, and the picture on them, in portrait: on Android's
+     * keyboard, as it's up; with it down, the two in the middle of the
+     * screen, not dropped to its bottom, where Android's bar and gestures
+     * are, and never under them.
+     */
+    private void placeKeys() {
+        if (keyboard == null || keyboard.getVisibility() != View.VISIBLE
+                || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return;
+        }
+        int bottom = typedOn;
+        if (bottom == 0) {
+            int picture = mLayout.getWidth() * 3 / 4;
+            int spare = mLayout.getHeight() - picture - keyboard.getHeight();
+            bottom = Math.max(barsBelow, spare / 2);
+        }
+        RelativeLayout.LayoutParams place = (RelativeLayout.LayoutParams) keyboard.getLayoutParams();
+        if (place.bottomMargin != bottom) {
+            place.bottomMargin = bottom;
+            keyboard.setLayoutParams(place);
+        }
     }
 
     /** Whether the screen's taller than it's wide. */
@@ -156,9 +214,9 @@ public class GameActivity extends SDLActivity {
     /**
      * The screen as it's turned: with a keyboard, in portrait, the picture
      * as wide as the screen, sitting on the keyboard, Android's up to type
-     * on, and moving with it as it comes and goes: what's spare is over the
-     * picture, at the top, where a camera's hole is, never between it and
-     * the keys. In landscape, the picture the whole screen's, and the
+     * on, and moving with it as it comes and goes; with it down, the two in
+     * the middle of the screen (`placeKeys`). What's spare is never between
+     * the picture and the keys. In landscape, the picture the whole screen's, and the
      * gamepad over it. Without one, the gamepad.
      */
     private void arrange() {
@@ -179,6 +237,7 @@ public class GameActivity extends SDLActivity {
             mSurface.setLayoutParams(picture);
             if (portrait) {
                 keyboard.showTyping();
+                keyboard.post(this::placeKeys);
             } else {
                 keyboard.hideTyping();
             }
@@ -355,11 +414,12 @@ public class GameActivity extends SDLActivity {
     }
 
     /**
-     * Back, on a touch screen with no gamepad: the pause, its choices big
+     * The system's Back, on a touch screen: the pause, its choices big
      * enough for a finger, not the game's menu, which only a gamepad or
-     * keys can work. With a gamepad, and on a TV (its remote has no touch
-     * screen), Back's the game's menu, as it was. With something over the
-     * game, Back closes it, the game going again.
+     * keys can work, whatever's plugged in. A gamepad's own Back, and Back
+     * on a TV (its remote has no touch screen), is the game's menu, as it
+     * was. With something over the game, Back closes it, the game going
+     * again.
      */
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
@@ -378,19 +438,89 @@ public class GameActivity extends SDLActivity {
         return super.dispatchKeyEvent(event);
     }
 
-    /** Whether Back's a touch screen's: there's one, and no gamepad. */
+    /**
+     * A finger the gamepad passed on, landing on none of it: a touch of
+     * the picture's, `x`, `y` on the screen, as SDL's told of one.
+     */
+    private static void touchPicture(int device, int finger, int action, float x, float y) {
+        if (mSurface == null || mSurface.getWidth() <= 0 || mSurface.getHeight() <= 0) {
+            return;
+        }
+        int[] at = new int[2];
+        mSurface.getLocationOnScreen(at);
+        // As SDL's own: -1 is its mouse's.
+        int touch = device < 0 ? device - 1 : device;
+        SDLActivity.onNativeTouch(touch, finger, action,
+                (x - at[0]) / mSurface.getWidth(), (y - at[1]) / mSurface.getHeight(), 1f);
+    }
+
+    /** Whether a mouse's button went down on the picture: its clicks the game's till it's let go. */
+    private boolean mouseOnPicture;
+
+    /**
+     * A mouse's clicks on the picture, the game's: not the gamepad's over
+     * it, which takes every touch. With something over the game, its.
+     */
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        if (over == null && mSurface != null && event.isFromSource(InputDevice.SOURCE_MOUSE)) {
+            if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+                mouseOnPicture = onPicture(event);
+            }
+            if (mouseOnPicture) {
+                toPicture(event, true);
+                return true;
+            }
+        }
+        return super.dispatchTouchEvent(event);
+    }
+
+    /** A mouse moved over the picture, the game's too. */
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent event) {
+        if (over == null && mSurface != null && event.isFromSource(InputDevice.SOURCE_MOUSE)
+                && onPicture(event)) {
+            toPicture(event, false);
+            return true;
+        }
+        return super.dispatchGenericMotionEvent(event);
+    }
+
+    /** Whether `event`, in the window, is on the picture. */
+    private boolean onPicture(MotionEvent event) {
+        int[] at = new int[2];
+        mSurface.getLocationInWindow(at);
+        float x = event.getX() - at[0], y = event.getY() - at[1];
+        return x >= 0 && y >= 0 && x < mSurface.getWidth() && y < mSurface.getHeight();
+    }
+
+    /** `event` the picture's, a click, or a move, where it is on it. */
+    private void toPicture(MotionEvent event, boolean click) {
+        int[] at = new int[2];
+        mSurface.getLocationInWindow(at);
+        MotionEvent on = MotionEvent.obtain(event);
+        on.offsetLocation(-at[0], -at[1]);
+        if (click) {
+            mSurface.onTouch(mSurface, on);
+        } else {
+            mSurface.dispatchGenericMotionEvent(on);
+        }
+        on.recycle();
+    }
+
+    /** Whether Back's the system's on a touch screen: there's one, and it's not a gamepad's. */
     private boolean byTouch(KeyEvent event) {
         if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)) {
             return false;
         }
-        return !isPad(event.getSource()) && !padPlugged();
+        return !isPad(event.getSource());
     }
 
     /** Whether there's a gamepad plugged in or paired. */
     private static boolean padPlugged() {
         for (int id : InputDevice.getDeviceIds()) {
             InputDevice device = InputDevice.getDevice(id);
-            if (device != null && plugged(device) && isPad(device.getSources())) {
+            if (device != null && plugged(device) && isPad(device.getSources()) && !isMouse(device.getSources())) {
                 return true;
             }
         }
@@ -407,6 +537,14 @@ public class GameActivity extends SDLActivity {
             return false;
         }
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || device.isExternal();
+    }
+
+    /**
+     * Whether `sources` are a mouse's: a mouse that says it's a joystick
+     * too, as a wireless one's receiver can, is no gamepad.
+     */
+    private static boolean isMouse(int sources) {
+        return (sources & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE;
     }
 
     /**

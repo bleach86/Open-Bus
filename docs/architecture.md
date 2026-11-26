@@ -297,8 +297,9 @@ process, which runs `cli::run` with the same command line the desktop would
 use. The emulator is also shipped as a program (`libcpu_emu_exe.so`) for the
 windowless subcommands.
 
-On a touch screen with no gamepad plugged in, `GameActivity` handles Back
-itself, with a pause menu of its own. That menu and the touch controls' editor
+On a touch screen, `GameActivity` handles the system's Back itself, with a
+pause menu of its own, whatever's plugged in; a gamepad's own Back is the
+game's menu. That menu and the touch controls' editor
 are views in the game's window, not dialogs. They hold the game still through
 `host::touch::hold_still`, not SDL's pause, which takes the window out of
 fullscreen and brings Android's bars up. For the NES it also lays `TouchPad`,
@@ -307,6 +308,14 @@ an Android view, over SDL's surface. Its presses go through the JNI call
 gamepad adds onto in `Window::gamepad`. They're not a control, so rebinding
 keys or a gamepad never affects them. A TV remote's OK is kept out of the
 controls the same way (`controls::REMOTE_OK`): it always chooses in the menus.
+
+`TouchPad` takes every touch, so a finger that lands on none of its controls
+is passed on to SDL as a touch of the picture (`GameActivity.touchPicture`),
+and a mouse's clicks and moves over the picture go straight to SDL's surface,
+captured moves too, though the X16 keyboard's typing view has the focus. In
+the window, the clicks SDL makes of fingers are ignored and the fingers taken
+as they are: `host::fingers` makes them the pointer, a trackpad for a machine
+with a mouse, or a light gun's aim.
 
 `web/app.js` checks `native` to tell the browser from the app, and
 `native.android` to tell Android from the desktop.

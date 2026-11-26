@@ -82,7 +82,10 @@ jobs:
           workspaces: |
             .
             desktop
-      - run: cargo install tauri-cli --version 2.12.4 --locked
+      # Tauri's CLI, its own build from its release: built here, it took
+      # longer than anything else.
+      - run: tools/install-tauri-cli 2.12.4
+        shell: bash
       # With the updates the app installs itself, each signed with the
       # updater's key (TAURI_SIGNING_PRIVATE_KEY, and its password, from
       # `cargo tauri signer generate`), whose public half tauri.conf.json has.
@@ -158,7 +161,10 @@ jobs:
           workspaces: |
             .
             desktop
-      - run: cargo install tauri-cli --version 2.12.4 --locked
+      # Tauri's CLI, its own build from its release: built here, it took
+      # longer than anything else.
+      - run: tools/install-tauri-cli 2.12.4
+        shell: bash
       - name: The release key
         env:
           KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}

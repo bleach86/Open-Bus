@@ -115,6 +115,11 @@ public class Keyboard extends LinearLayout {
         fnKey.setBackground(face(shown ? LIT : KEY));
     }
 
+    /** Where a captured mouse's moves go, as its typing has the focus they're told to. */
+    void capturedTo(View.OnCapturedPointerListener listener) {
+        typing.setOnCapturedPointerListener(listener);
+    }
+
     /** Android's keyboard up, to type on. */
     void showTyping() {
         typing.requestFocus();
@@ -444,6 +449,12 @@ public class Keyboard extends LinearLayout {
 
                 @Override
                 public boolean sendKeyEvent(KeyEvent event) {
+                    // Back, as Android's keyboard sends it with a mouse or
+                    // keyboard plugged in: the game screen's, its pause,
+                    // as the system's Back is, never the game's.
+                    if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+                        return ((android.app.Activity) getContext()).dispatchKeyEvent(event);
+                    }
                     if (event.getAction() == KeyEvent.ACTION_DOWN) {
                         stroke(event.getKeyCode());
                     }

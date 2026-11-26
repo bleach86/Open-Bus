@@ -32,6 +32,44 @@ mod tests {
         assert_eq!(card::autoboot("galax16.prg"), saved);
     }
 
+    #[test]
+    fn a_folders_autoboot_goes_into_it_as_the_x16_saves_it() {
+        // `10 DOS"CD:VERANDA":LOAD"VERANDA.PRG"`, SAVEd by x16emu R49.
+        let mut saved = vec![0x01, 0x08, 0x23, 0x08, 0x0A, 0x00, 0xCE, 0x81];
+        saved.extend(b"\"CD:VERANDA\":\x93\"VERANDA.PRG\"\0\0\0");
+        assert_eq!(card::autoboot_in("Veranda", "veranda.prg"), saved);
+    }
+
+    #[test]
+    fn a_whole_cards_program_is_in_its_folder_run_from_there() {
+        // Veranda's zip: its folders, for the top of a card.
+        let game = card::game(
+            "veranda-1.0.1-sdcard",
+            vec![
+                file("DOCUMENTS/Garden.brd", b"brd"),
+                file("INSTALL.txt", b"copy the folders"),
+                file("PC/web_proxy.py", b"py"),
+                file("VERANDA/AUTOBOOT.X16", &[0x01, 0x08, 1]),
+                file("VERANDA/RBOOT", &[0x01, 0x08, 2]),
+                file("VERANDA/VERANDA.PRG", &[0x01, 0x08, 1]),
+            ],
+        )
+        .unwrap();
+        assert_eq!(game.program, "VERANDA/VERANDA.PRG", "in its name");
+        let boot = game
+            .files
+            .iter()
+            .find(|(path, _)| path == "AUTOBOOT.X16")
+            .map(|(_, bytes)| bytes.clone());
+        assert_eq!(boot, Some(card::autoboot_in("VERANDA", "VERANDA.PRG")));
+        assert_eq!(game.files.len(), 7, "its files where they were, and that");
+        let top = card::game(
+            "x",
+            vec![file("X.PRG", &[1, 8]), file("TOOLS/X.PRG", &[1, 8])],
+        );
+        assert_eq!(top.unwrap().program, "X.PRG", "one at the top first");
+    }
+
     fn file(path: &str, bytes: &[u8]) -> CardFile {
         (path.to_string(), bytes.to_vec())
     }

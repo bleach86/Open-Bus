@@ -14,7 +14,9 @@
 //! aimed at, its pointer cross hairs then, and its clicks the machine's.
 //! For a machine with a mouse, a click on the picture captures it, its
 //! cursor gone, its moves the machine's however far they go; Ctrl+M, or
-//! another window, lets it go, as the title says. For a machine that takes
+//! another window, lets it go, as the title says. Fingers on a touch
+//! screen are a trackpad for a machine with a mouse, and aim a light gun
+//! (`fingers`). For a machine that takes
 //! the keyboard's keys, each key's pressed and let go, by its place on the
 //! keyboard, but those it keeps for its own (F11, F12, the clipboard's,
 //! Ctrl+M), and let go as another window's chosen; none of them a
@@ -22,10 +24,12 @@
 //! Ctrl+Shift+C or Ctrl+Insert, the screen copied to it, for a machine with
 //! a keyboard. Closed, it tells the machine, to turn itself off.
 
+use crate::host::clock;
 use crate::host::controls::{Action, Controls, REMOTE_OK, said};
 use crate::host::display::{
     CHANNELS, COPY_KEY, Display, Gamepad, Joystick, Key, PASTE_KEY, Pointer, SAMPLE_RATE, Scancode,
 };
+use crate::host::fingers::{Fingers, Way};
 use crate::host::pads::{self, Pads};
 use crate::host::sound::Stretch;
 use crate::host::touch;
@@ -110,6 +114,10 @@ pub struct Window {
     /// The mouse on the picture; and whether the machine's aimed at, and
     /// the cross hairs it's shown as then.
     pointer: Pointer,
+    /// Fingers on a touch screen, and whether they're the pointer, not
+    /// the mouse, as they were last used.
+    fingers: Fingers,
+    touching: bool,
     aiming: bool,
     cross_hairs: Option<Cursor>,
     /// Whether the machine has a mouse, and whether it's captured; the
@@ -308,6 +316,8 @@ impl Window {
             picture: (width, height),
             logical: size,
             pointer: Pointer::default(),
+            fingers: Fingers::new(),
+            touching: false,
             aiming: false,
             cross_hairs: None,
             has_mouse: false,
@@ -474,6 +484,29 @@ impl Window {
         self.show_title();
     }
 
+    /// How fingers on the screen are the machine's pointer, if they are:
+    /// a trackpad, for its mouse; or where it's aimed.
+    fn finger_way(&self) -> Option<Way> {
+        if self.has_mouse {
+            Some(Way::Trackpad)
+        } else if self.aiming {
+            Some(Way::Aimed)
+        } else {
+            None
+        }
+    }
+
+    /// How far a finger's moved, `dx` and `dy` across and down the window,
+    /// a share of it, in the picture's pixels as it's shown.
+    fn finger_travel(&self, dx: f32, dy: f32) -> (f32, f32) {
+        let (w, h) = self.canvas.output_size().unwrap_or(self.logical);
+        let (w, h) = (w as f32, h as f32);
+        // The window's pixels to each of the picture's, as it's scaled up.
+        let shown = (w / self.logical.0 as f32).min(h / self.logical.1 as f32);
+        let (across, down) = scale(self.picture, self.logical);
+        (dx * w / shown * across, dy * h / shown * down)
+    }
+
     /// The machine's title, and, the mouse captured, how it's let go.
     fn show_title(&mut self) {
         let title = if self.captured {
@@ -496,6 +529,10 @@ impl Window {
             } = event
             {
                 self.let_go_keys();
+                self.fingers.lift_all();
+            }
+            if is_mouse(&event) {
+                self.touching = false;
             }
             match event {
                 Event::Quit { .. } => self.closed = true,
@@ -633,6 +670,61 @@ impl Window {
                         _ => {}
                     }
                 }
+                // The clicks SDL makes of a finger: the fingers are taken
+                // as they are, below.
+                Event::MouseMotion {
+                    which: TOUCH_MOUSE, ..
+                }
+                | Event::MouseButtonDown {
+                    which: TOUCH_MOUSE, ..
+                }
+                | Event::MouseButtonUp {
+                    which: TOUCH_MOUSE, ..
+                } => {}
+                Event::FingerDown {
+                    touch_id,
+                    finger_id,
+                    x,
+                    y,
+                    ..
+                } if touch_id != MOUSE_TOUCH => {
+                    if let Some(way) = self.finger_way() {
+                        if !self.touching && self.captured {
+                            let at = self.pointer.at;
+                            self.capture(None);
+                            self.fingers.start_at(at);
+                        }
+                        self.touching = true;
+                        let picture = (self.picture.0 as f32, self.picture.1 as f32);
+                        let at = (x * picture.0, y * picture.1);
+                        self.fingers
+                            .down(way, finger_id, at, picture, clock::seconds());
+                    }
+                }
+                Event::FingerMotion {
+                    touch_id,
+                    finger_id,
+                    x,
+                    y,
+                    dx,
+                    dy,
+                    ..
+                } if touch_id != MOUSE_TOUCH => {
+                    if let Some(way) = self.finger_way() {
+                        let at = (x * self.picture.0 as f32, y * self.picture.1 as f32);
+                        let by = self.finger_travel(dx, dy);
+                        self.fingers.moved(way, finger_id, at, by);
+                    }
+                }
+                Event::FingerUp {
+                    touch_id,
+                    finger_id,
+                    ..
+                } if touch_id != MOUSE_TOUCH => {
+                    if let Some(way) = self.finger_way() {
+                        self.fingers.up(way, finger_id, clock::seconds());
+                    }
+                }
                 Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
                     clicks: 2,
@@ -710,6 +802,20 @@ impl Window {
                 && (self.aiming || windowed && self.pointer_moved.elapsed() < POINTER_SHOWN),
         );
     }
+}
+
+/// The mouse SDL makes of a finger, and the finger it makes of a mouse.
+const TOUCH_MOUSE: u32 = u32::MAX;
+const MOUSE_TOUCH: i64 = -1;
+
+/// Whether `event` is a mouse's own, not a finger's as SDL has it.
+fn is_mouse(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::MouseMotion { which, .. }
+        | Event::MouseButtonDown { which, .. }
+        | Event::MouseButtonUp { which, .. } if *which != TOUCH_MOUSE
+    )
 }
 
 /// Where the mouse at `x`, `y`, in a window's `logical` size, is on its
@@ -852,6 +958,9 @@ impl Display for Window {
     }
 
     fn pointer(&self) -> Pointer {
+        if self.touching {
+            return self.fingers.pointer(clock::seconds());
+        }
         // A machine with a mouse has it only as it's captured.
         if self.has_mouse && !self.captured {
             return Pointer::default();
