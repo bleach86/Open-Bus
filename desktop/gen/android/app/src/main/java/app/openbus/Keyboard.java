@@ -449,6 +449,12 @@ public class Keyboard extends LinearLayout {
 
                 @Override
                 public boolean sendKeyEvent(KeyEvent event) {
+                    // Back, as Android's keyboard sends it with a mouse or
+                    // keyboard plugged in: the game screen's, its pause,
+                    // as the system's Back is, never the game's.
+                    if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+                        return ((android.app.Activity) getContext()).dispatchKeyEvent(event);
+                    }
                     if (event.getAction() == KeyEvent.ACTION_DOWN) {
                         stroke(event.getKeyCode());
                     }

@@ -371,11 +371,12 @@ public class GameActivity extends SDLActivity {
     }
 
     /**
-     * Back, on a touch screen with no gamepad: the pause, its choices big
+     * The system's Back, on a touch screen: the pause, its choices big
      * enough for a finger, not the game's menu, which only a gamepad or
-     * keys can work. With a gamepad, and on a TV (its remote has no touch
-     * screen), Back's the game's menu, as it was. With something over the
-     * game, Back closes it, the game going again.
+     * keys can work, whatever's plugged in. A gamepad's own Back, and Back
+     * on a TV (its remote has no touch screen), is the game's menu, as it
+     * was. With something over the game, Back closes it, the game going
+     * again.
      */
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
@@ -464,19 +465,19 @@ public class GameActivity extends SDLActivity {
         on.recycle();
     }
 
-    /** Whether Back's a touch screen's: there's one, and no gamepad. */
+    /** Whether Back's the system's on a touch screen: there's one, and it's not a gamepad's. */
     private boolean byTouch(KeyEvent event) {
         if (!getPackageManager().hasSystemFeature(PackageManager.FEATURE_TOUCHSCREEN)) {
             return false;
         }
-        return !isPad(event.getSource()) && !padPlugged();
+        return !isPad(event.getSource());
     }
 
     /** Whether there's a gamepad plugged in or paired. */
     private static boolean padPlugged() {
         for (int id : InputDevice.getDeviceIds()) {
             InputDevice device = InputDevice.getDevice(id);
-            if (device != null && plugged(device) && isPad(device.getSources())) {
+            if (device != null && plugged(device) && isPad(device.getSources()) && !isMouse(device.getSources())) {
                 return true;
             }
         }
@@ -493,6 +494,14 @@ public class GameActivity extends SDLActivity {
             return false;
         }
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || device.isExternal();
+    }
+
+    /**
+     * Whether `sources` are a mouse's: a mouse that says it's a joystick
+     * too, as a wireless one's receiver can, is no gamepad.
+     */
+    private static boolean isMouse(int sources) {
+        return (sources & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE;
     }
 
     /**
