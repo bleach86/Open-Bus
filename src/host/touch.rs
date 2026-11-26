@@ -1,14 +1,15 @@
 //! A touch screen's controls, on Android: the game screen's own buttons,
 //! drawn by Android over the picture (a NES pad's, or a SNES pad's with X,
-//! Y, L and R too), which tell the emulator which of them are held, as a
-//! mask of the bits below. They're the first player's, added
+//! Y, L and R too, or a joystick's stick and its two buttons, A and B),
+//! which tell the emulator which of them are held, as a mask of the bits
+//! below, and where the stick's pushed. They're the first player's, added
 //! onto whatever's bound: no control at all, so rebinding a key or a
 //! gamepad never moves them, and they never move it. And the game held
 //! still, as the game screen's own menus are over it: not by SDL's pause,
 //! which takes the window out of fullscreen, bringing Android's bars up.
 
 use crate::host::display::Gamepad;
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 
 pub const A: u16 = 1 << 0;
 pub const B: u16 = 1 << 1;
@@ -27,6 +28,36 @@ pub const R: u16 = 1 << 11;
 static HELD: AtomicU16 = AtomicU16::new(0);
 /// Whether the game's held still.
 static STILL: AtomicBool = AtomicBool::new(false);
+/// The stick, while it's held: where it's pushed, across and down, -1 to
+/// 1 each, as two f32s' bits, across low; and whether it's held.
+static STICK: AtomicU64 = AtomicU64::new(0);
+static STEERING: AtomicBool = AtomicBool::new(false);
+
+/// The stick held, pushed `x` across and `y` down; or let go, centred.
+pub fn steer(x: f32, y: f32, held: bool) {
+    STICK.store(
+        u64::from(x.to_bits()) | u64::from(y.to_bits()) << 32,
+        Ordering::Relaxed,
+    );
+    STEERING.store(held, Ordering::Relaxed);
+}
+
+/// Where the stick's pushed, across and down, while it's held.
+pub fn stick() -> Option<(f32, f32)> {
+    if !STEERING.load(Ordering::Relaxed) {
+        return None;
+    }
+    let bits = STICK.load(Ordering::Relaxed);
+    Some((
+        f32::from_bits(bits as u32),
+        f32::from_bits((bits >> 32) as u32),
+    ))
+}
+
+/// What's held on the screen, as it was last told.
+pub fn held() -> u16 {
+    HELD.load(Ordering::Relaxed)
+}
 
 /// The game held still, or let go again.
 pub fn hold_still(still: bool) {
@@ -74,6 +105,19 @@ pub extern "C" fn Java_app_openbus_GameActivity_touched(
     buttons: i32,
 ) {
     hold(buttons as u16);
+}
+
+/// GameActivity's `steered`, as the stick's pushed, and let go.
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "C" fn Java_app_openbus_GameActivity_steered(
+    _env: *mut std::ffi::c_void,
+    _class: *mut std::ffi::c_void,
+    x: f32,
+    y: f32,
+    held: u8,
+) {
+    steer(x, y, held != 0);
 }
 
 /// GameActivity's `still`, as its menus are over the game, and gone.
