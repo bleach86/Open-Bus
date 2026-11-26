@@ -5,6 +5,7 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.hardware.input.InputManager;
 import android.os.Build;
@@ -120,6 +121,9 @@ public class GameActivity extends SDLActivity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             getWindow().setNavigationBarContrastEnforced(false);
         }
+        // Black around the picture, as the TV's is: not the old theme's grey
+        // gradient, which shows where the keys don't reach.
+        getWindow().setBackgroundDrawable(new ColorDrawable(Color.BLACK));
         String[] args = getIntent().getStringArrayExtra("args");
         if (args == null) {
             finish();
@@ -153,15 +157,53 @@ public class GameActivity extends SDLActivity {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     boolean typing = insets.isVisible(WindowInsets.Type.ime());
                     keyboard.typingShown(typing);
-                    RelativeLayout.LayoutParams place = (RelativeLayout.LayoutParams) keyboard.getLayoutParams();
-                    place.bottomMargin = typing ? insets.getInsets(WindowInsets.Type.ime()).bottom : 0;
-                    keyboard.setLayoutParams(place);
+                    typedOn = typing ? insets.getInsets(WindowInsets.Type.ime()).bottom : 0;
+                    barsBelow = insets.getInsetsIgnoringVisibility(WindowInsets.Type.navigationBars()
+                            | WindowInsets.Type.mandatorySystemGestures()).bottom;
+                    keyboard.post(this::placeKeys);
                 }
                 return insets;
+            });
+            // As the keys are laid out, taller or shorter: placed again.
+            keyboard.addOnLayoutChangeListener((view, l, t, r, b, oldL, oldT, oldR, oldB) -> {
+                if (b - t != oldB - oldT) {
+                    keyboard.post(this::placeKeys);
+                }
             });
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_FULL_USER);
         }
         arrange();
+    }
+
+    /**
+     * How tall Android's keyboard is, while it's up, or 0; and its
+     * navigation bar, or the strip at the bottom its gestures take, shown
+     * or not. Android 11 and later say.
+     */
+    private int typedOn, barsBelow;
+
+    /**
+     * The keys placed, and the picture on them, in portrait: on Android's
+     * keyboard, as it's up; with it down, the two in the middle of the
+     * screen, not dropped to its bottom, where Android's bar and gestures
+     * are, and never under them.
+     */
+    private void placeKeys() {
+        if (keyboard == null || keyboard.getVisibility() != View.VISIBLE
+                || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            return;
+        }
+        int bottom = typedOn;
+        if (bottom == 0) {
+            int picture = mLayout.getWidth() * 3 / 4;
+            int spare = mLayout.getHeight() - picture - keyboard.getHeight();
+            bottom = Math.max(barsBelow, spare / 2);
+        }
+        RelativeLayout.LayoutParams place = (RelativeLayout.LayoutParams) keyboard.getLayoutParams();
+        if (place.bottomMargin != bottom) {
+            place.bottomMargin = bottom;
+            keyboard.setLayoutParams(place);
+        }
     }
 
     /** Whether the screen's taller than it's wide. */
@@ -172,9 +214,9 @@ public class GameActivity extends SDLActivity {
     /**
      * The screen as it's turned: with a keyboard, in portrait, the picture
      * as wide as the screen, sitting on the keyboard, Android's up to type
-     * on, and moving with it as it comes and goes: what's spare is over the
-     * picture, at the top, where a camera's hole is, never between it and
-     * the keys. In landscape, the picture the whole screen's, and the
+     * on, and moving with it as it comes and goes; with it down, the two in
+     * the middle of the screen (`placeKeys`). What's spare is never between
+     * the picture and the keys. In landscape, the picture the whole screen's, and the
      * gamepad over it. Without one, the gamepad.
      */
     private void arrange() {
@@ -195,6 +237,7 @@ public class GameActivity extends SDLActivity {
             mSurface.setLayoutParams(picture);
             if (portrait) {
                 keyboard.showTyping();
+                keyboard.post(this::placeKeys);
             } else {
                 keyboard.hideTyping();
             }
