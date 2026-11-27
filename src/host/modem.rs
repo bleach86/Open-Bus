@@ -52,9 +52,22 @@
 //! `ATP` lists them, `ATP?` with their notes; `ATP"5=DELETE"`; `ATD5`
 //! dials it. `AT&F` leaves it be, which Zimodem's doesn't, so a program
 //! setting the modem up loses nobody's places. Its WiFi is the host's
-//! network, so `ATW`, `ATB` and `AT+CONFIG` change nothing; listening
-//! (`ATA`), packets (`ATC`, `ATT`), downloads (`AT&G`), SSH and PETSCII
-//! aren't here.
+//! network, so `ATW`, `ATB` and `AT+CONFIG` change nothing.
+//!
+//! Zimodem's connections in its command mode, too, as programs that keep
+//! several open at once use them (Veranda's): `ATC"host:port"` connects,
+//! `CONNECT 2`, the connection's number, and stays in the command mode,
+//! that one the current one; `ATCS"host:port"` the same over TLS, made by
+//! the modem, the server's certificate not checked, as Zimodem's
+//! `WiFiClientSecure` doesn't (`setInsecure`). `ATC2` makes 2 the current one; `ATT12`
+//! sends it the next 12 bytes, as they are, `OK` after them (`ATT"text"`,
+//! the text and a return and line feed); `ATH2` hangs it up, `ATH` and
+//! `ATH0` all of them. What comes from them waits in the modem: with `F3`,
+//! each XON the machine sends gets a packet, `[ 2 12 34 ]` (the
+//! connection, the bytes, their Dallas CRC-8) on a line and then the bytes
+//! (S40 of them at most), or `[ 0 0 0 ]` with nothing come, or, once a
+//! place that's gone has had all it sent taken, `NO CARRIER 2`. Listening
+//! (`ATA`), downloads (`AT&G`), SSH and PETSCII aren't here.
 
 use crate::host::phone_book::{self, Entry, PhoneBook};
 #[cfg(not(target_arch = "wasm32"))]
@@ -169,6 +182,300 @@ enum Line {
 #[cfg(target_arch = "wasm32")]
 enum Line {}
 
+/// A connection of Zimodem's command mode (`ATC`): its number; how it is;
+/// what's come from it, for the machine's packets, and what's to go to it;
+/// whether its place has gone, and whether that's been said.
+struct Channel {
+    id: u32,
+    /// Not on a web page, which never connects.
+    #[cfg(not(target_arch = "wasm32"))]
+    link: Link,
+    came: VecDeque<u8>,
+    to_place: Vec<u8>,
+    gone: bool,
+    told: bool,
+}
+
+/// Being made, its connection to come; or made.
+#[cfg(not(target_arch = "wasm32"))]
+enum Link {
+    Dialling(Receiver<std::io::Result<Stream>>),
+    Up(Stream),
+}
+
+/// What a channel's held back in the modem of what's come from its place,
+/// at most: the rest's left in the network, as the machine takes packets.
+#[cfg(not(target_arch = "wasm32"))]
+const CHANNEL_HOLDS: usize = 16 * 1024;
+
+/// A connection's stream: as it comes, or through the modem's TLS.
+#[cfg(not(target_arch = "wasm32"))]
+enum Stream {
+    Plain(TcpStream),
+    Secure(Box<rustls::StreamOwned<rustls::ClientConnection, TcpStream>>),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Stream {
+    fn socket(&self) -> &TcpStream {
+        match self {
+            Stream::Plain(socket) => socket,
+            Stream::Secure(stream) => &stream.sock,
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Read for Stream {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Stream::Plain(socket) => socket.read(buffer),
+            Stream::Secure(stream) => stream.read(buffer),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Write for Stream {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Stream::Plain(socket) => socket.write(bytes),
+            Stream::Secure(stream) => stream.write(bytes),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Stream::Plain(socket) => socket.flush(),
+            Stream::Secure(stream) => stream.flush(),
+        }
+    }
+}
+
+/// A place's certificate taken as it is, as Zimodem's TLS takes it
+/// (`WiFiClientSecure`'s `setInsecure`, its mbedTLS checking none): its
+/// handshake's signatures checked, so the connection is the one it says,
+/// but not who signed it. mbedTLS reads an X.509 certificate of any
+/// version, the first too, as many of Gemini's servers have, which webpki
+/// won't: its key's taken from it here, by its DER.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+struct Unchecked(std::sync::Arc<rustls::crypto::CryptoProvider>);
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Unchecked {
+    /// The handshake's `signed` `message` checked against the key in
+    /// `certificate`: by any of the scheme's algorithms for the key's kind
+    /// in TLS 1.2, by its first in TLS 1.3, as rustls checks it.
+    fn verify(
+        &self,
+        message: &[u8],
+        certificate: &rustls::pki_types::CertificateDer<'_>,
+        signed: &rustls::DigitallySignedStruct,
+        tls13: bool,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        let bad = |error| rustls::Error::InvalidCertificate(error);
+        // TLS 1.3's own (RFC 8446): no PKCS #1, nor SHA-1.
+        use rustls::SignatureScheme::*;
+        let in_tls13 = matches!(
+            signed.scheme,
+            ECDSA_NISTP256_SHA256
+                | ECDSA_NISTP384_SHA384
+                | ECDSA_NISTP521_SHA512
+                | RSA_PSS_SHA256
+                | RSA_PSS_SHA384
+                | RSA_PSS_SHA512
+                | ED25519
+                | ED448
+        );
+        if tls13 && !in_tls13 {
+            return Err(bad(rustls::CertificateError::BadSignature));
+        }
+        let (kind, key) =
+            public_key(certificate).ok_or(bad(rustls::CertificateError::BadEncoding))?;
+        let algorithms = self
+            .0
+            .signature_verification_algorithms
+            .mapping
+            .iter()
+            .find(|(scheme, _)| *scheme == signed.scheme)
+            .map_or(&[][..], |(_, algorithms)| *algorithms);
+        let tried = if tls13 {
+            &algorithms[..algorithms.len().min(1)]
+        } else {
+            algorithms
+        };
+        tried
+            .iter()
+            .filter(|algorithm| algorithm.public_key_alg_id().as_ref() == kind)
+            .any(|algorithm| {
+                algorithm
+                    .verify_signature(key, message, signed.signature())
+                    .is_ok()
+            })
+            .then(rustls::client::danger::HandshakeSignatureValid::assertion)
+            .ok_or(bad(rustls::CertificateError::BadSignature))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl rustls::client::danger::ServerCertVerifier for Unchecked {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        certificate: &rustls::pki_types::CertificateDer<'_>,
+        signed: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.verify(message, certificate, signed, false)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        certificate: &rustls::pki_types::CertificateDer<'_>,
+        signed: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.verify(message, certificate, signed, true)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+/// A DER element at the start of `bytes`: its tag, what's in it, and
+/// what's after it.
+fn der(bytes: &[u8]) -> Option<(u8, &[u8], &[u8])> {
+    let (&tag, rest) = bytes.split_first()?;
+    let (&first, rest) = rest.split_first()?;
+    let (length, rest) = if first < 0x80 {
+        (usize::from(first), rest)
+    } else {
+        let count = usize::from(first & 0x7F);
+        if count == 0 || count > 4 || rest.len() < count {
+            return None;
+        }
+        let length = rest[..count]
+            .iter()
+            .fold(0, |length, &byte| length << 8 | usize::from(byte));
+        (length, &rest[count..])
+    };
+    (rest.len() >= length).then(|| (tag, &rest[..length], &rest[length..]))
+}
+
+/// An X.509 certificate's public key, any version's: its algorithm
+/// (inside its AlgorithmIdentifier) and its key's bits.
+pub fn public_key(certificate: &[u8]) -> Option<(&[u8], &[u8])> {
+    let (_, whole, _) = der(certificate)?;
+    let (_, signed, _) = der(whole)?;
+    // Its version, [0], there only after the first.
+    let mut rest = signed;
+    let (tag, _, after) = der(rest)?;
+    if tag == 0xA0 {
+        rest = after;
+    }
+    // Its serial number, signature's algorithm, issuer, validity, subject.
+    for _ in 0..5 {
+        rest = der(rest)?.2;
+    }
+    let (_, key_info, _) = der(rest)?;
+    let (_, algorithm, rest) = der(key_info)?;
+    let (tag, bits, _) = der(rest)?;
+    let (&unused, key) = bits.split_first()?;
+    (tag == 0x03 && unused == 0).then_some((algorithm, key))
+}
+
+/// The modem's TLS, made once: ring's, the certificates unchecked.
+#[cfg(not(target_arch = "wasm32"))]
+fn tls() -> std::io::Result<std::sync::Arc<rustls::ClientConfig>> {
+    static CONFIG: std::sync::OnceLock<std::sync::Arc<rustls::ClientConfig>> =
+        std::sync::OnceLock::new();
+    if let Some(config) = CONFIG.get() {
+        return Ok(config.clone());
+    }
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let config = rustls::ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .map_err(std::io::Error::other)?
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(Unchecked(provider)))
+        .with_no_client_auth();
+    Ok(CONFIG.get_or_init(|| std::sync::Arc::new(config)).clone())
+}
+
+/// A TCP connection to `place`, `host:port`, its receive buffer small,
+/// set before it connects (the window it offers is set then): what the
+/// modem hasn't room for waits at the other end, not in this computer's
+/// network buffers, a hundred K or more.
+#[cfg(not(target_arch = "wasm32"))]
+fn connect(place: &str) -> std::io::Result<TcpStream> {
+    let address = place
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| std::io::Error::from(ErrorKind::NotFound))?;
+    let socket = Socket::new(
+        Domain::for_address(address),
+        Type::STREAM,
+        Some(Protocol::TCP),
+    )?;
+    let _ = socket.set_recv_buffer_size(SOCKET_RECEIVE_BUFFER);
+    socket.connect_timeout(&address.into(), DIAL_TIME)?;
+    Ok(TcpStream::from(socket))
+}
+
+/// `place`, `host:port`, connected to, over the modem's TLS if it's
+/// `secure`, its handshake done here (as long as dialling may take) and
+/// the stream then left not to block.
+#[cfg(not(target_arch = "wasm32"))]
+fn open(place: &str, secure: bool) -> std::io::Result<Stream> {
+    let socket = connect(place)?;
+    let stream = if secure {
+        let host = place.rsplit_once(':').map_or(place, |(host, _)| host);
+        let name = rustls::pki_types::ServerName::try_from(host.to_string())
+            .map_err(|_| std::io::Error::from(ErrorKind::InvalidInput))?;
+        let mut tls = rustls::ClientConnection::new(tls()?, name).map_err(std::io::Error::other)?;
+        let mut socket = socket;
+        socket.set_read_timeout(Some(DIAL_TIME))?;
+        socket.set_write_timeout(Some(DIAL_TIME))?;
+        while tls.is_handshaking() {
+            tls.complete_io(&mut socket)?;
+        }
+        socket.set_read_timeout(None)?;
+        socket.set_write_timeout(None)?;
+        Stream::Secure(Box::new(rustls::StreamOwned::new(tls, socket)))
+    } else {
+        Stream::Plain(socket)
+    };
+    stream.socket().set_nonblocking(true)?;
+    let _ = stream.socket().set_nodelay(true);
+    Ok(stream)
+}
+
+/// The Dallas (Maxim) CRC-8 of `bytes`, as Zimodem's packets carry it: its
+/// polynomial $31 reflected, $8C, from 0.
+fn crc8(bytes: &[u8]) -> u8 {
+    bytes.iter().fold(0, |crc, &byte| {
+        (0..8).fold(crc ^ byte, |crc, _| {
+            if crc & 1 != 0 {
+                crc >> 1 ^ 0x8C
+            } else {
+                crc >> 1
+            }
+        })
+    })
+}
+
 pub struct Modem {
     line: Option<Line>,
     /// Online (not in the command mode): what's sent goes to the place.
@@ -218,9 +525,22 @@ pub struct Modem {
     long_results: bool,
     registers: [u8; 64],
     dtr: bool,
+    /// Not read on a web page, which never connects.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     connections: u32,
     /// Zimodem's phone book (`ATP`), kept where the host says.
     pub phone_book: PhoneBook,
+    /// Zimodem's connections in its command mode (`ATC`), and the current
+    /// one, that `ATT` sends to; the bytes `ATT` has still to take, and
+    /// those it has; a packet for each XON (`F3`); the channel last
+    /// packeted, the next one's after it.
+    channels: Vec<Channel>,
+    current: Option<u32>,
+    payload: Option<(usize, Vec<u8>)>,
+    packet_xon: bool,
+    packeted: usize,
+    /// The number `CONNECT` says: the connection last made's.
+    connected: u32,
 }
 
 /// The number in the phone book that's dialled, if what's dialled is a
@@ -291,6 +611,12 @@ impl Modem {
             dtr: false,
             connections: 0,
             phone_book: PhoneBook::default(),
+            channels: Vec::new(),
+            current: None,
+            payload: None,
+            packet_xon: false,
+            packeted: 0,
+            connected: 0,
         }
     }
 
@@ -351,6 +677,20 @@ impl Modem {
     /// Bytes from the machine's serial port.
     pub fn send(&mut self, bytes: &[u8]) {
         for &byte in bytes {
+            // `ATT`'s bytes, as they are: an XON among them its data.
+            if let Some((left, taken)) = &mut self.payload {
+                taken.push(byte);
+                *left -= 1;
+                if *left == 0 {
+                    self.payload_taken();
+                }
+                continue;
+            }
+            // Zimodem's command mode, `F3`: an XON, a packet.
+            if self.zimodem && !self.online && self.packet_xon && byte == XON {
+                self.packet();
+                continue;
+            }
             if self.xon_xoff && matches!(byte, XON | XOFF) {
                 self.held = byte == XOFF;
                 continue;
@@ -627,10 +967,21 @@ impl Modem {
                     }
                     return;
                 }
-                b'H' => {
-                    number(&mut at);
-                    self.hang_up();
-                }
+                // A connection of the command mode's hung up, by its
+                // number; or, with none (or 0), every one, and a place
+                // dialled.
+                b'H' => match number(&mut at).filter(|&id| id > 0) {
+                    Some(id) if self.channels.iter().any(|channel| channel.id == id) => {
+                        self.channels.retain(|channel| channel.id != id);
+                        if self.current == Some(id) {
+                            self.current = None;
+                        }
+                    }
+                    _ => {
+                        self.hang_up();
+                        self.hang_up_channels();
+                    }
+                },
                 b'O' => {
                     number(&mut at);
                     if self.carrier() {
@@ -644,6 +995,7 @@ impl Modem {
                 b'Z' => {
                     number(&mut at);
                     self.hang_up();
+                    self.hang_up_channels();
                     self.settings_as_they_were();
                 }
                 b'E' => self.echo = number(&mut at).unwrap_or(0) != 0,
@@ -658,7 +1010,12 @@ impl Modem {
                         _ => b"\r\n",
                     }
                 }
-                b'F' => self.flow_control(number(&mut at).unwrap_or(0), [0], [1, 2, 3]),
+                b'F' => {
+                    let value = number(&mut at).unwrap_or(0);
+                    self.flow_control(value, [0], [1, 2, 3]);
+                    // Its own: a packet for each XON, in the command mode.
+                    self.packet_xon = value == 3;
+                }
                 b'I' => match number(&mut at).unwrap_or(0) {
                     2 => self.say("127.0.0.1"),
                     3 => self.say("THE HOST'S NETWORK"),
@@ -696,8 +1053,43 @@ impl Modem {
                         number(&mut at);
                     }
                 }
-                b'C' if line.get(at) != Some(&b'"') => {
-                    number(&mut at);
+                // A connection in the command mode: made (`S`, over TLS),
+                // or made the current one.
+                b'C' => {
+                    let mut modifiers = Vec::new();
+                    while let Some(&modifier @ (b'S' | b'T' | b'E' | b'X' | b'P')) = line.get(at) {
+                        modifiers.push(modifier);
+                        at += 1;
+                    }
+                    if let Some(place) = quoted(&mut at) {
+                        self.open_channel(&place, modifiers.contains(&b'S'));
+                        return;
+                    }
+                    if let Some(id) = number(&mut at).filter(|&id| id > 0) {
+                        if !self.channels.iter().any(|channel| channel.id == id) {
+                            self.result(Result::Error);
+                            return;
+                        }
+                        self.current = Some(id);
+                    }
+                }
+                // Bytes to the current connection: so many, as they come
+                // next, `OK` after them; or what's quoted, a line.
+                b'T' => {
+                    if let Some(text) = quoted(&mut at) {
+                        let mut bytes = text.into_bytes();
+                        bytes.extend(b"\r\n");
+                        if !self.send_to_channel(bytes) {
+                            self.result(Result::Error);
+                            return;
+                        }
+                        continue;
+                    }
+                    let count = number(&mut at).unwrap_or(0) as usize;
+                    if count > 0 {
+                        self.payload = Some((count, Vec::with_capacity(count)));
+                        return;
+                    }
                 }
                 b'N' | b'L' | b'M' | b'Y' => {
                     number(&mut at);
@@ -864,6 +1256,7 @@ impl Modem {
 
     fn settings_as_they_were(&mut self) {
         (self.echo, self.words, self.quiet, self.telnet) = (true, true, false, true);
+        self.packet_xon = false;
         self.xon_xoff = true;
         self.held = false;
         self.online_echo = None;
@@ -890,6 +1283,176 @@ impl Modem {
         self.to_machine.drain(..take).collect()
     }
 
+    /// A connection of the command mode's to `place`, `host:port`, over
+    /// TLS if it's `secure`: made on a thread of its own, `CONNECT` and its
+    /// number when it's made, the modem in its command mode still.
+    fn open_channel(&mut self, place: &str, secure: bool) {
+        let place = place.trim().to_ascii_lowercase();
+        if place.is_empty() {
+            self.result(Result::Error);
+            return;
+        }
+        let place = if place.contains(':') {
+            place
+        } else {
+            format!("{place}:{TELNET_PORT}")
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (sent, answered) = channel();
+            std::thread::spawn(move || {
+                let _ = sent.send(open(&place, secure));
+            });
+            self.channels.push(Channel {
+                id: 0,
+                link: Link::Dialling(answered),
+                came: VecDeque::new(),
+                to_place: Vec::new(),
+                gone: false,
+                told: false,
+            });
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = (place, secure);
+            self.result(Result::NoAnswer);
+        }
+    }
+
+    /// Every connection of the command mode's hung up.
+    fn hang_up_channels(&mut self) {
+        self.channels.clear();
+        self.current = None;
+    }
+
+    /// `bytes` to the current connection: whether there's one to take them.
+    fn send_to_channel(&mut self, bytes: Vec<u8>) -> bool {
+        let current = self.current;
+        match self
+            .channels
+            .iter_mut()
+            .find(|channel| Some(channel.id) == current && channel.id > 0 && !channel.gone)
+        {
+            Some(channel) => {
+                channel.to_place.extend(bytes);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// `ATT`'s bytes all taken: to the current connection, `OK`.
+    fn payload_taken(&mut self) {
+        let Some((_, bytes)) = self.payload.take() else {
+            return;
+        };
+        let result = if self.send_to_channel(bytes) {
+            Result::Ok
+        } else {
+            Result::Error
+        };
+        self.result(result);
+    }
+
+    /// A packet, for the machine's XON: what's come from the next
+    /// connection with any, after the one last packeted, S40 bytes of it
+    /// at most, after its header, `[ 2 12 34 ]`, the connection, how many
+    /// and their CRC; with nothing come, a place gone's `NO CARRIER 2`, once;
+    /// else `[ 0 0 0 ]`.
+    fn packet(&mut self) {
+        let count = self.channels.len();
+        let next = (1..=count)
+            .map(|step| (self.packeted + step) % count.max(1))
+            .find(|&at| !self.channels[at].came.is_empty());
+        if let Some(at) = next {
+            self.packeted = at;
+            let most = usize::from(self.registers[40]).max(1);
+            let channel = &mut self.channels[at];
+            let take = most.min(channel.came.len());
+            let bytes: Vec<u8> = channel.came.drain(..take).collect();
+            let header = format!("[ {} {} {} ]", channel.id, bytes.len(), crc8(&bytes));
+            self.to_machine.extend(header.bytes());
+            self.to_machine.extend(self.eol);
+            self.to_machine.extend(bytes);
+            return;
+        }
+        if let Some(channel) = self
+            .channels
+            .iter_mut()
+            .find(|channel| channel.gone && !channel.told)
+        {
+            channel.told = true;
+            let id = channel.id;
+            self.say(&format!("NO CARRIER {id}"));
+            return;
+        }
+        self.say("[ 0 0 0 ]");
+    }
+
+    /// The command mode's connections: those being made, made, or not,
+    /// said; what's to go to each sent, and what's come from each kept, as
+    /// much as the modem holds; a place that's gone, kept till what it
+    /// sent's taken and it's hung up.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn channels(&mut self) {
+        let mut said = Vec::new();
+        let mut failed = Vec::new();
+        for (at, channel) in self.channels.iter_mut().enumerate() {
+            match &mut channel.link {
+                Link::Dialling(answered) => match answered.try_recv() {
+                    Ok(Ok(stream)) => {
+                        self.connections += 1;
+                        channel.id = self.connections;
+                        channel.link = Link::Up(stream);
+                        said.push(channel.id);
+                    }
+                    Ok(Err(_)) | Err(TryRecvError::Disconnected) => failed.push(at),
+                    Err(TryRecvError::Empty) => {}
+                },
+                Link::Up(stream) => {
+                    if channel.gone {
+                        continue;
+                    }
+                    if !channel.to_place.is_empty() {
+                        match stream.write(&channel.to_place) {
+                            Ok(written) => {
+                                channel.to_place.drain(..written);
+                            }
+                            Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+                            Err(_) => channel.gone = true,
+                        }
+                    }
+                    // TLS's records still to go, sent.
+                    match stream.flush() {
+                        Err(error) if error.kind() != ErrorKind::WouldBlock => channel.gone = true,
+                        _ => {}
+                    }
+                    let mut buffer = [0; 4096];
+                    while channel.came.len() < CHANNEL_HOLDS && !channel.gone {
+                        let want = (CHANNEL_HOLDS - channel.came.len()).min(buffer.len());
+                        match stream.read(&mut buffer[..want]) {
+                            Ok(0) => channel.gone = true,
+                            Ok(read) => channel.came.extend(&buffer[..read]),
+                            Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                            // A TLS place gone without saying so, as many do.
+                            Err(_) => channel.gone = true,
+                        }
+                    }
+                }
+            }
+        }
+        for at in failed.into_iter().rev() {
+            self.channels.remove(at);
+            self.result(Result::NoAnswer);
+        }
+        for id in said {
+            self.current = Some(id);
+            self.connected = id;
+            self.result(Result::Connect);
+        }
+    }
+
     /// Dialling `place`, `host` or `host:port`, the connection made on a
     /// thread of its own, as it may take a while.
     fn dial(&mut self, place: &str) {
@@ -908,24 +1471,7 @@ impl Modem {
         {
             let (sent, answered) = channel();
             std::thread::spawn(move || {
-                let connected = place.to_socket_addrs().and_then(|mut addresses| {
-                    let address = addresses
-                        .next()
-                        .ok_or_else(|| std::io::Error::from(ErrorKind::NotFound))?;
-                    // Its receive buffer small, set before it connects (the
-                    // window it offers is set then): what the modem hasn't
-                    // room for waits at the other end, not in this
-                    // computer's network buffers, a hundred K or more.
-                    let socket = Socket::new(
-                        Domain::for_address(address),
-                        Type::STREAM,
-                        Some(Protocol::TCP),
-                    )?;
-                    let _ = socket.set_recv_buffer_size(SOCKET_RECEIVE_BUFFER);
-                    socket.connect_timeout(&address.into(), DIAL_TIME)?;
-                    Ok(TcpStream::from(socket))
-                });
-                let _ = sent.send(connected);
+                let _ = sent.send(connect(&place));
             });
             self.line = Some(Line::Dialling(answered));
         }
@@ -953,7 +1499,7 @@ impl Modem {
         if self.words {
             let words = match result {
                 Result::Connect if self.zimodem && self.long_results => {
-                    format!("CONNECT {}", self.connections)
+                    format!("CONNECT {}", self.connected)
                 }
                 Result::Connect if self.zimodem => "CONNECT".to_string(),
                 Result::Connect => format!("CONNECT {}", self.rate),
@@ -1013,6 +1559,7 @@ impl Modem {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn connection(&mut self) {
+        self.channels();
         if let Some(Line::Dialling(answered)) = &self.line {
             match answered.try_recv() {
                 Ok(Ok(stream)) => {
@@ -1024,6 +1571,7 @@ impl Modem {
                     self.far_binary = false;
                     self.quiet_frames = 0;
                     self.connections += 1;
+                    self.connected = self.connections;
                     self.result(Result::Connect);
                 }
                 Ok(Err(error)) => {

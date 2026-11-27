@@ -253,9 +253,17 @@ and `atp"1=delete"` removes one. Numbers can have up to 9 digits. The phone book
 is kept with the X16's saves, in `zphonebook.txt`, so every X16 game shares it.
 Unlike Zimodem, `at&f` leaves it alone.
 
-Zimodem's other extras aren't there: listening for calls, its packet commands,
-`AT&G` downloads, SSH and PETSCII translation. The web version can't open
-network connections, so there the modem never connects.
+Programs that keep several connections open at once, such as
+[Veranda](https://github.com/veranda-x16/veranda)'s Gemini, Gopher, FTP and
+chat programs, use Zimodem's command-mode connections, and those work too:
+`atc"host:port"` connects and stays in command mode, `att` sends, and each XON
+brings back a packet of what's come. `atcs"host:port"` makes the connection
+over TLS, which Gemini and HTTPS need. As on the real card, the modem does the
+encryption and doesn't check the server's certificate.
+
+Zimodem's other extras aren't there: listening for calls, `AT&G` downloads, SSH
+and PETSCII translation. The web version can't open network connections, so
+there the modem never connects.
 
 ## Skink and BASIC
 
